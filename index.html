@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Game Portal</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #0c0c1a;
+    color: #e0e0e0;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 60px 20px;
+  }
+  h1 {
+    font-size: 2.4rem;
+    letter-spacing: 4px;
+    margin-bottom: 50px;
+    color: #fff;
+    text-transform: uppercase;
+  }
+  .games {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 40px;
+    justify-content: center;
+    max-width: 1000px;
+  }
+  .game-card {
+    width: 340px;
+    background: #161628;
+    border-radius: 12px;
+    overflow: hidden;
+    text-decoration: none;
+    color: inherit;
+    transition: transform 0.2s, box-shadow 0.2s;
+    border: 1px solid #2a2a40;
+  }
+  .game-card:hover {
+    transform: translateY(-6px);
+    box-shadow: 0 8px 30px rgba(68, 187, 68, 0.25);
+    border-color: #44BB44;
+  }
+  .game-card canvas {
+    width: 100%;
+    height: 200px;
+    display: block;
+  }
+  .game-info {
+    padding: 20px;
+  }
+  .game-info h2 {
+    font-size: 1.4rem;
+    margin-bottom: 8px;
+    color: #fff;
+    letter-spacing: 2px;
+  }
+  .game-info p {
+    font-size: 0.9rem;
+    color: #999;
+    line-height: 1.5;
+  }
+  .tag {
+    display: inline-block;
+    margin-top: 12px;
+    padding: 4px 10px;
+    background: #44BB4422;
+    color: #44BB44;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+  }
+</style>
+</head>
+<body>
+
+<h1>Game Portal</h1>
+
+<div class="games">
+  <a class="game-card" href="dinoDash/index.html">
+    <canvas id="dinoDashThumb" width="680" height="400"></canvas>
+    <div class="game-info">
+      <h2>Dino Dash</h2>
+      <p>Stomp dinos from above, crack eggs, collect fossils, and dash through prehistoric levels!</p>
+      <span class="tag">Platformer</span>
+    </div>
+  </a>
+</div>
+
+<script>
+// Draw DinoDash thumbnail
+(function() {
+  const c = document.getElementById('dinoDashThumb');
+  const ctx = c.getContext('2d');
+  const W = c.width, H = c.height;
+
+  // Sky gradient
+  const sky = ctx.createLinearGradient(0, 0, 0, H);
+  sky.addColorStop(0, '#0a0a1a');
+  sky.addColorStop(0.6, '#1a1a3a');
+  sky.addColorStop(1, '#0d2a0d');
+  ctx.fillStyle = sky;
+  ctx.fillRect(0, 0, W, H);
+
+  // Stars
+  for (let i = 0; i < 40; i++) {
+    ctx.fillStyle = `rgba(255,255,255,${0.3 + Math.random() * 0.7})`;
+    ctx.fillRect(Math.random() * W, Math.random() * H * 0.5, 2, 2);
+  }
+
+  // Mountains
+  ctx.fillStyle = '#1a2a1a';
+  ctx.beginPath();
+  ctx.moveTo(0, H);
+  ctx.lineTo(0, H * 0.55);
+  ctx.lineTo(120, H * 0.35);
+  ctx.lineTo(220, H * 0.5);
+  ctx.lineTo(340, H * 0.3);
+  ctx.lineTo(440, H * 0.48);
+  ctx.lineTo(540, H * 0.38);
+  ctx.lineTo(680, H * 0.5);
+  ctx.lineTo(680, H);
+  ctx.fill();
+
+  // Ground
+  ctx.fillStyle = '#3a6a2a';
+  ctx.fillRect(0, H * 0.78, W, H * 0.22);
+  ctx.fillStyle = '#4a8a3a';
+  ctx.fillRect(0, H * 0.78, W, 6);
+
+  // Ground tiles
+  ctx.fillStyle = '#2d5a1d';
+  for (let x = 0; x < W; x += 32) {
+    ctx.fillRect(x, H * 0.78 + 6, 30, 2);
+  }
+
+  // Platforms
+  ctx.fillStyle = '#8B7355';
+  ctx.fillRect(140, H * 0.55, 96, 16);
+  ctx.fillRect(380, H * 0.48, 96, 16);
+  ctx.fillRect(520, H * 0.62, 80, 16);
+
+  // Coins on platforms
+  function drawCoin(x, y) {
+    ctx.fillStyle = '#FFD700';
+    ctx.beginPath();
+    ctx.arc(x, y, 8, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#FFA500';
+    ctx.beginPath();
+    ctx.arc(x + 1, y, 4, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  drawCoin(170, H * 0.55 - 20);
+  drawCoin(200, H * 0.55 - 20);
+  drawCoin(410, H * 0.48 - 20);
+  drawCoin(440, H * 0.48 - 20);
+
+  // Dino player
+  const px = 260, py = H * 0.78 - 48;
+  // Body
+  ctx.fillStyle = '#44BB44';
+  ctx.fillRect(px, py + 8, 24, 28);
+  // Head
+  ctx.fillRect(px + 4, py, 22, 16);
+  // Eye
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(px + 18, py + 3, 6, 6);
+  ctx.fillStyle = '#111';
+  ctx.fillRect(px + 20, py + 4, 3, 4);
+  // Mouth
+  ctx.fillStyle = '#2a8a2a';
+  ctx.fillRect(px + 22, py + 10, 6, 2);
+  // Legs
+  ctx.fillStyle = '#3a9a3a';
+  ctx.fillRect(px + 4, py + 36, 6, 12);
+  ctx.fillRect(px + 14, py + 36, 6, 12);
+  // Tiny arms
+  ctx.fillRect(px + 22, py + 14, 6, 4);
+
+  // Enemy raptor
+  const ex = 480, ey = H * 0.78 - 30;
+  ctx.fillStyle = '#cc4444';
+  ctx.fillRect(ex, ey + 4, 20, 20);
+  ctx.fillRect(ex - 4, ey, 18, 12);
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(ex, ey + 2, 4, 4);
+  ctx.fillStyle = '#111';
+  ctx.fillRect(ex, ey + 3, 2, 2);
+  ctx.fillStyle = '#aa3333';
+  ctx.fillRect(ex + 2, ey + 24, 5, 8);
+  ctx.fillRect(ex + 12, ey + 24, 5, 8);
+
+  // Egg block
+  ctx.fillStyle = '#E8D8A0';
+  ctx.strokeStyle = '#F5E6B8';
+  ctx.lineWidth = 2;
+  ctx.fillRect(560, H * 0.62 - 40, 32, 32);
+  ctx.strokeRect(560, H * 0.62 - 40, 32, 32);
+  ctx.fillStyle = '#8B7355';
+  ctx.font = 'bold 18px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('?', 576, H * 0.62 - 18);
+
+  // Title glow
+  ctx.shadowColor = '#44BB44';
+  ctx.shadowBlur = 20;
+  ctx.fillStyle = '#FFAA00';
+  ctx.font = 'bold 42px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('DINO DASH', W / 2, 60);
+  ctx.shadowBlur = 0;
+
+  // Subtitle
+  ctx.fillStyle = '#44BB44';
+  ctx.font = '14px sans-serif';
+  ctx.fillText('A Prehistoric Platformer', W / 2, 84);
+})();
+</script>
+
+</body>
+</html>
