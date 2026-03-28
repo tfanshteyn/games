@@ -2,7 +2,9 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
 <title>DINO DASH</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -12,14 +14,20 @@
     justify-content: center;
     align-items: center;
     height: 100vh;
+    height: 100dvh;
     overflow: hidden;
     font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    touch-action: none;
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
   }
   canvas {
     image-rendering: pixelated;
     border: 2px solid #FFAA0033;
     border-radius: 4px;
     box-shadow: 0 0 40px #FFAA0022, 0 0 80px #44BB4411;
+    touch-action: none;
   }
 </style>
 </head>
@@ -38,10 +46,12 @@ canvas.width = W * dpr;
 canvas.height = H * dpr;
 ctx.scale(dpr, dpr);
 
+const isMobile = /Android|iPhone|iPad|iPod|Touch/i.test(navigator.userAgent) || ('ontouchstart' in window);
+
 function resize() {
-  const scaleX = window.innerWidth * 0.96 / W;
-  const scaleY = window.innerHeight * 0.94 / H;
-  const scale = Math.min(scaleX, scaleY, 1.5);
+  const scaleX = window.innerWidth / W;
+  const scaleY = (window.innerHeight || document.documentElement.clientHeight) / H;
+  const scale = isMobile ? Math.min(scaleX, scaleY) : Math.min(scaleX * 0.96, scaleY * 0.94, 1.5);
   canvas.style.width = W * scale + 'px';
   canvas.style.height = H * scale + 'px';
 }
@@ -123,16 +133,130 @@ window.addEventListener('keyup', e => { keys[e.code] = false; });
 
 function isDown(action) {
   switch(action) {
-    case 'left': return keys['ArrowLeft'] || keys['KeyA'];
-    case 'right': return keys['ArrowRight'] || keys['KeyD'];
-    case 'jump': return keys['Space'] || keys['ArrowUp'] || keys['KeyW'];
-    case 'run': return keys['ShiftLeft'] || keys['ShiftRight'] || keys['KeyX'];
+    case 'left': return keys['ArrowLeft'] || keys['KeyA'] || touch.left;
+    case 'right': return keys['ArrowRight'] || keys['KeyD'] || touch.right;
+    case 'jump': return keys['Space'] || keys['ArrowUp'] || keys['KeyW'] || touch.jump;
+    case 'run': return keys['ShiftLeft'] || keys['ShiftRight'] || keys['KeyX'] || touch.run;
   }
 }
 function wasPressed(action) {
   switch(action) {
-    case 'jump': return justPressed['Space'] || justPressed['ArrowUp'] || justPressed['KeyW'];
+    case 'jump': return justPressed['Space'] || justPressed['ArrowUp'] || justPressed['KeyW'] || touch.jumpPressed;
   }
+}
+
+// ============================================================
+//  TOUCH CONTROLS
+// ============================================================
+const touch = { left: false, right: false, jump: false, jumpPressed: false, run: false };
+let touchBtns = []; // defined after we know W/H
+
+function initTouchButtons() {
+  const bw = 120, bh = 100; // button width/height
+  const pad = 30;
+  const by = H - bh - pad;
+  touchBtns = [
+    { id: 'left',  x: pad,          y: by, w: bw, h: bh, label: '\u25C0' },
+    { id: 'right', x: pad + bw + 20, y: by, w: bw, h: bh, label: '\u25B6' },
+    { id: 'jump',  x: W - pad - bw, y: by, w: bw, h: bh, label: 'A' },
+    { id: 'run',   x: W - pad - bw * 2 - 20, y: by, w: bw, h: bh, label: 'B' },
+  ];
+}
+initTouchButtons();
+
+function canvasTouchPos(t) {
+  const rect = canvas.getBoundingClientRect();
+  return {
+    x: (t.clientX - rect.left) / rect.width * W,
+    y: (t.clientY - rect.top) / rect.height * H,
+  };
+}
+
+function handleTouches(e) {
+  e.preventDefault();
+  touch.left = false;
+  touch.right = false;
+  const prevJump = touch.jump;
+  touch.jump = false;
+  touch.run = false;
+
+  // Check all active touches
+  const touches = e.touches || [];
+  for (let i = 0; i < touches.length; i++) {
+    const pos = canvasTouchPos(touches[i]);
+    for (const btn of touchBtns) {
+      if (pos.x >= btn.x && pos.x <= btn.x + btn.w && pos.y >= btn.y && pos.y <= btn.y + btn.h) {
+        touch[btn.id] = true;
+      }
+    }
+    // Also allow left half = left, right half = right for broad swipe areas
+    if (pos.y >= H * 0.5) {
+      if (pos.x < W * 0.35 && pos.y < H - 10) {
+        // Left side of screen — check proximity to left/right buttons
+        if (pos.x < W * 0.18) touch.left = true;
+        else touch.right = true;
+      }
+    }
+  }
+
+  // Detect jump just pressed
+  if (touch.jump && !prevJump) {
+    touch.jumpPressed = true;
+  }
+
+  // Handle menu/death/complete taps
+  if (e.type === 'touchstart') {
+    ensureAudio();
+    if (state === 'menu' && !transition.active) {
+      startTransition(() => startLevel(0), 'iris');
+    }
+    if (state === 'dead' && deadTimer > 50 && !transition.active) {
+      if (lives > 0) startTransition(() => startLevel(currentLevel), 'fade');
+      else startTransition(() => { lives = 3; coins = 0; score = 0; startLevel(0); }, 'iris');
+    }
+    if (state === 'levelComplete' && completeTimer > 80 && !transition.active) {
+      startTransition(() => startLevel(currentLevel + 1), 'iris');
+    }
+  }
+}
+
+function handleTouchEnd(e) {
+  e.preventDefault();
+  // Re-evaluate remaining touches
+  handleTouches(e);
+  // If no touches left, clear everything
+  if (!e.touches || e.touches.length === 0) {
+    touch.left = false;
+    touch.right = false;
+    touch.jump = false;
+    touch.run = false;
+  }
+}
+
+canvas.addEventListener('touchstart', handleTouches, { passive: false });
+canvas.addEventListener('touchmove', handleTouches, { passive: false });
+canvas.addEventListener('touchend', handleTouchEnd, { passive: false });
+canvas.addEventListener('touchcancel', handleTouchEnd, { passive: false });
+
+function drawTouchControls() {
+  if (!isMobile) return;
+  ctx.save();
+  for (const btn of touchBtns) {
+    const pressed = touch[btn.id];
+    ctx.globalAlpha = pressed ? 0.45 : 0.2;
+    ctx.fillStyle = '#fff';
+    ctx.beginPath();
+    ctx.roundRect(btn.x, btn.y, btn.w, btn.h, 16);
+    ctx.fill();
+    ctx.globalAlpha = pressed ? 0.9 : 0.5;
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 40px monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(btn.label, btn.x + btn.w/2, btn.y + btn.h/2);
+  }
+  ctx.globalAlpha = 1;
+  ctx.restore();
 }
 
 // ============================================================
@@ -523,6 +647,7 @@ function update() {
 
   // Clear justPressed
   for (const k in justPressed) justPressed[k] = false;
+  touch.jumpPressed = false;
 }
 
 function touchingWall(obj, dir) {
@@ -1505,6 +1630,9 @@ function render() {
   if (state === 'dead') drawDeath();
   if (state === 'levelComplete') drawLevelComplete();
 
+  // --- Touch controls ---
+  drawTouchControls();
+
   // --- Screen transition (on top of everything) ---
   drawTransition();
 }
@@ -2117,7 +2245,7 @@ function drawMenu() {
     ctx.fillStyle = '#fff';
     ctx.shadowColor = '#fff';
     ctx.shadowBlur = 8;
-    ctx.fillText('PRESS SPACE TO START', W/2, H * 0.88);
+    ctx.fillText(isMobile ? 'TAP TO START' : 'PRESS SPACE TO START', W/2, H * 0.88);
     ctx.shadowBlur = 0;
   }
 }
@@ -2155,7 +2283,9 @@ function drawDeath() {
     ctx.font = '32px monospace';
     ctx.fillStyle = '#ffffffcc';
     ctx.textAlign = 'center';
-    ctx.fillText(lives > 0 ? 'PRESS SPACE TO RETRY' : 'PRESS SPACE TO RESTART', W/2, H * 0.8);
+    ctx.fillText(isMobile
+      ? (lives > 0 ? 'TAP TO RETRY' : 'TAP TO RESTART')
+      : (lives > 0 ? 'PRESS SPACE TO RETRY' : 'PRESS SPACE TO RESTART'), W/2, H * 0.8);
   }
 }
 
@@ -2200,7 +2330,9 @@ function drawLevelComplete() {
     ctx.font = '32px monospace';
     ctx.fillStyle = '#ffffffcc';
     ctx.textAlign = 'center';
-    const txt = currentLevel + 1 >= levels.length ? 'PRESS SPACE (restart from last level)' : 'PRESS SPACE FOR NEXT LEVEL';
+    const txt = isMobile
+      ? (currentLevel + 1 >= levels.length ? 'TAP TO REPLAY' : 'TAP FOR NEXT LEVEL')
+      : (currentLevel + 1 >= levels.length ? 'PRESS SPACE (restart from last level)' : 'PRESS SPACE FOR NEXT LEVEL');
     ctx.fillText(txt, W/2, H * 0.85);
   }
 }
