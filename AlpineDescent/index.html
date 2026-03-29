@@ -1,0 +1,1385 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<title>ALPINE DESCENT</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #0a0a2a;
+  overflow: hidden;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  touch-action: none;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+#game-container {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  height: 100dvh;
+}
+canvas { display: block; }
+
+/* HUD */
+#hud {
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  display: none;
+  justify-content: space-between;
+  align-items: flex-start;
+  padding: 15px 25px;
+  pointer-events: none;
+  z-index: 10;
+}
+.hud-box {
+  background: rgba(0,0,0,0.5);
+  border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 8px;
+  padding: 8px 16px;
+  color: #fff;
+  font-size: 16px;
+  text-align: center;
+  min-width: 100px;
+}
+.hud-box .label { font-size: 10px; opacity: 0.6; letter-spacing: 2px; text-transform: uppercase; }
+.hud-box .value { font-size: 22px; font-weight: bold; font-variant-numeric: tabular-nums; }
+#hud-gates .value { color: #4af; }
+#hud-timer .value { color: #fff; }
+#hud-speed .value { color: #4f8; }
+#gate-flash {
+  position: absolute;
+  top: 80px; left: 50%; transform: translateX(-50%);
+  font-size: 28px; font-weight: bold;
+  padding: 6px 20px;
+  border-radius: 8px;
+  display: none;
+  pointer-events: none;
+  z-index: 11;
+}
+#lives-display {
+  position: absolute;
+  top: 70px; right: 25px;
+  color: #f44;
+  font-size: 20px;
+  pointer-events: none;
+  z-index: 10;
+  display: none;
+}
+
+/* Screens */
+.screen {
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  display: none;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  z-index: 20;
+  color: #fff;
+  text-align: center;
+}
+.screen.active { display: flex; }
+
+#menu-screen {
+  background: rgba(5,5,30,0.85);
+}
+#menu-screen h1 {
+  font-size: 52px;
+  letter-spacing: 6px;
+  margin-bottom: 8px;
+  text-shadow: 0 0 30px rgba(100,180,255,0.5);
+}
+#menu-screen h1 span:first-child { color: #7cf; }
+#menu-screen h1 span:last-child { color: #fff; }
+#menu-screen .subtitle {
+  font-size: 16px;
+  opacity: 0.5;
+  letter-spacing: 4px;
+  margin-bottom: 40px;
+}
+.track-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 30px;
+}
+.track-btn {
+  background: rgba(255,255,255,0.08);
+  border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 10px;
+  padding: 14px 30px;
+  color: #fff;
+  font-size: 16px;
+  cursor: pointer;
+  transition: all 0.2s;
+  min-width: 300px;
+  text-align: left;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  pointer-events: auto;
+}
+.track-btn:hover { background: rgba(100,180,255,0.15); border-color: #7cf; }
+.track-btn.locked { opacity: 0.35; cursor: default; }
+.track-btn.locked:hover { background: rgba(255,255,255,0.08); border-color: rgba(255,255,255,0.15); }
+.track-btn .track-name { font-weight: bold; }
+.track-btn .track-stars { color: #fd0; font-size: 18px; }
+.track-btn .track-best { font-size: 12px; opacity: 0.5; }
+.track-btn .lock-icon { opacity: 0.4; }
+.controls-hint {
+  font-size: 13px;
+  opacity: 0.4;
+  margin-top: 10px;
+  line-height: 1.8;
+}
+
+#countdown-display {
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 100px;
+  font-weight: bold;
+  color: #fff;
+  text-shadow: 0 0 40px rgba(100,180,255,0.7);
+  z-index: 15;
+  display: none;
+  pointer-events: none;
+}
+
+#crash-screen {
+  background: rgba(40,0,0,0.7);
+}
+#crash-screen h2 { font-size: 48px; color: #f44; margin-bottom: 10px; }
+#crash-screen p { font-size: 18px; opacity: 0.7; margin-bottom: 20px; }
+#crash-screen .prompt { font-size: 14px; opacity: 0.5; animation: blink 1s infinite; }
+
+#complete-screen {
+  background: rgba(0,20,40,0.85);
+}
+#complete-screen h2 { font-size: 44px; color: #4af; margin-bottom: 5px; }
+#complete-screen .track-name-display { font-size: 16px; opacity: 0.5; margin-bottom: 25px; }
+#complete-screen .results { margin-bottom: 25px; }
+#complete-screen .results div { font-size: 20px; margin: 8px 0; }
+#complete-screen .stars-display { font-size: 48px; color: #fd0; margin-bottom: 20px; }
+#complete-screen .best-time { font-size: 14px; color: #4f8; margin-bottom: 15px; }
+.screen-btn {
+  background: rgba(100,180,255,0.15);
+  border: 1px solid #7cf;
+  border-radius: 8px;
+  padding: 12px 30px;
+  color: #fff;
+  font-size: 16px;
+  cursor: pointer;
+  margin: 5px;
+  pointer-events: auto;
+  transition: all 0.2s;
+}
+.screen-btn:hover { background: rgba(100,180,255,0.3); }
+
+/* Mobile touch controls */
+#touch-controls {
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  height: 160px;
+  display: none;
+  justify-content: space-between;
+  align-items: flex-end;
+  padding: 0 15px 15px;
+  pointer-events: none;
+  z-index: 12;
+}
+.touch-btn {
+  width: 80px;
+  height: 80px;
+  border-radius: 50%;
+  border: 2px solid rgba(255,255,255,0.25);
+  background: rgba(255,255,255,0.08);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  font-size: 28px;
+  color: rgba(255,255,255,0.5);
+  pointer-events: auto;
+  touch-action: none;
+}
+.touch-btn.active {
+  background: rgba(255,255,255,0.2);
+  border-color: rgba(255,255,255,0.5);
+}
+.touch-side {
+  display: flex;
+  gap: 12px;
+  align-items: flex-end;
+}
+.touch-side.right-side { flex-direction: row-reverse; }
+
+@keyframes blink { 0%,100% { opacity: 0.5; } 50% { opacity: 1; } }
+</style>
+</head>
+<body>
+
+<div id="game-container">
+  <div id="hud">
+    <div class="hud-box" id="hud-timer">
+      <div class="label">Time</div>
+      <div class="value" id="timer-val">0:00.00</div>
+    </div>
+    <div class="hud-box" id="hud-gates">
+      <div class="label">Gates</div>
+      <div class="value" id="gates-val">0 / 0</div>
+    </div>
+    <div class="hud-box" id="hud-speed">
+      <div class="label">Speed</div>
+      <div class="value" id="speed-val">0 km/h</div>
+    </div>
+  </div>
+  <div id="gate-flash"></div>
+  <div id="lives-display"></div>
+  <div id="countdown-display"></div>
+
+  <div id="touch-controls">
+    <div class="touch-side left-side">
+      <div class="touch-btn" id="tb-left">&#9664;</div>
+      <div class="touch-btn" id="tb-right">&#9654;</div>
+    </div>
+    <div class="touch-side right-side">
+      <div class="touch-btn" id="tb-brake">&#9724;</div>
+      <div class="touch-btn" id="tb-tuck">&#9650;</div>
+    </div>
+  </div>
+
+  <div class="screen active" id="menu-screen">
+    <h1><span>ALPINE</span> <span>DESCENT</span></h1>
+    <div class="subtitle">3D DOWNHILL SLALOM</div>
+    <div class="track-list" id="track-list"></div>
+    <div class="controls-hint">
+      Arrow Keys / WASD to steer<br>
+      Up / W = Tuck (speed boost) &nbsp;|&nbsp; Down / S / Space = Brake
+    </div>
+  </div>
+
+  <div class="screen" id="crash-screen">
+    <h2>CRASHED!</h2>
+    <p id="crash-lives"></p>
+    <div class="prompt">Press Space or tap to continue</div>
+  </div>
+
+  <div class="screen" id="complete-screen">
+    <h2>FINISH!</h2>
+    <div class="track-name-display" id="complete-track-name"></div>
+    <div class="stars-display" id="complete-stars"></div>
+    <div class="results">
+      <div>Time: <span id="complete-time" style="color:#4af"></span></div>
+      <div>Gates: <span id="complete-gates" style="color:#4f8"></span></div>
+      <div>Penalties: <span id="complete-penalties" style="color:#f84"></span></div>
+      <div style="font-size:24px;margin-top:10px;">Final: <span id="complete-final" style="color:#fff;font-weight:bold"></span></div>
+    </div>
+    <div class="best-time" id="complete-best"></div>
+    <div>
+      <button class="screen-btn" id="btn-retry">Retry</button>
+      <button class="screen-btn" id="btn-next" style="display:none">Next Track</button>
+      <button class="screen-btn" id="btn-menu">Menu</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
+<script>
+// ============================================================
+//  ALPINE DESCENT — 3D Downhill Slalom Ski Race
+// ============================================================
+
+// [1] CONSTANTS & CONFIG
+const TRACKS = [
+  { name: "Bunny Slope", length: 600, width: 60, baseAngle: 20, gateCount: 8, gateSpacing: 60, obstacleCount: 8, timeBronze: 35, timeSilver: 25, timeGold: 18, curves: 2 },
+  { name: "Silver Run", length: 1000, width: 50, baseAngle: 22, gateCount: 14, gateSpacing: 58, obstacleCount: 16, timeBronze: 50, timeSilver: 38, timeGold: 28, curves: 4 },
+  { name: "Black Diamond", length: 1500, width: 40, baseAngle: 28, gateCount: 20, gateSpacing: 55, obstacleCount: 28, timeBronze: 60, timeSilver: 48, timeGold: 36, curves: 6 },
+];
+
+const PHYSICS = {
+  gravity: 9.8,
+  maxSpeed: 85,
+  baseAccel: 20,
+  brakeForce: 30,
+  turnSpeed: 4.5,
+  friction: 0.998,
+  tuckBoost: 1.5,
+  crashRecoveryFrames: 90,
+  gatePenalty: 3,
+};
+
+const isMobile = /Android|iPhone|iPad|iPod|Touch/i.test(navigator.userAgent) || ('ontouchstart' in window);
+
+// [2] AUDIO ENGINE
+const AudioCtx = window.AudioContext || window.webkitAudioContext;
+let audioCtx;
+function ensureAudio() {
+  if (!audioCtx) audioCtx = new AudioCtx();
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+}
+
+function playTone(freq, freq2, duration, type, vol) {
+  if (!audioCtx) return;
+  const o = audioCtx.createOscillator();
+  const g = audioCtx.createGain();
+  o.type = type || 'sine';
+  o.frequency.setValueAtTime(freq, audioCtx.currentTime);
+  if (freq2) o.frequency.linearRampToValueAtTime(freq2, audioCtx.currentTime + duration);
+  g.gain.setValueAtTime(vol || 0.15, audioCtx.currentTime);
+  g.gain.linearRampToValueAtTime(0, audioCtx.currentTime + duration);
+  o.connect(g).connect(audioCtx.destination);
+  o.start(); o.stop(audioCtx.currentTime + duration);
+}
+
+function playNoise(duration, vol) {
+  if (!audioCtx) return;
+  const bufSize = audioCtx.sampleRate * duration;
+  const buf = audioCtx.createBuffer(1, bufSize, audioCtx.sampleRate);
+  const data = buf.getChannelData(0);
+  for (let i = 0; i < bufSize; i++) data[i] = Math.random() * 2 - 1;
+  const src = audioCtx.createBufferSource();
+  src.buffer = buf;
+  const g = audioCtx.createGain();
+  g.gain.setValueAtTime(vol || 0.1, audioCtx.currentTime);
+  g.gain.linearRampToValueAtTime(0, audioCtx.currentTime + duration);
+  src.connect(g).connect(audioCtx.destination);
+  src.start(); src.stop(audioCtx.currentTime + duration);
+}
+
+const sfx = {
+  gatePassed() { playTone(400, 800, 0.12, 'triangle', 0.2); },
+  gateMissed() { playTone(200, 100, 0.25, 'square', 0.12); },
+  crash() { playNoise(0.3, 0.2); playTone(80, 40, 0.3, 'sine', 0.2); },
+  countdown() { playTone(440, 440, 0.1, 'sine', 0.15); },
+  countdownGo() { playTone(880, 880, 0.2, 'sine', 0.2); },
+  complete() {
+    [0, 0.1, 0.2, 0.35].forEach((t, i) => {
+      const f = [523, 659, 784, 1047][i];
+      setTimeout(() => playTone(f, f, 0.2, 'sine', 0.15), t * 1000);
+    });
+  },
+};
+
+// Wind sound
+let windGain = null, windSource = null;
+function startWind() {
+  if (!audioCtx || windSource) return;
+  const bufSize = audioCtx.sampleRate * 2;
+  const buf = audioCtx.createBuffer(1, bufSize, audioCtx.sampleRate);
+  const data = buf.getChannelData(0);
+  for (let i = 0; i < bufSize; i++) data[i] = Math.random() * 2 - 1;
+  windSource = audioCtx.createBufferSource();
+  windSource.buffer = buf;
+  windSource.loop = true;
+  const filter = audioCtx.createBiquadFilter();
+  filter.type = 'lowpass';
+  filter.frequency.value = 400;
+  windGain = audioCtx.createGain();
+  windGain.gain.value = 0;
+  windSource.connect(filter).connect(windGain).connect(audioCtx.destination);
+  windSource.start();
+}
+function updateWind(speed) {
+  if (windGain) windGain.gain.value = Math.min(0.08, speed / PHYSICS.maxSpeed * 0.08);
+}
+function stopWind() {
+  if (windSource) { windSource.stop(); windSource = null; windGain = null; }
+}
+
+// [3] GAME STATE
+let state = 'menu'; // menu, countdown, playing, crashed, levelComplete
+let currentTrackIndex = 0;
+let gameTime = 0;
+let gatesPassed = 0;
+let gatesMissed = 0;
+let nextGateIndex = 0;
+let crashCount = 0;
+let maxCrashes = 3;
+let countdownTimer = 0;
+let countdownNumber = 3;
+let crashTimer = 0;
+let speed = 0;
+let playerX = 0;
+let playerZ = 0;
+let playerY = 0;
+let playerTilt = 0;
+let turnInput = 0;
+let braking = false;
+let tucking = false;
+let frameCount = 0;
+
+// Track unlocks and best times from localStorage
+function getStorage() {
+  try { return JSON.parse(localStorage.getItem('alpineDescent') || '{}'); } catch { return {}; }
+}
+function setStorage(data) {
+  try { localStorage.setItem('alpineDescent', JSON.stringify(data)); } catch {}
+}
+function isTrackUnlocked(i) {
+  if (i === 0) return true;
+  const s = getStorage();
+  return s['unlocked_' + i] === true;
+}
+function unlockTrack(i) {
+  const s = getStorage();
+  s['unlocked_' + i] = true;
+  setStorage(s);
+}
+function getBestTime(i) {
+  const s = getStorage();
+  return s['best_' + i] || null;
+}
+function setBestTime(i, time) {
+  const s = getStorage();
+  if (!s['best_' + i] || time < s['best_' + i]) {
+    s['best_' + i] = time;
+    setStorage(s);
+    return true;
+  }
+  return false;
+}
+function getStarsForTrack(i) {
+  const best = getBestTime(i);
+  if (!best) return 0;
+  const t = TRACKS[i];
+  if (best <= t.timeGold) return 3;
+  if (best <= t.timeSilver) return 2;
+  if (best <= t.timeBronze) return 1;
+  return 0;
+}
+
+// [4] INPUT SYSTEM
+const keys = {};
+window.addEventListener('keydown', e => {
+  keys[e.code] = true;
+  if (['Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code)) e.preventDefault();
+  ensureAudio();
+});
+window.addEventListener('keyup', e => { keys[e.code] = false; });
+
+const touch = { left: false, right: false, brake: false, tuck: false };
+
+function isDown(action) {
+  switch (action) {
+    case 'left':  return keys['ArrowLeft'] || keys['KeyA'] || touch.left;
+    case 'right': return keys['ArrowRight'] || keys['KeyD'] || touch.right;
+    case 'brake': return keys['ArrowDown'] || keys['KeyS'] || keys['Space'] || touch.brake;
+    case 'tuck':  return keys['ArrowUp'] || keys['KeyW'] || touch.tuck;
+  }
+  return false;
+}
+
+function anyAction() {
+  return keys['Space'] || keys['Enter'] || keys['KeyZ'] || touch.brake || touch.tuck;
+}
+
+// Touch controls
+if (isMobile) {
+  document.getElementById('touch-controls').style.display = 'flex';
+  const btns = { 'tb-left': 'left', 'tb-right': 'right', 'tb-brake': 'brake', 'tb-tuck': 'tuck' };
+  function handleTouches(e) {
+    e.preventDefault();
+    ensureAudio();
+    touch.left = false; touch.right = false; touch.brake = false; touch.tuck = false;
+    for (const t of e.touches) {
+      for (const [id, action] of Object.entries(btns)) {
+        const el = document.getElementById(id);
+        const r = el.getBoundingClientRect();
+        const pad = 20;
+        if (t.clientX >= r.left - pad && t.clientX <= r.right + pad &&
+            t.clientY >= r.top - pad && t.clientY <= r.bottom + pad) {
+          touch[action] = true;
+          el.classList.add('active');
+        }
+      }
+    }
+    for (const [id, action] of Object.entries(btns)) {
+      if (!touch[action]) document.getElementById(id).classList.remove('active');
+    }
+  }
+  document.addEventListener('touchstart', handleTouches, { passive: false });
+  document.addEventListener('touchmove', handleTouches, { passive: false });
+  document.addEventListener('touchend', handleTouches, { passive: false });
+  document.addEventListener('touchcancel', handleTouches, { passive: false });
+}
+
+// Screen touches for menu/crash/complete
+document.addEventListener('pointerdown', () => { ensureAudio(); });
+
+// [5] THREE.JS SETUP
+const container = document.getElementById('game-container');
+const renderer = new THREE.WebGLRenderer({ antialias: false });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.BasicShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.1;
+container.insertBefore(renderer.domElement, container.firstChild);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0xb8ccdd);
+scene.fog = new THREE.FogExp2(0xc0d0e0, 0.0025);
+
+const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 2000);
+camera.position.set(0, 5, -10);
+
+// Lighting
+const ambientLight = new THREE.AmbientLight(0x8899bb, 0.6);
+scene.add(ambientLight);
+
+const hemiLight = new THREE.HemisphereLight(0xaaddff, 0x445566, 0.4);
+scene.add(hemiLight);
+
+const sunLight = new THREE.DirectionalLight(0xffeedd, 1.3);
+sunLight.position.set(50, 100, -30);
+sunLight.castShadow = true;
+sunLight.shadow.mapSize.set(1024, 1024);
+sunLight.shadow.camera.near = 1;
+sunLight.shadow.camera.far = 300;
+sunLight.shadow.camera.left = -80;
+sunLight.shadow.camera.right = 80;
+sunLight.shadow.camera.top = 80;
+sunLight.shadow.camera.bottom = -80;
+scene.add(sunLight);
+
+window.addEventListener('resize', () => {
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+});
+
+// [6] TERRAIN GENERATION
+let terrainMesh = null;
+let trackConfig = null;
+let trackCurveOffsets = [];
+
+function generateCurveOffsets(track) {
+  const offsets = [];
+  const numCurves = track.curves;
+  for (let i = 0; i < numCurves; i++) {
+    offsets.push({
+      freq: 0.003 + Math.random() * 0.005,
+      amp: (track.width * 0.2) * (0.5 + Math.random() * 0.5),
+      phase: Math.random() * Math.PI * 2,
+    });
+  }
+  return offsets;
+}
+
+function getTerrainHeight(x, z, track, curves) {
+  const slopeAngle = track.baseAngle * Math.PI / 180;
+  let y = -z * Math.sin(slopeAngle);
+  // bumps
+  y += Math.sin(x * 0.08) * Math.cos(z * 0.05) * 0.6;
+  y += Math.sin(z * 0.03 + x * 0.02) * 0.4;
+  return y;
+}
+
+function getCurveOffset(z, curves) {
+  let offset = 0;
+  for (const c of curves) {
+    offset += Math.sin(z * c.freq + c.phase) * c.amp;
+  }
+  return offset;
+}
+
+function buildTerrain(track) {
+  if (terrainMesh) { scene.remove(terrainMesh); terrainMesh.geometry.dispose(); }
+
+  const segX = 50, segZ = 200;
+  const geo = new THREE.PlaneGeometry(track.width * 5, track.length * 1.2, segX, segZ);
+  geo.rotateX(-Math.PI / 2);
+
+  const pos = geo.attributes.position;
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i);
+    const z = pos.getZ(i);
+    const y = getTerrainHeight(x, z, track, trackCurveOffsets);
+    pos.setY(i, y);
+  }
+  geo.computeVertexNormals();
+
+  const mat = new THREE.MeshLambertMaterial({
+    color: 0xe8eef5,
+    flatShading: true,
+  });
+
+  terrainMesh = new THREE.Mesh(geo, mat);
+  terrainMesh.receiveShadow = true;
+  scene.add(terrainMesh);
+}
+
+// Side snow banks
+let bankMeshes = [];
+function buildBanks(track) {
+  bankMeshes.forEach(m => { scene.remove(m); m.geometry.dispose(); });
+  bankMeshes = [];
+
+  const bankMat = new THREE.MeshLambertMaterial({ color: 0xd0d8e5, flatShading: true });
+
+  [-1, 1].forEach(side => {
+    const geo = new THREE.BoxGeometry(30, 8, track.length * 1.2);
+    const mesh = new THREE.Mesh(geo, bankMat);
+    mesh.position.set(side * (track.width * 1.2 + 15), 0, track.length / 2);
+    mesh.receiveShadow = true;
+    scene.add(mesh);
+    bankMeshes.push(mesh);
+  });
+}
+
+// [7] SKIER MODEL
+let skierGroup = null;
+
+function buildSkier() {
+  if (skierGroup) scene.remove(skierGroup);
+  skierGroup = new THREE.Group();
+
+  const bodyMat = new THREE.MeshLambertMaterial({ color: 0x2255cc, flatShading: true });
+  const headMat = new THREE.MeshLambertMaterial({ color: 0xffcc99, flatShading: true });
+  const pantsMat = new THREE.MeshLambertMaterial({ color: 0x222233, flatShading: true });
+  const skiMat = new THREE.MeshLambertMaterial({ color: 0xcc2222, flatShading: true });
+  const poleMat = new THREE.MeshLambertMaterial({ color: 0xaaaaaa, flatShading: true });
+  const goggleMat = new THREE.MeshLambertMaterial({ color: 0xff6600, flatShading: true });
+
+  // Body (jacket)
+  const body = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.7, 0.35), bodyMat);
+  body.position.y = 0.85;
+  body.castShadow = true;
+  skierGroup.add(body);
+
+  // Head
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.2, 6, 4), headMat);
+  head.position.y = 1.4;
+  head.castShadow = true;
+  skierGroup.add(head);
+
+  // Goggles
+  const goggles = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.08, 0.12), goggleMat);
+  goggles.position.set(0, 1.42, 0.12);
+  skierGroup.add(goggles);
+
+  // Legs
+  [-0.12, 0.12].forEach(x => {
+    const leg = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.5, 0.18), pantsMat);
+    leg.position.set(x, 0.3, 0);
+    leg.castShadow = true;
+    skierGroup.add(leg);
+  });
+
+  // Skis
+  [-0.18, 0.18].forEach(x => {
+    const ski = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.04, 1.4), skiMat);
+    ski.position.set(x, 0.02, 0.1);
+    ski.castShadow = true;
+    skierGroup.add(ski);
+  });
+
+  // Poles
+  [-0.35, 0.35].forEach(x => {
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 1.0, 4), poleMat);
+    pole.position.set(x, 0.6, -0.1);
+    pole.rotation.x = 0.3;
+    skierGroup.add(pole);
+  });
+
+  skierGroup.castShadow = true;
+  scene.add(skierGroup);
+}
+
+// [8] GATE SYSTEM
+let gates = [];
+let gateMeshes = [];
+
+function buildGates(track) {
+  gateMeshes.forEach(g => { scene.remove(g); });
+  gateMeshes = [];
+  gates = [];
+
+  const gateWidth = 5;
+  const poleMat1 = new THREE.MeshLambertMaterial({ color: 0xff3333, flatShading: true });
+  const poleMat2 = new THREE.MeshLambertMaterial({ color: 0x3333ff, flatShading: true });
+  const bannerMat1 = new THREE.MeshLambertMaterial({ color: 0xff3333, side: THREE.DoubleSide, transparent: true, opacity: 0.7 });
+  const bannerMat2 = new THREE.MeshLambertMaterial({ color: 0x3333ff, side: THREE.DoubleSide, transparent: true, opacity: 0.7 });
+
+  const startZ = 40;
+  for (let i = 0; i < track.gateCount; i++) {
+    const z = startZ + i * track.gateSpacing;
+    const curveOff = getCurveOffset(z, trackCurveOffsets);
+    const side = (i % 2 === 0) ? -1 : 1;
+    const xCenter = curveOff + side * (track.width * 0.06 + Math.random() * track.width * 0.06);
+    const y = getTerrainHeight(xCenter, z, track, trackCurveOffsets);
+
+    const isRed = i % 2 === 0;
+    const pMat = isRed ? poleMat1 : poleMat2;
+    const bMat = isRed ? bannerMat1 : bannerMat2;
+
+    const group = new THREE.Group();
+
+    // Two poles
+    [-gateWidth / 2, gateWidth / 2].forEach(dx => {
+      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 2.5, 5), pMat);
+      pole.position.set(dx, 1.25, 0);
+      pole.castShadow = true;
+      group.add(pole);
+    });
+
+    // Banner
+    const banner = new THREE.Mesh(new THREE.PlaneGeometry(gateWidth, 0.4), bMat);
+    banner.position.y = 2.3;
+    group.add(banner);
+
+    group.position.set(xCenter, y, z);
+    scene.add(group);
+    gateMeshes.push(group);
+
+    gates.push({
+      z: z,
+      xCenter: xCenter,
+      xLeft: xCenter - gateWidth / 2,
+      xRight: xCenter + gateWidth / 2,
+      passed: false,
+      missed: false,
+      group: group,
+    });
+  }
+}
+
+// [9] OBSTACLE SYSTEM
+let obstacles = [];
+let obstacleMeshes = [];
+
+function makeTree(scale) {
+  const group = new THREE.Group();
+  const trunkMat = new THREE.MeshLambertMaterial({ color: 0x664422, flatShading: true });
+  const leafMat = new THREE.MeshLambertMaterial({ color: 0x226633, flatShading: true });
+
+  const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.12 * scale, 0.18 * scale, 1.2 * scale, 5), trunkMat);
+  trunk.position.y = 0.6 * scale;
+  trunk.castShadow = true;
+  group.add(trunk);
+
+  [0, 1, 2].forEach(i => {
+    const s = (3 - i) / 3;
+    const cone = new THREE.Mesh(new THREE.ConeGeometry(0.8 * s * scale, 1.2 * scale, 5), leafMat);
+    cone.position.y = (1.2 + i * 0.8) * scale;
+    cone.castShadow = true;
+    group.add(cone);
+  });
+
+  return group;
+}
+
+function makeRock(scale) {
+  const mat = new THREE.MeshLambertMaterial({ color: 0x778888, flatShading: true });
+  const mesh = new THREE.Mesh(new THREE.DodecahedronGeometry(0.5 * scale, 0), mat);
+  mesh.scale.set(1, 0.6, 1.2);
+  mesh.rotation.y = Math.random() * Math.PI;
+  mesh.castShadow = true;
+  return mesh;
+}
+
+function buildObstacles(track) {
+  obstacleMeshes.forEach(m => { scene.remove(m); });
+  obstacleMeshes = [];
+  obstacles = [];
+
+  for (let i = 0; i < track.obstacleCount; i++) {
+    const z = 30 + Math.random() * (track.length - 60);
+    const curveOff = getCurveOffset(z, trackCurveOffsets);
+    const x = curveOff + (Math.random() - 0.5) * track.width * 0.8;
+    const y = getTerrainHeight(x, z, track, trackCurveOffsets);
+
+    // Check not too close to any gate
+    let tooClose = false;
+    for (const g of gates) {
+      if (Math.abs(g.z - z) < 8 && Math.abs(g.xCenter - x) < 6) { tooClose = true; break; }
+    }
+    if (tooClose) continue;
+
+    const scale = 0.8 + Math.random() * 0.6;
+    const isTree = Math.random() > 0.3;
+    const mesh = isTree ? makeTree(scale) : makeRock(scale);
+    mesh.position.set(x, y, z);
+    scene.add(mesh);
+    obstacleMeshes.push(mesh);
+    obstacles.push({ x, z, radius: isTree ? 0.5 * scale : 0.6 * scale });
+  }
+}
+
+// [10] PARTICLE SYSTEMS
+let snowParticles = null;
+let snowPositions = [];
+const SNOW_COUNT = 400;
+
+function buildSnowParticles() {
+  if (snowParticles) { scene.remove(snowParticles); snowParticles.geometry.dispose(); }
+
+  const geo = new THREE.BufferGeometry();
+  const positions = new Float32Array(SNOW_COUNT * 3);
+  for (let i = 0; i < SNOW_COUNT; i++) {
+    positions[i * 3] = (Math.random() - 0.5) * 80;
+    positions[i * 3 + 1] = Math.random() * 30;
+    positions[i * 3 + 2] = Math.random() * 60;
+  }
+  geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+
+  const mat = new THREE.PointsMaterial({
+    color: 0xffffff,
+    size: 0.2,
+    transparent: true,
+    opacity: 0.7,
+    depthWrite: false,
+  });
+
+  snowParticles = new THREE.Points(geo, mat);
+  scene.add(snowParticles);
+}
+
+function updateSnowParticles(dt) {
+  if (!snowParticles) return;
+  const pos = snowParticles.geometry.attributes.position;
+  for (let i = 0; i < SNOW_COUNT; i++) {
+    let x = pos.getX(i);
+    let y = pos.getY(i);
+    let z = pos.getZ(i);
+
+    y -= 3 * dt;
+    x += Math.sin(frameCount * 0.01 + i) * 0.5 * dt;
+
+    if (y < playerY - 5) {
+      y = playerY + 15 + Math.random() * 15;
+      x = playerX + (Math.random() - 0.5) * 80;
+      z = playerZ + Math.random() * 60;
+    }
+
+    pos.setXYZ(i, x, y, z);
+  }
+  pos.needsUpdate = true;
+}
+
+// Ski spray particles
+let sprayParticles = [];
+const SPRAY_POOL = 100;
+
+function initSpray() {
+  sprayParticles = [];
+}
+
+function emitSpray(x, y, z, dirX) {
+  for (let i = 0; i < 3; i++) {
+    sprayParticles.push({
+      x: x + (Math.random() - 0.5) * 0.5,
+      y: y + 0.1,
+      z: z - 0.3,
+      vx: dirX * (1 + Math.random()) * 2,
+      vy: Math.random() * 2,
+      vz: -(1 + Math.random()),
+      life: 0.4 + Math.random() * 0.3,
+      maxLife: 0.4 + Math.random() * 0.3,
+    });
+  }
+  if (sprayParticles.length > SPRAY_POOL) sprayParticles.splice(0, sprayParticles.length - SPRAY_POOL);
+}
+
+let sprayMesh = null;
+function buildSprayMesh() {
+  if (sprayMesh) { scene.remove(sprayMesh); sprayMesh.geometry.dispose(); }
+  const geo = new THREE.BufferGeometry();
+  const positions = new Float32Array(SPRAY_POOL * 3);
+  const sizes = new Float32Array(SPRAY_POOL);
+  geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  const mat = new THREE.PointsMaterial({
+    color: 0xffffff,
+    size: 0.3,
+    transparent: true,
+    opacity: 0.5,
+    depthWrite: false,
+  });
+  sprayMesh = new THREE.Points(geo, mat);
+  scene.add(sprayMesh);
+}
+
+function updateSpray(dt) {
+  for (let i = sprayParticles.length - 1; i >= 0; i--) {
+    const p = sprayParticles[i];
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    p.z += p.vz * dt;
+    p.vy -= 5 * dt;
+    p.life -= dt;
+    if (p.life <= 0) sprayParticles.splice(i, 1);
+  }
+
+  if (!sprayMesh) return;
+  const pos = sprayMesh.geometry.attributes.position;
+  for (let i = 0; i < SPRAY_POOL; i++) {
+    if (i < sprayParticles.length) {
+      const p = sprayParticles[i];
+      pos.setXYZ(i, p.x, p.y, p.z);
+    } else {
+      pos.setXYZ(i, 0, -1000, 0);
+    }
+  }
+  pos.needsUpdate = true;
+}
+
+// [11] FINISH LINE
+let finishMesh = null;
+function buildFinishLine(track) {
+  if (finishMesh) { scene.remove(finishMesh); finishMesh.geometry.dispose(); }
+  const finishZ = 40 + (track.gateCount - 1) * track.gateSpacing + 30;
+  const y = getTerrainHeight(0, finishZ, track, trackCurveOffsets);
+  const geo = new THREE.PlaneGeometry(track.width, 3);
+  const mat = new THREE.MeshLambertMaterial({ color: 0xff0000, side: THREE.DoubleSide, transparent: true, opacity: 0.6 });
+  finishMesh = new THREE.Mesh(geo, mat);
+  finishMesh.rotation.x = -Math.PI / 2;
+  finishMesh.position.set(getCurveOffset(finishZ, trackCurveOffsets), y + 0.15, finishZ);
+  scene.add(finishMesh);
+  return finishZ;
+}
+
+let finishZ = 0;
+
+// [12] TRACK BUILDER
+function buildTrack(trackIndex) {
+  trackConfig = TRACKS[trackIndex];
+  trackCurveOffsets = generateCurveOffsets(trackConfig);
+
+  // Clear old
+  scene.children.filter(c => c !== ambientLight && c !== hemiLight && c !== sunLight && c !== snowParticles && c !== sprayMesh).forEach(c => {
+    // keep lights and particles
+  });
+
+  buildTerrain(trackConfig);
+  buildBanks(trackConfig);
+  buildGates(trackConfig);
+  buildObstacles(trackConfig);
+  finishZ = buildFinishLine(trackConfig);
+  buildSnowParticles();
+  buildSprayMesh();
+  buildSkier();
+  initSpray();
+
+  // Reset player
+  playerX = getCurveOffset(5, trackCurveOffsets);
+  playerZ = 5;
+  playerY = getTerrainHeight(playerX, playerZ, trackConfig, trackCurveOffsets);
+  speed = 0;
+  turnInput = 0;
+  braking = false;
+  tucking = false;
+  gatesPassed = 0;
+  gatesMissed = 0;
+  nextGateIndex = 0;
+  crashCount = 0;
+  gameTime = 0;
+}
+
+// [13] COLLISION DETECTION
+function checkGateCollision() {
+  if (nextGateIndex >= gates.length) return;
+
+  const gate = gates[nextGateIndex];
+  if (playerZ >= gate.z) {
+    if (playerX >= gate.xLeft && playerX <= gate.xRight) {
+      // Passed!
+      gate.passed = true;
+      gatesPassed++;
+      sfx.gatePassed();
+      showGateFlash('GATE!', '#4af');
+      // Flash gate green
+      gate.group.children.forEach(c => {
+        if (c.material) c.material.emissive = new THREE.Color(0x00ff44);
+        setTimeout(() => { if (c.material) c.material.emissive = new THREE.Color(0x000000); }, 300);
+      });
+    } else {
+      // Missed
+      gate.missed = true;
+      gatesMissed++;
+      sfx.gateMissed();
+      showGateFlash('+' + PHYSICS.gatePenalty + 's PENALTY', '#f44');
+    }
+    nextGateIndex++;
+  }
+}
+
+function checkObstacleCollision() {
+  const playerRadius = 0.4;
+  for (const obs of obstacles) {
+    const dx = playerX - obs.x;
+    const dz = playerZ - obs.z;
+    const dist = Math.sqrt(dx * dx + dz * dz);
+    if (dist < playerRadius + obs.radius) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function checkBoundsCollision() {
+  if (!trackConfig) return false;
+  const curveOff = getCurveOffset(playerZ, trackCurveOffsets);
+  const halfW = trackConfig.width * 0.55;
+  return Math.abs(playerX - curveOff) > halfW;
+}
+
+function checkFinishLine() {
+  return playerZ >= finishZ;
+}
+
+// [14] UI HELPERS
+function showScreen(id) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  if (id) document.getElementById(id).classList.add('active');
+}
+
+function showHUD(show) {
+  document.getElementById('hud').style.display = show ? 'flex' : 'none';
+  document.getElementById('lives-display').style.display = show ? 'block' : 'none';
+  if (isMobile) document.getElementById('touch-controls').style.display = show ? 'flex' : 'none';
+}
+
+function updateHUD() {
+  const mins = Math.floor(gameTime / 60);
+  const secs = (gameTime % 60).toFixed(2).padStart(5, '0');
+  document.getElementById('timer-val').textContent = mins + ':' + secs;
+  document.getElementById('gates-val').textContent = gatesPassed + ' / ' + trackConfig.gateCount;
+  document.getElementById('speed-val').textContent = Math.round(speed * 3.6) + ' km/h';
+  document.getElementById('lives-display').textContent = '❤'.repeat(maxCrashes - crashCount);
+}
+
+let gateFlashTimer = 0;
+function showGateFlash(text, color) {
+  const el = document.getElementById('gate-flash');
+  el.textContent = text;
+  el.style.color = color;
+  el.style.background = color === '#4af' ? 'rgba(0,50,100,0.7)' : 'rgba(100,0,0,0.7)';
+  el.style.display = 'block';
+  gateFlashTimer = 1.5;
+}
+
+function formatTime(t) {
+  const mins = Math.floor(t / 60);
+  const secs = (t % 60).toFixed(2).padStart(5, '0');
+  return mins + ':' + secs;
+}
+
+function renderMenu() {
+  const list = document.getElementById('track-list');
+  list.innerHTML = '';
+  TRACKS.forEach((t, i) => {
+    const unlocked = isTrackUnlocked(i);
+    const stars = getStarsForTrack(i);
+    const best = getBestTime(i);
+    const btn = document.createElement('div');
+    btn.className = 'track-btn' + (unlocked ? '' : ' locked');
+    if (unlocked) {
+      btn.innerHTML = `
+        <div>
+          <div class="track-name">${t.name}</div>
+          ${best ? '<div class="track-best">Best: ' + formatTime(best) + '</div>' : ''}
+        </div>
+        <div class="track-stars">${'★'.repeat(stars)}${'☆'.repeat(3 - stars)}</div>
+      `;
+      btn.onclick = () => { startTrack(i); };
+    } else {
+      btn.innerHTML = `
+        <div class="track-name">${t.name}</div>
+        <div class="lock-icon">🔒</div>
+      `;
+    }
+    list.appendChild(btn);
+  });
+}
+
+// [15] GAME FLOW
+function startTrack(index) {
+  ensureAudio();
+  currentTrackIndex = index;
+  buildTrack(index);
+  state = 'countdown';
+  countdownNumber = 3;
+  countdownTimer = 0;
+  showScreen(null);
+  showHUD(true);
+  updateHUD();
+  startWind();
+
+  const cd = document.getElementById('countdown-display');
+  cd.style.display = 'block';
+  cd.textContent = '3';
+  sfx.countdown();
+}
+
+function startPlaying() {
+  state = 'playing';
+  document.getElementById('countdown-display').style.display = 'none';
+}
+
+function triggerCrash() {
+  crashCount++;
+  sfx.crash();
+  speed = 0;
+
+  if (crashCount >= maxCrashes) {
+    state = 'crashed';
+    document.getElementById('crash-lives').textContent = 'No more lives! Run over.';
+    showScreen('crash-screen');
+    showHUD(false);
+    stopWind();
+  } else {
+    state = 'crashed';
+    crashTimer = PHYSICS.crashRecoveryFrames;
+    document.getElementById('crash-lives').textContent = (maxCrashes - crashCount) + ' lives remaining';
+    showScreen('crash-screen');
+  }
+}
+
+function respawnAfterCrash() {
+  // Move back a bit
+  playerZ = Math.max(5, playerZ - 10);
+  const curveOff = getCurveOffset(playerZ, trackCurveOffsets);
+  playerX = curveOff;
+  playerY = getTerrainHeight(playerX, playerZ, trackConfig, trackCurveOffsets);
+  speed = 0;
+  state = 'playing';
+  showScreen(null);
+  showHUD(true);
+}
+
+function triggerFinish() {
+  state = 'levelComplete';
+  stopWind();
+  sfx.complete();
+
+  const penalties = gatesMissed * PHYSICS.gatePenalty;
+  const finalTime = gameTime + penalties;
+
+  const isNewBest = setBestTime(currentTrackIndex, finalTime);
+  const stars = finalTime <= trackConfig.timeGold ? 3 : finalTime <= trackConfig.timeSilver ? 2 : finalTime <= trackConfig.timeBronze ? 1 : 0;
+
+  // Unlock next track if got at least 1 star
+  if (stars >= 1 && currentTrackIndex < TRACKS.length - 1) {
+    unlockTrack(currentTrackIndex + 1);
+  }
+
+  document.getElementById('complete-track-name').textContent = trackConfig.name;
+  document.getElementById('complete-time').textContent = formatTime(gameTime);
+  document.getElementById('complete-gates').textContent = gatesPassed + ' / ' + trackConfig.gateCount;
+  document.getElementById('complete-penalties').textContent = penalties > 0 ? '+' + penalties + 's (' + gatesMissed + ' missed)' : 'None!';
+  document.getElementById('complete-final').textContent = formatTime(finalTime);
+  document.getElementById('complete-stars').textContent = '★'.repeat(stars) + '☆'.repeat(3 - stars);
+  document.getElementById('complete-best').textContent = isNewBest ? 'NEW BEST TIME!' : 'Best: ' + formatTime(getBestTime(currentTrackIndex));
+
+  const nextBtn = document.getElementById('btn-next');
+  if (currentTrackIndex < TRACKS.length - 1 && isTrackUnlocked(currentTrackIndex + 1)) {
+    nextBtn.style.display = 'inline-block';
+  } else {
+    nextBtn.style.display = 'none';
+  }
+
+  showScreen('complete-screen');
+  showHUD(false);
+}
+
+// Button handlers
+document.getElementById('btn-retry').onclick = () => { startTrack(currentTrackIndex); };
+document.getElementById('btn-next').onclick = () => { startTrack(currentTrackIndex + 1); };
+document.getElementById('btn-menu').onclick = () => { goToMenu(); };
+
+function goToMenu() {
+  state = 'menu';
+  stopWind();
+  renderMenu();
+  showScreen('menu-screen');
+  showHUD(false);
+}
+
+// [16] UPDATE LOOP
+const clock = new THREE.Clock();
+
+function update() {
+  const dt = Math.min(clock.getDelta(), 0.05);
+  frameCount++;
+
+  if (state === 'countdown') {
+    countdownTimer += dt;
+    const cd = document.getElementById('countdown-display');
+    if (countdownTimer >= 1 && countdownNumber === 3) {
+      countdownNumber = 2;
+      cd.textContent = '2';
+      sfx.countdown();
+    } else if (countdownTimer >= 2 && countdownNumber === 2) {
+      countdownNumber = 1;
+      cd.textContent = '1';
+      sfx.countdown();
+    } else if (countdownTimer >= 3 && countdownNumber === 1) {
+      countdownNumber = 0;
+      cd.textContent = 'GO!';
+      sfx.countdownGo();
+    } else if (countdownTimer >= 3.5) {
+      startPlaying();
+    }
+    // Position camera behind skier during countdown
+    updateCamera(dt);
+    updateSnowParticles(dt);
+    return;
+  }
+
+  if (state === 'playing') {
+    gameTime += dt;
+
+    // Input
+    turnInput = 0;
+    if (isDown('left')) turnInput = -1;
+    if (isDown('right')) turnInput = 1;
+    braking = isDown('brake');
+    tucking = isDown('tuck');
+
+    // Physics
+    const slopeAngle = trackConfig.baseAngle * Math.PI / 180;
+    const slopeAccel = PHYSICS.gravity * Math.sin(slopeAngle) * (tucking ? PHYSICS.tuckBoost : 1);
+    speed += slopeAccel * dt;
+    if (braking) speed -= PHYSICS.brakeForce * dt;
+    speed *= PHYSICS.friction;
+    if (speed < 0) speed = 0;
+    if (speed > PHYSICS.maxSpeed) speed = PHYSICS.maxSpeed;
+
+    // Turning
+    const turnEffectiveness = Math.min(1, speed / 15);
+    const lateralSpeed = turnInput * PHYSICS.turnSpeed * turnEffectiveness * (braking ? 0.5 : 1) * (1 + speed / PHYSICS.maxSpeed * 0.5);
+    playerX -= lateralSpeed * speed * dt * 0.18;
+    playerZ += speed * dt;
+    playerY = getTerrainHeight(playerX, playerZ, trackConfig, trackCurveOffsets);
+
+    // Smooth tilt
+    playerTilt += (turnInput * 0.3 - playerTilt) * 0.1;
+
+    // Spray particles on turns
+    if (Math.abs(turnInput) > 0.1 && speed > 5) {
+      emitSpray(playerX, playerY, playerZ, -turnInput);
+    }
+
+    // Update wind
+    updateWind(speed);
+
+    // Collisions
+    checkGateCollision();
+
+    if (checkObstacleCollision() || checkBoundsCollision()) {
+      triggerCrash();
+      return;
+    }
+
+    if (checkFinishLine()) {
+      triggerFinish();
+      return;
+    }
+
+    // HUD
+    updateHUD();
+
+    // Gate flash timer
+    if (gateFlashTimer > 0) {
+      gateFlashTimer -= dt;
+      if (gateFlashTimer <= 0) document.getElementById('gate-flash').style.display = 'none';
+    }
+  }
+
+  if (state === 'crashed' && crashCount < maxCrashes) {
+    // Wait for input to respawn
+    if (anyAction()) {
+      respawnAfterCrash();
+    }
+  }
+
+  if (state === 'crashed' && crashCount >= maxCrashes) {
+    if (anyAction()) {
+      goToMenu();
+    }
+  }
+
+  // Update skier visual
+  if (skierGroup && trackConfig) {
+    skierGroup.position.set(playerX, playerY, playerZ);
+    skierGroup.rotation.z = playerTilt;
+    if (tucking) {
+      skierGroup.rotation.x = 0.3;
+    } else if (braking) {
+      skierGroup.rotation.x = -0.15;
+    } else {
+      skierGroup.rotation.x = 0;
+    }
+  }
+
+  // Update sun shadow to follow player
+  sunLight.position.set(playerX + 50, playerY + 100, playerZ - 30);
+  sunLight.target.position.set(playerX, playerY, playerZ);
+  sunLight.target.updateMatrixWorld();
+
+  updateCamera(dt);
+  updateSnowParticles(dt);
+  updateSpray(dt);
+}
+
+// [17] CAMERA
+const camOffset = new THREE.Vector3(0, 6, -12);
+const camLookOffset = new THREE.Vector3(0, 1, 20);
+const camPos = new THREE.Vector3();
+const camTarget = new THREE.Vector3();
+
+function updateCamera(dt) {
+  if (!trackConfig) return;
+
+  // Speed-based camera adjustments
+  const speedFactor = speed / PHYSICS.maxSpeed;
+  const dynamicOffset = camOffset.clone();
+  dynamicOffset.z -= speedFactor * 4;
+  dynamicOffset.y += speedFactor * 2;
+
+  const desiredPos = new THREE.Vector3(
+    playerX + dynamicOffset.x + playerTilt * -3,
+    playerY + dynamicOffset.y,
+    playerZ + dynamicOffset.z
+  );
+
+  const desiredTarget = new THREE.Vector3(
+    playerX,
+    playerY + camLookOffset.y,
+    playerZ + camLookOffset.z * (0.5 + speedFactor * 0.5)
+  );
+
+  camPos.lerp(desiredPos, 0.06);
+  camTarget.lerp(desiredTarget, 0.08);
+
+  camera.position.copy(camPos);
+  camera.lookAt(camTarget);
+}
+
+// [18] MAIN LOOP
+function loop() {
+  update();
+  renderer.render(scene, camera);
+  requestAnimationFrame(loop);
+}
+
+// Initialize
+renderMenu();
+showScreen('menu-screen');
+
+// Initial camera position for menu
+camPos.set(0, 20, -20);
+camTarget.set(0, 0, 50);
+camera.position.copy(camPos);
+camera.lookAt(camTarget);
+
+loop();
+</script>
+</body>
+</html>

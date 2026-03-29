@@ -42,8 +42,8 @@
   }
   .game-card:hover {
     transform: translateY(-6px);
-    box-shadow: 0 8px 30px rgba(68, 187, 68, 0.25);
-    border-color: #44BB44;
+    box-shadow: 0 8px 30px var(--glow, rgba(68, 187, 68, 0.25));
+    border-color: var(--accent, #44BB44);
   }
   .game-card canvas {
     width: 100%;
@@ -82,12 +82,21 @@
 <h1>Game Portal</h1>
 
 <div class="games">
-  <a class="game-card" href="DinoDash/index.html">
+  <a class="game-card" href="DinoDash/index.html" style="--glow:rgba(68,187,68,0.25);--accent:#44BB44;">
     <canvas id="dinoDashThumb" width="680" height="400"></canvas>
     <div class="game-info">
       <h2>Dino Dash</h2>
       <p>Stomp dinos from above, crack eggs, collect fossils, and dash through prehistoric levels!</p>
       <span class="tag">Platformer</span>
+    </div>
+  </a>
+
+  <a class="game-card" href="AlpineDescent/index.html" style="--glow:rgba(100,180,255,0.25);--accent:#7cf;">
+    <canvas id="alpineThumb" width="680" height="400"></canvas>
+    <div class="game-info">
+      <h2>Alpine Descent</h2>
+      <p>Race downhill through slalom gates, dodge trees and rocks, and chase the gold on 3 snowy tracks!</p>
+      <span class="tag" style="background:#7cf222;color:#7cf;">3D Ski Racing</span>
     </div>
   </a>
 </div>
@@ -220,6 +229,172 @@
   ctx.fillStyle = '#44BB44';
   ctx.font = '14px sans-serif';
   ctx.fillText('A Prehistoric Platformer', W / 2, 84);
+})();
+
+// Draw Alpine Descent thumbnail
+(function() {
+  const c = document.getElementById('alpineThumb');
+  const ctx = c.getContext('2d');
+  const W = c.width, H = c.height;
+
+  // Sky gradient
+  const sky = ctx.createLinearGradient(0, 0, 0, H);
+  sky.addColorStop(0, '#6a9fcf');
+  sky.addColorStop(0.5, '#b8ccdd');
+  sky.addColorStop(1, '#e8eef5');
+  ctx.fillStyle = sky;
+  ctx.fillRect(0, 0, W, H);
+
+  // Mountains
+  ctx.fillStyle = '#8a9ab0';
+  ctx.beginPath();
+  ctx.moveTo(0, H * 0.6);
+  ctx.lineTo(100, H * 0.25);
+  ctx.lineTo(200, H * 0.45);
+  ctx.lineTo(340, H * 0.15);
+  ctx.lineTo(480, H * 0.4);
+  ctx.lineTo(580, H * 0.2);
+  ctx.lineTo(680, H * 0.35);
+  ctx.lineTo(680, H * 0.6);
+  ctx.fill();
+
+  // Snow caps
+  ctx.fillStyle = '#f0f4ff';
+  ctx.beginPath();
+  ctx.moveTo(310, H * 0.15);
+  ctx.lineTo(340, H * 0.15);
+  ctx.lineTo(370, H * 0.22);
+  ctx.lineTo(350, H * 0.2);
+  ctx.lineTo(330, H * 0.22);
+  ctx.lineTo(310, H * 0.19);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(555, H * 0.2);
+  ctx.lineTo(580, H * 0.2);
+  ctx.lineTo(605, H * 0.27);
+  ctx.lineTo(590, H * 0.25);
+  ctx.lineTo(570, H * 0.26);
+  ctx.fill();
+
+  // Snow slope
+  const slope = ctx.createLinearGradient(0, H * 0.5, 0, H);
+  slope.addColorStop(0, '#e0e8f0');
+  slope.addColorStop(1, '#c8d4e0');
+  ctx.fillStyle = slope;
+  ctx.beginPath();
+  ctx.moveTo(0, H * 0.55);
+  ctx.lineTo(680, H * 0.45);
+  ctx.lineTo(680, H);
+  ctx.lineTo(0, H);
+  ctx.fill();
+
+  // Ski tracks on slope
+  ctx.strokeStyle = 'rgba(180,195,210,0.6)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(200, H * 0.52);
+  ctx.quadraticCurveTo(300, H * 0.65, 380, H * 0.75);
+  ctx.quadraticCurveTo(430, H * 0.82, 500, H * 0.9);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(206, H * 0.52);
+  ctx.quadraticCurveTo(306, H * 0.65, 386, H * 0.75);
+  ctx.quadraticCurveTo(436, H * 0.82, 506, H * 0.9);
+  ctx.stroke();
+
+  // Gate poles (red)
+  function drawGate(x, y, color) {
+    ctx.fillStyle = color;
+    ctx.fillRect(x - 18, y - 20, 4, 22);
+    ctx.fillRect(x + 14, y - 20, 4, 22);
+    ctx.globalAlpha = 0.5;
+    ctx.fillRect(x - 18, y - 20, 36, 4);
+    ctx.globalAlpha = 1;
+  }
+  drawGate(280, H * 0.62, '#ff3333');
+  drawGate(420, H * 0.72, '#3355ff');
+  drawGate(350, H * 0.82, '#ff3333');
+
+  // Trees
+  function drawTree(x, y, s) {
+    ctx.fillStyle = '#5a4030';
+    ctx.fillRect(x - 2 * s, y - 4 * s, 4 * s, 8 * s);
+    ctx.fillStyle = '#2a6633';
+    ctx.beginPath();
+    ctx.moveTo(x, y - 18 * s);
+    ctx.lineTo(x - 10 * s, y - 2 * s);
+    ctx.lineTo(x + 10 * s, y - 2 * s);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(x, y - 24 * s);
+    ctx.lineTo(x - 8 * s, y - 10 * s);
+    ctx.lineTo(x + 8 * s, y - 10 * s);
+    ctx.fill();
+  }
+  drawTree(120, H * 0.6, 1.2);
+  drawTree(560, H * 0.68, 1);
+  drawTree(80, H * 0.75, 0.8);
+  drawTree(620, H * 0.85, 1.1);
+
+  // Skier
+  const sx = 340, sy = H * 0.68;
+  // Skis
+  ctx.fillStyle = '#cc2222';
+  ctx.save();
+  ctx.translate(sx, sy);
+  ctx.rotate(-0.15);
+  ctx.fillRect(-12, 2, 6, 28);
+  ctx.fillRect(6, 2, 6, 28);
+  ctx.restore();
+  // Body
+  ctx.fillStyle = '#2255cc';
+  ctx.fillRect(sx - 6, sy - 16, 12, 14);
+  // Head
+  ctx.fillStyle = '#ffcc99';
+  ctx.beginPath();
+  ctx.arc(sx, sy - 20, 5, 0, Math.PI * 2);
+  ctx.fill();
+  // Goggles
+  ctx.fillStyle = '#ff6600';
+  ctx.fillRect(sx - 4, sy - 22, 8, 3);
+  // Legs
+  ctx.fillStyle = '#222';
+  ctx.fillRect(sx - 5, sy - 2, 4, 8);
+  ctx.fillRect(sx + 1, sy - 2, 4, 8);
+  // Poles
+  ctx.strokeStyle = '#aaa';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(sx - 8, sy - 10);
+  ctx.lineTo(sx - 18, sy + 10);
+  ctx.moveTo(sx + 8, sy - 10);
+  ctx.lineTo(sx + 18, sy + 10);
+  ctx.stroke();
+
+  // Snowflakes
+  ctx.fillStyle = '#fff';
+  for (let i = 0; i < 30; i++) {
+    const size = 1.5 + Math.random() * 2;
+    ctx.globalAlpha = 0.4 + Math.random() * 0.5;
+    ctx.beginPath();
+    ctx.arc(Math.random() * W, Math.random() * H * 0.7, size, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+
+  // Title
+  ctx.shadowColor = '#4488cc';
+  ctx.shadowBlur = 20;
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 40px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('ALPINE DESCENT', W / 2, 55);
+  ctx.shadowBlur = 0;
+
+  // Subtitle
+  ctx.fillStyle = '#4488cc';
+  ctx.font = '14px sans-serif';
+  ctx.fillText('3D Downhill Slalom', W / 2, 78);
 })();
 </script>
 
