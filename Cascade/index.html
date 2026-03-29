@@ -1,0 +1,1723 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<title>Cascade</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #000; touch-action: none; -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+  canvas { display: block; image-rendering: pixelated; }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<script>
+// ============================================================
+// CASCADE — Chain Reaction Architect
+// ============================================================
+
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+
+function resize() {
+  canvas.width = document.documentElement.clientWidth;
+  canvas.height = document.documentElement.clientHeight;
+}
+resize();
+window.addEventListener('resize', resize);
+window.addEventListener('orientationchange', () => setTimeout(resize, 100));
+
+// ============================================================
+// CONSTANTS
+// ============================================================
+const ACCENT = '#ff6633';
+const ACCENT2 = '#ffaa44';
+const BG = '#0a0a1a';
+const GRID_BG = '#0f0f2a';
+const CELL_BORDER = '#1a1a3a';
+
+const E = { EMPTY: 0, OIL: 1, GAS: 2, ICE: 3, WATER: 4, METAL: 5, WOOD: 6, CRYSTAL: 7, TNT: 8, STONE: 9 };
+
+const ELEM = {
+  [E.OIL]:     { name: 'Oil',     color: '#ff8833', glow: '#ff6600', symbol: '~' },
+  [E.GAS]:     { name: 'Gas',     color: '#ffee44', glow: '#ffcc00', symbol: '.' },
+  [E.ICE]:     { name: 'Ice',     color: '#44eeff', glow: '#22ccdd', symbol: '*' },
+  [E.WATER]:   { name: 'Water',   color: '#3388ff', glow: '#2266dd', symbol: '~' },
+  [E.METAL]:   { name: 'Metal',   color: '#ccccdd', glow: '#aaaacc', symbol: '=' },
+  [E.WOOD]:    { name: 'Wood',    color: '#cc8833', glow: '#aa6622', symbol: '#' },
+  [E.CRYSTAL]: { name: 'Crystal', color: '#bb44ff', glow: '#9922dd', symbol: '<>' },
+  [E.TNT]:     { name: 'TNT',     color: '#ff2222', glow: '#dd0000', symbol: 'T' },
+  [E.STONE]:   { name: 'Stone',   color: '#555566', glow: '#444455', symbol: '' },
+};
+
+// Timing (frames at 60fps)
+const TIMING = {
+  OIL_SPREAD: 20,
+  GAS_EXPLODE: 2,
+  ICE_MELT: 50,
+  WOOD_BURN: 80,
+  TNT_FUSE: 25,
+  METAL_CONDUCT: 3,
+  CRYSTAL_BEAM: 4,
+};
+
+// ============================================================
+// AUDIO
+// ============================================================
+let audioCtx = null;
+function ensureAudio() {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+}
+
+function playTone(freq, dur, type, vol) {
+  try {
+    ensureAudio();
+    const o = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    o.type = type || 'sine';
+    o.frequency.value = freq;
+    g.gain.value = vol || 0.05;
+    g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + dur);
+    o.connect(g);
+    g.connect(audioCtx.destination);
+    o.start();
+    o.stop(audioCtx.currentTime + dur);
+  } catch(e) {}
+}
+
+function playNoise(dur, vol) {
+  try {
+    ensureAudio();
+    const buf = audioCtx.createBuffer(1, audioCtx.sampleRate * dur, audioCtx.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1) * vol;
+    const src = audioCtx.createBufferSource();
+    const g = audioCtx.createGain();
+    src.buffer = buf;
+    g.gain.value = 1;
+    g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + dur);
+    src.connect(g);
+    g.connect(audioCtx.destination);
+    src.start();
+  } catch(e) {}
+}
+
+const sfx = {
+  ignite:  () => { playTone(300, 0.15, 'sawtooth', 0.06); playTone(500, 0.1, 'sine', 0.04); },
+  burn:    () => { playNoise(0.12, 0.03); },
+  explode: () => { playNoise(0.3, 0.08); playTone(80, 0.25, 'square', 0.06); },
+  crystal: () => { playTone(1200, 0.15, 'sine', 0.06); playTone(1800, 0.1, 'sine', 0.04); },
+  water:   () => { playNoise(0.1, 0.02); playTone(600, 0.08, 'sine', 0.03); },
+  metal:   () => { playTone(200, 0.08, 'sawtooth', 0.04); },
+  ice:     () => { playTone(2000, 0.08, 'sine', 0.05); playTone(2400, 0.06, 'sine', 0.03); },
+  tntFuse: () => { playTone(800, 0.05, 'square', 0.04); },
+  success: () => { playTone(523, 0.15, 'sine', 0.06); setTimeout(() => playTone(659, 0.15, 'sine', 0.06), 120); setTimeout(() => playTone(784, 0.25, 'sine', 0.06), 240); },
+  fail:    () => { playTone(400, 0.2, 'sawtooth', 0.04); setTimeout(() => playTone(300, 0.3, 'sawtooth', 0.04), 150); },
+  click:   () => { playTone(600, 0.05, 'sine', 0.04); },
+};
+
+// ============================================================
+// STORAGE
+// ============================================================
+function getStorage() { try { return JSON.parse(localStorage.getItem('cascade') || '{}'); } catch { return {}; } }
+function setStorage(d) { try { localStorage.setItem('cascade', JSON.stringify(d)); } catch {} }
+
+function getStars(lvl) { return getStorage()['s' + lvl] || 0; }
+function setStars(lvl, s) { const d = getStorage(); if (s > (d['s' + lvl] || 0)) { d['s' + lvl] = s; setStorage(d); } }
+function isUnlocked(lvl) { return lvl === 0 || getStars(lvl - 1) > 0; }
+
+// ============================================================
+// LEVELS
+// ============================================================
+const _ = E.EMPTY, O = E.OIL, G = E.GAS, I = E.ICE, W = E.WATER, M = E.METAL, D = E.WOOD, C = E.CRYSTAL, T = E.TNT, S = E.STONE;
+
+const LEVELS = [
+  // === WORLD 1: SPARK ===
+  {
+    name: 'First Spark', world: 0,
+    hint: 'Oil spreads fire to adjacent cells. Ignite the chain!',
+    grid: [
+      [_,_,_,_,_,_,_,_],
+      [_,_,O,O,O,O,_,_],
+      [_,_,_,_,_,O,_,_],
+      [_,_,_,_,_,O,_,_],
+      [_,_,_,_,_,O,_,_],
+      [_,_,_,_,_,_,_,_],
+    ],
+    targets: [[4,5]],
+    timeLimit: 180,
+    optimalSparks: [[1,2]],
+  },
+  {
+    name: 'Fork in the Road', world: 0,
+    hint: 'One spark must reach both targets!',
+    grid: [
+      [_,_,_,_,_,_,_,_],
+      [_,O,_,_,_,_,O,_],
+      [_,O,_,_,_,_,O,_],
+      [_,O,O,O,O,O,O,_],
+      [_,_,_,_,_,_,_,_],
+    ],
+    targets: [[1,1],[1,6]],
+    timeLimit: 180,
+    optimalSparks: [[3,3],[3,4]],
+  },
+  {
+    name: 'Slow Burn', world: 0,
+    hint: 'Wood burns slowly but spreads fire when done.',
+    grid: [
+      [_,_,_,_,_,_,_,_],
+      [_,_,D,D,D,_,_,_],
+      [_,_,_,_,D,_,_,_],
+      [_,_,_,_,O,O,_,_],
+      [_,_,_,_,_,O,_,_],
+      [_,_,_,_,_,_,_,_],
+    ],
+    targets: [[4,5]],
+    timeLimit: 300,
+    optimalSparks: [[1,2]],
+  },
+  {
+    name: 'Gas Blast', world: 0,
+    hint: 'Gas explodes instantly — hitting all 8 neighbors!',
+    grid: [
+      [_,_,_,_,_,_,_,_,_],
+      [_,_,_,_,_,_,_,_,_],
+      [_,O,O,O,_,_,_,_,_],
+      [_,_,_,O,_,_,_,_,_],
+      [_,_,_,G,_,_,_,_,_],
+      [_,_,_,_,O,_,_,_,_],
+      [_,_,_,_,_,_,_,_,_],
+    ],
+    targets: [[5,4]],
+    timeLimit: 150,
+    optimalSparks: [[2,1]],
+  },
+  {
+    name: 'Chain Gang', world: 0,
+    hint: 'Combine Oil, Wood, and Gas for a big chain!',
+    grid: [
+      [_,_,_,_,_,_,_,_],
+      [_,O,O,D,_,_,_,_],
+      [_,_,_,D,_,_,_,_],
+      [_,_,_,O,G,_,_,_],
+      [_,_,_,_,_,O,_,_],
+      [_,_,_,_,_,O,_,_],
+      [_,_,_,_,_,_,_,_],
+    ],
+    targets: [[5,5]],
+    timeLimit: 300,
+    optimalSparks: [[1,1]],
+  },
+
+  // === WORLD 2: CIRCUIT ===
+  {
+    name: 'Wire', world: 1,
+    hint: 'Metal conducts fire instantly along connected cells.',
+    grid: [
+      [_,_,_,_,_,_,_,_,_],
+      [_,O,O,M,_,_,_,_,_],
+      [_,_,_,M,_,_,_,_,_],
+      [_,_,_,M,M,M,_,_,_],
+      [_,_,_,_,_,M,_,_,_],
+      [_,_,_,_,_,O,O,_,_],
+      [_,_,_,_,_,_,_,_,_],
+    ],
+    targets: [[5,6]],
+    timeLimit: 120,
+    optimalSparks: [[1,1]],
+  },
+  {
+    name: 'Prism', world: 1,
+    hint: 'Crystal sends energy beams in all 4 directions!',
+    grid: [
+      [_,_,_,_,_,_,_,_,_],
+      [_,_,_,O,_,_,_,_,_],
+      [_,_,_,_,_,_,_,_,_],
+      [_,O,_,C,_,O,_,_,_],
+      [_,_,_,_,_,_,_,_,_],
+      [_,_,_,O,_,_,_,_,_],
+      [_,_,_,_,_,_,_,_,_],
+    ],
+    targets: [[1,3],[3,1],[3,5],[5,3]],
+    timeLimit: 120,
+    optimalSparks: [[3,3]],
+  },
+  {
+    name: 'Demolition', world: 1,
+    hint: 'TNT explodes with a big radius after a short fuse!',
+    grid: [
+      [_,_,_,_,_,_,_,_,_],
+      [_,_,_,_,_,_,_,_,_],
+      [_,O,O,O,T,_,_,_,_],
+      [_,_,_,_,_,_,_,_,_],
+      [_,_,_,_,_,O,_,_,_],
+      [_,_,_,_,_,_,_,_,_],
+    ],
+    targets: [[4,5]],
+    timeLimit: 120,
+    optimalSparks: [[2,1]],
+  },
+  {
+    name: 'Relay', world: 1,
+    hint: 'Use Metal wires and Crystal beams to bridge gaps.',
+    grid: [
+      [_,_,_,_,_,_,_,_,_,_],
+      [_,O,M,M,_,_,_,_,_,_],
+      [_,_,_,M,_,_,_,_,_,_],
+      [_,_,_,C,_,_,M,M,O,_],
+      [_,_,_,_,_,_,M,_,_,_],
+      [_,_,_,_,_,_,_,_,_,_],
+    ],
+    targets: [[3,8]],
+    timeLimit: 120,
+    optimalSparks: [[1,1]],
+  },
+  {
+    name: 'Gauntlet', world: 1,
+    hint: 'Multiple paths, multiple elements. Find the chain!',
+    grid: [
+      [_,_,_,_,_,_,_,_,_,_],
+      [_,D,D,_,_,_,_,_,_,_],
+      [_,_,D,_,_,_,_,_,_,_],
+      [_,_,G,O,O,M,M,M,_,_],
+      [_,_,_,_,_,_,_,M,_,_],
+      [_,_,_,_,_,_,_,C,_,_],
+      [_,_,_,_,_,_,_,_,_,_],
+      [_,_,_,_,_,_,_,O,_,_],
+      [_,_,_,_,_,_,_,_,_,_],
+    ],
+    targets: [[7,7]],
+    timeLimit: 350,
+    optimalSparks: [[1,1]],
+  },
+
+  // === WORLD 3: CASCADE ===
+  {
+    name: 'Meltdown', world: 2,
+    hint: 'Ice blocks the direct path. Find another way!',
+    grid: [
+      [_,_,_,_,_,_,_,_],
+      [_,O,I,O,O,_,_,_],
+      [_,O,_,_,O,_,_,_],
+      [_,O,O,O,O,_,_,_],
+      [_,_,_,_,_,_,_,_],
+    ],
+    targets: [[1,4]],
+    timeLimit: 200,
+    optimalSparks: [[1,1]],
+  },
+  {
+    name: 'Short Circuit', world: 2,
+    hint: 'Ice melts to Water. Water conducts through Metal!',
+    grid: [
+      [_,_,_,_,_,_,_,_],
+      [_,O,O,I,_,_,_,_],
+      [_,_,_,M,M,M,_,_],
+      [_,_,_,_,_,M,_,_],
+      [_,_,_,_,_,O,O,_],
+      [_,_,_,_,_,_,_,_],
+    ],
+    targets: [[4,6]],
+    timeLimit: 250,
+    optimalSparks: [[1,1]],
+  },
+  {
+    name: 'Mirror Maze', world: 2,
+    hint: 'Crystal beams redirect through other Crystals!',
+    grid: [
+      [_,_,_,_,_,_,_,_],
+      [_,_,_,_,_,_,_,_],
+      [_,O,O,C,_,_,C,_],
+      [_,_,_,_,_,_,_,_],
+      [_,_,_,_,_,_,O,_],
+      [_,_,_,_,_,_,_,_],
+    ],
+    targets: [[4,6]],
+    timeLimit: 120,
+    optimalSparks: [[2,1]],
+  },
+  {
+    name: 'Domino Theory', world: 2,
+    hint: 'Every element has a role. Plan the whole chain!',
+    grid: [
+      [_,_,_,_,_,_,_,_,_,_],
+      [_,D,D,_,_,_,_,_,_,_],
+      [_,_,D,_,_,_,_,_,_,_],
+      [_,_,G,O,M,M,C,_,_,_],
+      [_,_,_,_,_,_,_,_,_,_],
+      [_,_,_,_,_,_,T,_,_,_],
+      [_,_,_,_,_,_,_,_,_,_],
+      [_,_,_,_,_,_,O,O,O,_],
+      [_,_,_,_,_,_,_,_,_,_],
+    ],
+    targets: [[7,8]],
+    timeLimit: 400,
+    optimalSparks: [[1,1]],
+  },
+  {
+    name: 'The Grand Cascade', world: 2,
+    hint: 'The ultimate chain. One spark to rule them all!',
+    grid: [
+      [_,_,_,_,_,_,_,_,_,_,_,_],
+      [_,O,O,D,D,_,_,_,_,_,_,_],
+      [_,_,_,_,D,_,_,_,_,_,_,_],
+      [_,_,_,_,G,O,M,M,C,_,_,_],
+      [_,_,_,_,_,_,_,_,_,_,_,_],
+      [_,_,_,_,_,_,_,_,I,_,_,_],
+      [_,_,_,_,_,_,_,_,M,_,_,_],
+      [_,_,_,_,_,_,_,_,M,M,T,_],
+      [_,_,_,_,_,_,_,_,_,_,_,_],
+      [_,_,_,_,_,_,_,_,_,O,O,_],
+      [_,_,_,_,_,_,_,_,_,_,_,_],
+    ],
+    targets: [[9,10]],
+    timeLimit: 500,
+    optimalSparks: [[1,1]],
+  },
+];
+
+const WORLD_NAMES = ['Spark', 'Circuit', 'Cascade'];
+const WORLD_COLORS = ['#ff6633', '#44ccff', '#bb44ff'];
+
+// ============================================================
+// GAME STATE
+// ============================================================
+let state = 'menu'; // menu | levelSelect | playing | simulating | success | fail
+let currentLevel = 0;
+let currentWorld = 0;
+let grid = [];       // 2D array of cell objects
+let gridRows = 0, gridCols = 0;
+let cellSize = 0, gridOffsetX = 0, gridOffsetY = 0;
+let reactionQueue = [];
+let simTime = 0;
+let beams = [];
+let particles = [];
+let floatingTexts = [];
+let shakeX = 0, shakeY = 0, shakeDur = 0;
+let frameCount = 0;
+let sparkCell = null; // {r, c} of placed spark
+let hoverCell = null; // {r, c} of hovered cell
+let simElapsed = 0;
+let buttons = [];
+let menuParticles = [];
+
+// ============================================================
+// GRID & CELL LOGIC
+// ============================================================
+function makeCell(elem) {
+  return {
+    elem: elem,
+    state: 'idle',    // idle | fuse | active | destroyed | melted
+    timer: 0,
+    maxTimer: 0,
+    isTarget: false,
+    targetHit: false,
+    animT: 0,
+  };
+}
+
+function loadLevel(idx) {
+  const lvl = LEVELS[idx];
+  gridRows = lvl.grid.length;
+  gridCols = lvl.grid[0].length;
+  grid = [];
+  for (let r = 0; r < gridRows; r++) {
+    grid[r] = [];
+    for (let c = 0; c < gridCols; c++) {
+      grid[r][c] = makeCell(lvl.grid[r][c]);
+    }
+  }
+  for (const [r, c] of lvl.targets) {
+    grid[r][c].isTarget = true;
+  }
+  reactionQueue = [];
+  beams = [];
+  particles = [];
+  floatingTexts = [];
+  simTime = 0;
+  simElapsed = 0;
+  sparkCell = null;
+  hoverCell = null;
+  shakeDur = 0;
+  computeGridLayout();
+}
+
+function computeGridLayout() {
+  const W = canvas.width, H = canvas.height;
+  const hudTop = 60, hudBottom = 20;
+  const availW = W - 40, availH = H - hudTop - hudBottom - 20;
+  cellSize = Math.floor(Math.min(availW / gridCols, availH / gridRows));
+  cellSize = Math.max(24, Math.min(cellSize, 72));
+  gridOffsetX = Math.floor((W - gridCols * cellSize) / 2);
+  gridOffsetY = Math.floor(hudTop + (availH - gridRows * cellSize) / 2);
+}
+
+function inBounds(r, c) { return r >= 0 && r < gridRows && c >= 0 && c < gridCols; }
+
+function cellAt(r, c) { return inBounds(r, c) ? grid[r][c] : null; }
+
+// ============================================================
+// REACTION ENGINE
+// ============================================================
+function enqueue(time, r, c, action) {
+  if (!inBounds(r, c)) return;
+  reactionQueue.push({ time: simTime + time, r, c, action });
+}
+
+function placeSpark(r, c) {
+  const cell = cellAt(r, c);
+  if (!cell || cell.elem === E.EMPTY || cell.elem === E.STONE) return;
+  state = 'simulating';
+  sparkCell = { r, c };
+  simTime = 0;
+  simElapsed = 0;
+  sfx.ignite();
+  enqueue(1, r, c, 'fire');
+  addParticles(gridOffsetX + c * cellSize + cellSize / 2, gridOffsetY + r * cellSize + cellSize / 2, ACCENT, 15, 3, 30);
+}
+
+function stepSimulation() {
+  simTime++;
+  simElapsed++;
+
+  // Process queued reactions
+  let processed = [];
+  reactionQueue = reactionQueue.filter(ev => {
+    if (ev.time <= simTime) { processed.push(ev); return false; }
+    return true;
+  });
+
+  for (const ev of processed) {
+    processReaction(ev.r, ev.c, ev.action);
+  }
+
+  // Update beams
+  updateBeams();
+
+  // Update cell timers
+  for (let r = 0; r < gridRows; r++) {
+    for (let c = 0; c < gridCols; c++) {
+      const cell = grid[r][c];
+      if (cell.state === 'fuse') {
+        cell.timer--;
+        cell.animT += 0.05;
+        if (cell.timer <= 0) {
+          triggerElement(r, c);
+        }
+      } else if (cell.state === 'active') {
+        cell.animT += 0.03;
+        // Fire particles for burning cells
+        if (frameCount % 4 === 0 && (cell.elem === E.OIL || cell.elem === E.WOOD || cell.elem === E.GAS)) {
+          const cx = gridOffsetX + c * cellSize + cellSize / 2;
+          const cy = gridOffsetY + r * cellSize + cellSize / 2;
+          addParticles(cx, cy, cell.elem === E.GAS ? '#ffee44' : '#ff6633', 1, 1.5, 20);
+        }
+      }
+    }
+  }
+
+  // Check win/lose when no more events
+  if (reactionQueue.length === 0 && beams.length === 0 && !hasActiveCells()) {
+    checkWinLose();
+  }
+}
+
+function hasActiveCells() {
+  for (let r = 0; r < gridRows; r++)
+    for (let c = 0; c < gridCols; c++)
+      if (grid[r][c].state === 'fuse') return true;
+  return false;
+}
+
+function processReaction(r, c, action) {
+  const cell = cellAt(r, c);
+  if (!cell) return;
+
+  // Already destroyed or active
+  if (cell.state === 'destroyed' || cell.state === 'active') return;
+  if (cell.elem === E.EMPTY) return;
+  if (cell.elem === E.STONE) return;
+
+  // Water extinguishes fire
+  if (cell.elem === E.WATER && action === 'fire') {
+    sfx.water();
+    const cx = gridOffsetX + c * cellSize + cellSize / 2;
+    const cy = gridOffsetY + r * cellSize + cellSize / 2;
+    addParticles(cx, cy, '#3388ff', 6, 2, 25);
+    // Water spreads to adjacent metal (short circuit)
+    spreadWater(r, c);
+    return;
+  }
+
+  // Ice melts
+  if (cell.elem === E.ICE && (action === 'fire' || action === 'explosion' || action === 'beam')) {
+    if (cell.state === 'fuse') return;
+    sfx.ice();
+    cell.state = 'fuse';
+    cell.timer = TIMING.ICE_MELT;
+    cell.maxTimer = TIMING.ICE_MELT;
+    hitTarget(r, c);
+    return;
+  }
+
+  switch (cell.elem) {
+    case E.OIL:
+      if (action === 'fire' || action === 'explosion' || action === 'beam' || action === 'electric') {
+        if (cell.state !== 'idle') return;
+        sfx.burn();
+        cell.state = 'fuse';
+        cell.timer = TIMING.OIL_SPREAD;
+        cell.maxTimer = TIMING.OIL_SPREAD;
+        hitTarget(r, c);
+      }
+      break;
+
+    case E.GAS:
+      if (action === 'fire' || action === 'explosion' || action === 'beam' || action === 'electric') {
+        if (cell.state !== 'idle') return;
+        sfx.explode();
+        cell.state = 'active';
+        cell.animT = 0;
+        hitTarget(r, c);
+        addShake(5, 10);
+        const cx = gridOffsetX + c * cellSize + cellSize / 2;
+        const cy = gridOffsetY + r * cellSize + cellSize / 2;
+        addParticles(cx, cy, '#ffee44', 20, 4, 25);
+        // Explode to all 8 neighbors
+        for (let dr = -1; dr <= 1; dr++) {
+          for (let dc = -1; dc <= 1; dc++) {
+            if (dr === 0 && dc === 0) continue;
+            enqueue(TIMING.GAS_EXPLODE + Math.floor(Math.random() * 3), r + dr, c + dc, 'explosion');
+          }
+        }
+        setTimeout(() => { cell.state = 'destroyed'; }, 500);
+      }
+      break;
+
+    case E.METAL:
+      if (action === 'fire' || action === 'explosion' || action === 'beam' || action === 'electric' || action === 'water') {
+        if (cell.state !== 'idle') return;
+        sfx.metal();
+        cell.state = 'active';
+        cell.animT = 0;
+        // Conduct through all connected metal
+        conductMetal(r, c, action === 'water' ? 'electric' : 'fire');
+      }
+      break;
+
+    case E.WOOD:
+      if (action === 'fire' || action === 'explosion' || action === 'beam') {
+        if (cell.state !== 'idle') return;
+        sfx.burn();
+        cell.state = 'fuse';
+        cell.timer = TIMING.WOOD_BURN;
+        cell.maxTimer = TIMING.WOOD_BURN;
+        hitTarget(r, c);
+      }
+      break;
+
+    case E.CRYSTAL:
+      if (action === 'fire' || action === 'explosion' || action === 'beam' || action === 'electric') {
+        if (cell.state !== 'idle') return;
+        sfx.crystal();
+        cell.state = 'active';
+        cell.animT = 0;
+        hitTarget(r, c);
+        // Send beams in 4 directions
+        const dirs = [[0,1],[0,-1],[1,0],[-1,0]];
+        for (const [dr, dc] of dirs) {
+          beams.push({ r: r + dr, c: c + dc, dr, dc, life: 30, startR: r, startC: c });
+        }
+      }
+      break;
+
+    case E.TNT:
+      if (action === 'fire' || action === 'explosion' || action === 'beam' || action === 'electric') {
+        if (cell.state !== 'idle') return;
+        sfx.tntFuse();
+        cell.state = 'fuse';
+        cell.timer = TIMING.TNT_FUSE;
+        cell.maxTimer = TIMING.TNT_FUSE;
+        hitTarget(r, c);
+      }
+      break;
+
+    case E.WATER:
+      if (action === 'electric' || action === 'explosion') {
+        if (cell.state !== 'idle') return;
+        sfx.water();
+        cell.state = 'active';
+        cell.animT = 0;
+        spreadWater(r, c);
+      }
+      break;
+  }
+}
+
+function triggerElement(r, c) {
+  const cell = cellAt(r, c);
+  if (!cell) return;
+
+  cell.state = 'active';
+
+  switch (cell.elem) {
+    case E.OIL:
+      // Spread fire to 4 adjacent
+      const cx1 = gridOffsetX + c * cellSize + cellSize / 2;
+      const cy1 = gridOffsetY + r * cellSize + cellSize / 2;
+      addParticles(cx1, cy1, '#ff6633', 8, 2, 20);
+      for (const [dr, dc] of [[0,1],[0,-1],[1,0],[-1,0]]) {
+        enqueue(2 + Math.floor(Math.random() * 3), r + dr, c + dc, 'fire');
+      }
+      setTimeout(() => { cell.state = 'destroyed'; }, 300);
+      break;
+
+    case E.WOOD:
+      const cx2 = gridOffsetX + c * cellSize + cellSize / 2;
+      const cy2 = gridOffsetY + r * cellSize + cellSize / 2;
+      addParticles(cx2, cy2, '#cc8833', 10, 2, 25);
+      for (const [dr, dc] of [[0,1],[0,-1],[1,0],[-1,0]]) {
+        enqueue(3 + Math.floor(Math.random() * 4), r + dr, c + dc, 'fire');
+      }
+      setTimeout(() => { cell.state = 'destroyed'; }, 400);
+      break;
+
+    case E.ICE:
+      // Transform to water
+      sfx.water();
+      cell.elem = E.WATER;
+      cell.state = 'idle';
+      cell.timer = 0;
+      cell.animT = 0;
+      const cx3 = gridOffsetX + c * cellSize + cellSize / 2;
+      const cy3 = gridOffsetY + r * cellSize + cellSize / 2;
+      addParticles(cx3, cy3, '#44eeff', 8, 2, 20);
+      // Water extinguishes adjacent fire
+      for (const [dr, dc] of [[0,1],[0,-1],[1,0],[-1,0]]) {
+        const adj = cellAt(r + dr, c + dc);
+        if (adj && (adj.state === 'fuse' || adj.state === 'active') &&
+            (adj.elem === E.OIL || adj.elem === E.WOOD)) {
+          adj.state = 'destroyed';
+          const acx = gridOffsetX + (c + dc) * cellSize + cellSize / 2;
+          const acy = gridOffsetY + (r + dr) * cellSize + cellSize / 2;
+          addParticles(acx, acy, '#3388ff', 4, 1.5, 20);
+        }
+      }
+      // Spread water to adjacent metal
+      spreadWater(r, c);
+      break;
+
+    case E.TNT:
+      sfx.explode();
+      addShake(10, 18);
+      const cx4 = gridOffsetX + c * cellSize + cellSize / 2;
+      const cy4 = gridOffsetY + r * cellSize + cellSize / 2;
+      addParticles(cx4, cy4, '#ff2222', 30, 5, 30);
+      addParticles(cx4, cy4, '#ffaa44', 20, 4, 25);
+      // Explode radius 2
+      for (let dr = -2; dr <= 2; dr++) {
+        for (let dc = -2; dc <= 2; dc++) {
+          if (dr === 0 && dc === 0) continue;
+          if (Math.abs(dr) + Math.abs(dc) > 3) continue;
+          enqueue(2 + Math.floor(Math.random() * 3), r + dr, c + dc, 'explosion');
+        }
+      }
+      cell.state = 'destroyed';
+      break;
+  }
+}
+
+function conductMetal(startR, startC, action) {
+  // BFS through connected metal cells
+  const visited = new Set();
+  const queue = [[startR, startC]];
+  visited.add(startR + ',' + startC);
+  const neighbors = [];
+
+  while (queue.length > 0) {
+    const [cr, cc] = queue.shift();
+    for (const [dr, dc] of [[0,1],[0,-1],[1,0],[-1,0]]) {
+      const nr = cr + dr, nc = cc + dc;
+      const key = nr + ',' + nc;
+      if (!inBounds(nr, nc) || visited.has(key)) continue;
+      visited.add(key);
+      const cell = grid[nr][nc];
+      if (cell.elem === E.METAL && cell.state === 'idle') {
+        cell.state = 'active';
+        cell.animT = 0;
+        queue.push([nr, nc]);
+      } else if (cell.elem !== E.METAL && cell.elem !== E.EMPTY && cell.elem !== E.STONE) {
+        neighbors.push([nr, nc]);
+      }
+    }
+  }
+
+  // Activate neighbors of the metal cluster
+  for (const [nr, nc] of neighbors) {
+    enqueue(TIMING.METAL_CONDUCT + Math.floor(Math.random() * 3), nr, nc, action);
+  }
+}
+
+function spreadWater(r, c) {
+  // Water touching metal causes electric conduction
+  for (const [dr, dc] of [[0,1],[0,-1],[1,0],[-1,0]]) {
+    const nr = r + dr, nc = c + dc;
+    const adj = cellAt(nr, nc);
+    if (adj && adj.elem === E.METAL && adj.state === 'idle') {
+      enqueue(5, nr, nc, 'water');
+    }
+  }
+}
+
+function updateBeams() {
+  const newBeams = [];
+  for (const beam of beams) {
+    beam.life--;
+    if (beam.life <= 0) continue;
+
+    if (!inBounds(beam.r, beam.c)) continue;
+
+    const cell = grid[beam.r][beam.c];
+
+    // Draw beam particle
+    const cx = gridOffsetX + beam.c * cellSize + cellSize / 2;
+    const cy = gridOffsetY + beam.r * cellSize + cellSize / 2;
+    addParticles(cx, cy, '#bb44ff', 2, 1, 10);
+
+    if (cell.elem === E.EMPTY) {
+      // Continue beam
+      newBeams.push({ r: beam.r + beam.dr, c: beam.c + beam.dc, dr: beam.dr, dc: beam.dc, life: beam.life, startR: beam.startR, startC: beam.startC });
+    } else if (cell.elem === E.STONE) {
+      // Blocked
+    } else if (cell.elem === E.CRYSTAL && cell.state === 'idle') {
+      // Redirect: activate crystal which sends beams in all 4 dirs
+      processReaction(beam.r, beam.c, 'beam');
+    } else {
+      // Hit a reactive element
+      processReaction(beam.r, beam.c, 'beam');
+    }
+  }
+  beams = newBeams;
+}
+
+function hitTarget(r, c) {
+  const cell = cellAt(r, c);
+  if (cell && cell.isTarget && !cell.targetHit) {
+    cell.targetHit = true;
+    const cx = gridOffsetX + c * cellSize + cellSize / 2;
+    const cy = gridOffsetY + r * cellSize + cellSize / 2;
+    addFloatingText(cx, cy - 10, 'TARGET!', '#44ff44');
+    addParticles(cx, cy, '#44ff44', 12, 3, 25);
+  }
+}
+
+function checkWinLose() {
+  const lvl = LEVELS[currentLevel];
+  let allHit = true;
+  for (const [r, c] of lvl.targets) {
+    if (!grid[r][c].targetHit) { allHit = false; break; }
+  }
+
+  if (allHit) {
+    // Calculate stars
+    let stars = 1;
+    if (simElapsed <= lvl.timeLimit) stars = 2;
+    if (lvl.optimalSparks.some(([or, oc]) => sparkCell.r === or && sparkCell.c === oc)) stars = 3;
+    setStars(currentLevel, stars);
+    state = 'success';
+    sfx.success();
+  } else {
+    state = 'fail';
+    sfx.fail();
+  }
+}
+
+// ============================================================
+// PARTICLES
+// ============================================================
+function addParticles(x, y, color, count, speed, life) {
+  for (let i = 0; i < count; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const s = Math.random() * speed;
+    particles.push({
+      x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s - 0.5,
+      life: life + Math.random() * life * 0.5,
+      maxLife: life,
+      color, size: 1.5 + Math.random() * 2.5,
+    });
+  }
+}
+
+function addFloatingText(x, y, text, color) {
+  floatingTexts.push({ x, y, text, color, life: 60, maxLife: 60 });
+}
+
+function addShake(intensity, dur) {
+  shakeX = (Math.random() - 0.5) * intensity;
+  shakeY = (Math.random() - 0.5) * intensity;
+  shakeDur = dur;
+}
+
+function updateParticles() {
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.x += p.vx;
+    p.y += p.vy;
+    p.vy += 0.02;
+    p.life--;
+    if (p.life <= 0) particles.splice(i, 1);
+  }
+  for (let i = floatingTexts.length - 1; i >= 0; i--) {
+    const ft = floatingTexts[i];
+    ft.y -= 0.5;
+    ft.life--;
+    if (ft.life <= 0) floatingTexts.splice(i, 1);
+  }
+  if (shakeDur > 0) {
+    shakeDur--;
+    shakeX *= 0.85;
+    shakeY *= 0.85;
+    if (shakeDur <= 0) { shakeX = 0; shakeY = 0; }
+  }
+}
+
+// ============================================================
+// INPUT
+// ============================================================
+let mouseX = 0, mouseY = 0;
+
+function getGridCell(px, py) {
+  const c = Math.floor((px - gridOffsetX) / cellSize);
+  const r = Math.floor((py - gridOffsetY) / cellSize);
+  if (r >= 0 && r < gridRows && c >= 0 && c < gridCols) return { r, c };
+  return null;
+}
+
+function handleClick(px, py) {
+  ensureAudio();
+
+  // Check buttons first
+  for (const btn of buttons) {
+    if (px >= btn.x && px <= btn.x + btn.w && py >= btn.y && py <= btn.y + btn.h) {
+      sfx.click();
+      btn.action();
+      return;
+    }
+  }
+
+  if (state === 'playing') {
+    const gc = getGridCell(px, py);
+    if (gc) {
+      const cell = grid[gc.r][gc.c];
+      if (cell.elem !== E.EMPTY && cell.elem !== E.STONE) {
+        placeSpark(gc.r, gc.c);
+      }
+    }
+  }
+}
+
+canvas.addEventListener('mousemove', e => {
+  mouseX = e.clientX;
+  mouseY = e.clientY;
+  if (state === 'playing') {
+    hoverCell = getGridCell(mouseX, mouseY);
+  }
+});
+
+canvas.addEventListener('mousedown', e => {
+  handleClick(e.clientX, e.clientY);
+});
+
+canvas.addEventListener('touchstart', e => {
+  e.preventDefault();
+  const t = e.touches[0];
+  mouseX = t.clientX;
+  mouseY = t.clientY;
+  handleClick(t.clientX, t.clientY);
+}, { passive: false });
+
+canvas.addEventListener('touchmove', e => {
+  e.preventDefault();
+  const t = e.touches[0];
+  mouseX = t.clientX;
+  mouseY = t.clientY;
+  if (state === 'playing') {
+    hoverCell = getGridCell(mouseX, mouseY);
+  }
+}, { passive: false });
+
+// ============================================================
+// MENU PARTICLES
+// ============================================================
+function initMenuParticles() {
+  menuParticles = [];
+  for (let i = 0; i < 60; i++) {
+    menuParticles.push({
+      x: Math.random() * canvas.width,
+      y: canvas.height + Math.random() * 200,
+      vx: (Math.random() - 0.5) * 0.5,
+      vy: -1 - Math.random() * 2,
+      size: 2 + Math.random() * 4,
+      color: Math.random() < 0.5 ? '#ff6633' : '#ffaa44',
+      alpha: 0.3 + Math.random() * 0.7,
+    });
+  }
+}
+
+function updateMenuParticles() {
+  for (const p of menuParticles) {
+    p.x += p.vx;
+    p.y += p.vy;
+    p.alpha -= 0.003;
+    if (p.y < -20 || p.alpha <= 0) {
+      p.x = Math.random() * canvas.width;
+      p.y = canvas.height + 20;
+      p.alpha = 0.3 + Math.random() * 0.7;
+      p.vy = -1 - Math.random() * 2;
+    }
+  }
+}
+
+// ============================================================
+// RENDERING
+// ============================================================
+function drawMenu() {
+  const W = canvas.width, H = canvas.height;
+
+  // Background gradient
+  const grad = ctx.createLinearGradient(0, 0, 0, H);
+  grad.addColorStop(0, '#0a0a1a');
+  grad.addColorStop(1, '#1a0a0a');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, W, H);
+
+  // Background grid
+  ctx.strokeStyle = 'rgba(255,102,51,0.05)';
+  ctx.lineWidth = 1;
+  for (let x = 0; x < W; x += 50) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke(); }
+  for (let y = 0; y < H; y += 50) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
+
+  // Menu particles
+  updateMenuParticles();
+  for (const p of menuParticles) {
+    ctx.globalAlpha = p.alpha;
+    ctx.fillStyle = p.color;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+
+  // Title
+  ctx.save();
+  ctx.shadowColor = ACCENT;
+  ctx.shadowBlur = 40;
+  ctx.fillStyle = ACCENT;
+  ctx.font = `bold ${Math.min(72, W * 0.12)}px 'Segoe UI', sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('CASCADE', W / 2, H * 0.32);
+  ctx.shadowBlur = 0;
+  ctx.restore();
+
+  // Subtitle
+  ctx.fillStyle = '#cc8855';
+  ctx.font = `${Math.min(18, W * 0.035)}px 'Segoe UI', sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.fillText('CHAIN REACTION ARCHITECT', W / 2, H * 0.32 + 45);
+
+  // Play button
+  const btnW = 200, btnH = 56;
+  const btnX = W / 2 - btnW / 2, btnY = H * 0.55;
+  const pulse = Math.sin(frameCount * 0.04) * 0.15 + 0.85;
+
+  ctx.save();
+  ctx.shadowColor = ACCENT;
+  ctx.shadowBlur = 15 * pulse;
+  ctx.strokeStyle = ACCENT;
+  ctx.lineWidth = 2;
+  ctx.fillStyle = 'rgba(255,102,51,0.1)';
+  roundRect(btnX, btnY, btnW, btnH, 12);
+  ctx.fill();
+  ctx.stroke();
+  ctx.shadowBlur = 0;
+  ctx.restore();
+
+  ctx.fillStyle = '#fff';
+  ctx.font = `bold 22px 'Segoe UI', sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('PLAY', W / 2, btnY + btnH / 2);
+
+  buttons = [{ x: btnX, y: btnY, w: btnW, h: btnH, action: () => { state = 'levelSelect'; currentWorld = 0; } }];
+
+  // Element preview at bottom
+  const elemKeys = [E.OIL, E.GAS, E.WOOD, E.METAL, E.CRYSTAL, E.TNT, E.ICE, E.STONE];
+  const previewSize = Math.min(32, (W - 80) / elemKeys.length);
+  const startX = W / 2 - (elemKeys.length * (previewSize + 10)) / 2;
+  const ey = H * 0.78;
+  for (let i = 0; i < elemKeys.length; i++) {
+    const el = ELEM[elemKeys[i]];
+    ctx.fillStyle = el.color + '44';
+    ctx.strokeStyle = el.color;
+    ctx.lineWidth = 1;
+    roundRect(startX + i * (previewSize + 10), ey, previewSize, previewSize, 4);
+    ctx.fill();
+    ctx.stroke();
+    drawElementIcon(startX + i * (previewSize + 10) + previewSize / 2, ey + previewSize / 2, elemKeys[i], previewSize * 0.7);
+  }
+}
+
+function drawLevelSelect() {
+  const W = canvas.width, H = canvas.height;
+
+  ctx.fillStyle = BG;
+  ctx.fillRect(0, 0, W, H);
+
+  buttons = [];
+
+  // Back button
+  const backX = 20, backY = 15, backS = 36;
+  ctx.fillStyle = '#333';
+  ctx.strokeStyle = '#666';
+  ctx.lineWidth = 1;
+  roundRect(backX, backY, backS, backS, 6);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = '#ccc';
+  ctx.font = '20px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('\u2190', backX + backS / 2, backY + backS / 2);
+  buttons.push({ x: backX, y: backY, w: backS, h: backS, action: () => { state = 'menu'; initMenuParticles(); } });
+
+  // Title
+  ctx.fillStyle = '#fff';
+  ctx.font = `bold ${Math.min(28, W * 0.05)}px 'Segoe UI', sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.fillText('SELECT LEVEL', W / 2, 38);
+
+  // World tabs
+  const tabW = Math.min(140, (W - 60) / 3);
+  const tabStartX = W / 2 - (tabW * 3 + 20) / 2;
+  const tabY = 65;
+
+  for (let w = 0; w < 3; w++) {
+    const tx = tabStartX + w * (tabW + 10);
+    const active = currentWorld === w;
+    ctx.fillStyle = active ? WORLD_COLORS[w] + '33' : '#161628';
+    ctx.strokeStyle = active ? WORLD_COLORS[w] : '#2a2a40';
+    ctx.lineWidth = active ? 2 : 1;
+    roundRect(tx, tabY, tabW, 36, 6);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = active ? WORLD_COLORS[w] : '#777';
+    ctx.font = `bold 14px 'Segoe UI', sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(WORLD_NAMES[w].toUpperCase(), tx + tabW / 2, tabY + 18);
+    buttons.push({ x: tx, y: tabY, w: tabW, h: 36, action: ((ww) => () => { currentWorld = ww; })(w) });
+  }
+
+  // Level buttons
+  const levelsInWorld = LEVELS.filter(l => l.world === currentWorld);
+  const startIdx = LEVELS.findIndex(l => l.world === currentWorld);
+  const cols = Math.min(5, levelsInWorld.length);
+  const btnSize = Math.min(80, (W - 80) / cols);
+  const gap = 15;
+  const gridW = cols * (btnSize + gap) - gap;
+  const sx = W / 2 - gridW / 2;
+  const sy = tabY + 70;
+
+  for (let i = 0; i < levelsInWorld.length; i++) {
+    const idx = startIdx + i;
+    const col = i % cols;
+    const row = Math.floor(i / cols);
+    const bx = sx + col * (btnSize + gap);
+    const by = sy + row * (btnSize + gap + 30);
+    const unlocked = isUnlocked(idx);
+    const stars = getStars(idx);
+
+    // Button bg
+    ctx.fillStyle = unlocked ? (stars > 0 ? '#1a2a1a' : '#161628') : '#111118';
+    ctx.strokeStyle = unlocked ? WORLD_COLORS[currentWorld] + (stars > 0 ? 'aa' : '44') : '#222';
+    ctx.lineWidth = 1.5;
+    roundRect(bx, by, btnSize, btnSize, 8);
+    ctx.fill();
+    ctx.stroke();
+
+    if (!unlocked) {
+      // Lock icon
+      ctx.fillStyle = '#444';
+      ctx.font = '24px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('\uD83D\uDD12', bx + btnSize / 2, by + btnSize / 2 - 5);
+    } else {
+      // Level number
+      ctx.fillStyle = stars > 0 ? '#fff' : '#aaa';
+      ctx.font = `bold ${btnSize * 0.35}px 'Segoe UI', sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(String(i + 1), bx + btnSize / 2, by + btnSize / 2 - 8);
+
+      // Stars
+      const starY = by + btnSize - 16;
+      for (let s = 0; s < 3; s++) {
+        ctx.fillStyle = s < stars ? '#ffcc00' : '#333';
+        ctx.font = '12px sans-serif';
+        ctx.fillText('\u2605', bx + btnSize / 2 + (s - 1) * 16, starY);
+      }
+
+      buttons.push({ x: bx, y: by, w: btnSize, h: btnSize, action: ((ii) => () => { currentLevel = ii; loadLevel(ii); state = 'playing'; })(idx) });
+    }
+
+    // Level name
+    ctx.fillStyle = unlocked ? '#888' : '#444';
+    ctx.font = `${Math.min(11, btnSize * 0.14)}px 'Segoe UI', sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.fillText(levelsInWorld[i].name, bx + btnSize / 2, by + btnSize + 14);
+  }
+}
+
+function drawGame() {
+  const W = canvas.width, H = canvas.height;
+
+  ctx.fillStyle = BG;
+  ctx.fillRect(0, 0, W, H);
+
+  computeGridLayout();
+
+  ctx.save();
+  ctx.translate(shakeX, shakeY);
+
+  // Grid background
+  ctx.fillStyle = GRID_BG;
+  roundRect(gridOffsetX - 4, gridOffsetY - 4, gridCols * cellSize + 8, gridRows * cellSize + 8, 6);
+  ctx.fill();
+
+  // Draw cells
+  for (let r = 0; r < gridRows; r++) {
+    for (let c = 0; c < gridCols; c++) {
+      const cell = grid[r][c];
+      const x = gridOffsetX + c * cellSize;
+      const y = gridOffsetY + r * cellSize;
+      const cx = x + cellSize / 2;
+      const cy = y + cellSize / 2;
+      const s = cellSize - 2;
+
+      // Cell background
+      if (cell.elem === E.EMPTY) {
+        ctx.fillStyle = '#0d0d22';
+        ctx.fillRect(x + 1, y + 1, s, s);
+      } else if (cell.elem === E.STONE) {
+        ctx.fillStyle = '#333344';
+        ctx.fillRect(x + 1, y + 1, s, s);
+        // Stone texture
+        ctx.fillStyle = '#3a3a4a';
+        for (let i = 0; i < 3; i++) {
+          ctx.fillRect(x + 4 + i * 12, y + 4, 8, 3);
+          ctx.fillRect(x + 8 + i * 10, y + s - 6, 6, 3);
+        }
+      } else {
+        const el = ELEM[cell.elem];
+        let alpha = 1;
+        let glowing = false;
+
+        if (cell.state === 'destroyed') {
+          alpha = 0.2;
+        } else if (cell.state === 'active') {
+          glowing = true;
+        } else if (cell.state === 'fuse') {
+          // Pulsing
+          glowing = (Math.sin(frameCount * 0.3) > 0);
+        }
+
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = el.color + '33';
+        ctx.fillRect(x + 1, y + 1, s, s);
+
+        if (glowing) {
+          ctx.save();
+          ctx.shadowColor = el.color;
+          ctx.shadowBlur = 12;
+          ctx.fillStyle = el.color + '66';
+          ctx.fillRect(x + 1, y + 1, s, s);
+          ctx.restore();
+        }
+
+        // Element border
+        ctx.strokeStyle = el.color + (cell.state === 'destroyed' ? '44' : '88');
+        ctx.lineWidth = 1;
+        ctx.strokeRect(x + 1, y + 1, s, s);
+
+        // Element icon
+        drawElementIcon(cx, cy, cell.elem, cellSize * 0.5);
+
+        // Fuse timer bar
+        if (cell.state === 'fuse' && cell.maxTimer > 0) {
+          const pct = cell.timer / cell.maxTimer;
+          ctx.fillStyle = el.color;
+          ctx.fillRect(x + 2, y + s - 2, (s - 2) * (1 - pct), 2);
+        }
+
+        ctx.globalAlpha = 1;
+      }
+
+      // Target indicator
+      if (cell.isTarget) {
+        const pulse = Math.sin(frameCount * 0.06) * 0.3 + 0.7;
+        ctx.save();
+        if (cell.targetHit) {
+          ctx.strokeStyle = `rgba(68,255,68,${pulse})`;
+          ctx.shadowColor = '#44ff44';
+        } else {
+          ctx.strokeStyle = `rgba(255,255,68,${pulse})`;
+          ctx.shadowColor = '#ffff44';
+        }
+        ctx.shadowBlur = 8;
+        ctx.lineWidth = 2;
+        ctx.strokeRect(x, y, cellSize, cellSize);
+        ctx.restore();
+      }
+
+      // Hover highlight
+      if (state === 'playing' && hoverCell && hoverCell.r === r && hoverCell.c === c
+          && cell.elem !== E.EMPTY && cell.elem !== E.STONE) {
+        ctx.fillStyle = 'rgba(255,255,255,0.1)';
+        ctx.fillRect(x + 1, y + 1, s, s);
+        // Spark cursor
+        const sp = Math.sin(frameCount * 0.1) * 2;
+        ctx.save();
+        ctx.shadowColor = ACCENT;
+        ctx.shadowBlur = 10 + sp;
+        ctx.fillStyle = ACCENT;
+        ctx.beginPath();
+        ctx.arc(cx, cy, 4, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+    }
+  }
+
+  // Draw beams as lines
+  for (const beam of beams) {
+    if (inBounds(beam.r, beam.c)) {
+      const bx = gridOffsetX + beam.c * cellSize + cellSize / 2;
+      const by = gridOffsetY + beam.r * cellSize + cellSize / 2;
+      ctx.save();
+      ctx.shadowColor = '#bb44ff';
+      ctx.shadowBlur = 10;
+      ctx.fillStyle = '#bb44ff';
+      ctx.beginPath();
+      ctx.arc(bx, by, 3, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+  }
+
+  // Particles
+  for (const p of particles) {
+    const alpha = p.life / p.maxLife;
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = p.color;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size * alpha, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+
+  // Floating texts
+  for (const ft of floatingTexts) {
+    const alpha = ft.life / ft.maxLife;
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = ft.color;
+    ctx.font = `bold ${Math.min(16, cellSize * 0.35)}px 'Segoe UI', sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.fillText(ft.text, ft.x, ft.y);
+  }
+  ctx.globalAlpha = 1;
+
+  ctx.restore(); // shake
+
+  // HUD
+  drawHUD();
+
+  // Overlays
+  if (state === 'success') drawSuccessOverlay();
+  if (state === 'fail') drawFailOverlay();
+}
+
+function drawElementIcon(cx, cy, elem, size) {
+  const s = size * 0.5;
+  const el = ELEM[elem];
+  if (!el) return;
+  ctx.fillStyle = el.color;
+  ctx.strokeStyle = el.color;
+  ctx.lineWidth = 1.5;
+
+  switch (elem) {
+    case E.OIL:
+      // Wavy lines
+      ctx.beginPath();
+      for (let i = -1; i <= 1; i++) {
+        const yy = cy + i * s * 0.5;
+        ctx.moveTo(cx - s, yy);
+        ctx.quadraticCurveTo(cx - s * 0.3, yy - 3, cx, yy);
+        ctx.quadraticCurveTo(cx + s * 0.3, yy + 3, cx + s, yy);
+      }
+      ctx.stroke();
+      break;
+
+    case E.GAS:
+      // Dots
+      for (let i = 0; i < 5; i++) {
+        const a = (i / 5) * Math.PI * 2;
+        const r = s * 0.5;
+        ctx.beginPath();
+        ctx.arc(cx + Math.cos(a) * r, cy + Math.sin(a) * r, 2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.beginPath();
+      ctx.arc(cx, cy, 2, 0, Math.PI * 2);
+      ctx.fill();
+      break;
+
+    case E.ICE:
+      // Snowflake
+      for (let i = 0; i < 6; i++) {
+        const a = (i / 6) * Math.PI * 2;
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.lineTo(cx + Math.cos(a) * s, cy + Math.sin(a) * s);
+        ctx.stroke();
+      }
+      break;
+
+    case E.WATER:
+      // Two waves
+      ctx.beginPath();
+      ctx.moveTo(cx - s, cy - 3);
+      ctx.quadraticCurveTo(cx, cy - 8, cx + s, cy - 3);
+      ctx.moveTo(cx - s, cy + 3);
+      ctx.quadraticCurveTo(cx, cy + 8, cx + s, cy + 3);
+      ctx.stroke();
+      break;
+
+    case E.METAL:
+      // I-beam
+      ctx.fillRect(cx - s, cy - 2, s * 2, 4);
+      ctx.fillRect(cx - s, cy - s * 0.6, 3, s * 1.2);
+      ctx.fillRect(cx + s - 3, cy - s * 0.6, 3, s * 1.2);
+      break;
+
+    case E.WOOD:
+      // Wood grain lines
+      ctx.beginPath();
+      for (let i = -1; i <= 1; i++) {
+        const xx = cx + i * s * 0.5;
+        ctx.moveTo(xx, cy - s);
+        ctx.lineTo(xx, cy + s);
+      }
+      ctx.stroke();
+      // Knot
+      ctx.beginPath();
+      ctx.arc(cx + s * 0.25, cy, 2, 0, Math.PI * 2);
+      ctx.fill();
+      break;
+
+    case E.CRYSTAL:
+      // Diamond shape
+      ctx.beginPath();
+      ctx.moveTo(cx, cy - s);
+      ctx.lineTo(cx + s * 0.7, cy);
+      ctx.lineTo(cx, cy + s);
+      ctx.lineTo(cx - s * 0.7, cy);
+      ctx.closePath();
+      ctx.stroke();
+      // Inner glow dot
+      ctx.beginPath();
+      ctx.arc(cx, cy, 2, 0, Math.PI * 2);
+      ctx.fill();
+      break;
+
+    case E.TNT:
+      // Box with fuse
+      ctx.fillStyle = el.color + '66';
+      ctx.fillRect(cx - s * 0.6, cy - s * 0.5, s * 1.2, s);
+      ctx.strokeRect(cx - s * 0.6, cy - s * 0.5, s * 1.2, s);
+      // Fuse
+      ctx.beginPath();
+      ctx.moveTo(cx, cy - s * 0.5);
+      ctx.lineTo(cx, cy - s);
+      ctx.stroke();
+      // Spark on fuse
+      ctx.fillStyle = '#ffaa44';
+      ctx.beginPath();
+      ctx.arc(cx, cy - s, 2, 0, Math.PI * 2);
+      ctx.fill();
+      break;
+  }
+}
+
+function drawHUD() {
+  const W = canvas.width;
+  const lvl = LEVELS[currentLevel];
+
+  buttons = buttons.filter(b => !b._hud);
+
+  // Level name
+  ctx.fillStyle = '#888';
+  ctx.font = `13px 'Segoe UI', sans-serif`;
+  ctx.textAlign = 'left';
+  ctx.fillText(`${WORLD_NAMES[lvl.world]} - ${lvl.name}`, 60, 25);
+
+  // Target counter
+  const totalTargets = lvl.targets.length;
+  let hitTargets = 0;
+  for (const [r, c] of lvl.targets) {
+    if (grid[r][c].targetHit) hitTargets++;
+  }
+  ctx.fillStyle = '#fff';
+  ctx.font = `bold 15px 'Segoe UI', sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.fillText(`Targets: ${hitTargets}/${totalTargets}`, W / 2, 25);
+
+  // Hint (only in playing state and for first few seconds)
+  if (state === 'playing' && lvl.hint && frameCount < 300) {
+    const alpha = frameCount > 240 ? (300 - frameCount) / 60 : 1;
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = '#666';
+    ctx.font = `13px 'Segoe UI', sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.fillText(lvl.hint, W / 2, gridOffsetY + gridRows * cellSize + 25);
+    ctx.globalAlpha = 1;
+  }
+
+  if (state === 'playing') {
+    ctx.fillStyle = ACCENT;
+    ctx.font = `14px 'Segoe UI', sans-serif`;
+    ctx.textAlign = 'center';
+    const pulse = Math.sin(frameCount * 0.05) * 0.3 + 0.7;
+    ctx.globalAlpha = pulse;
+    ctx.fillText('Tap a cell to place your spark', W / 2, gridOffsetY + gridRows * cellSize + 45);
+    ctx.globalAlpha = 1;
+  }
+
+  // Back button
+  const backX = 15, backY = 8, backS = 32;
+  ctx.fillStyle = '#222';
+  ctx.strokeStyle = '#444';
+  ctx.lineWidth = 1;
+  roundRect(backX, backY, backS, backS, 5);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = '#aaa';
+  ctx.font = '18px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('\u2190', backX + backS / 2, backY + backS / 2);
+  const backBtn = { x: backX, y: backY, w: backS, h: backS, _hud: true, action: () => { state = 'levelSelect'; } };
+  buttons.push(backBtn);
+
+  // Reset button
+  const resetX = W - 47, resetY = 8, resetS = 32;
+  ctx.fillStyle = '#222';
+  ctx.strokeStyle = '#444';
+  ctx.lineWidth = 1;
+  roundRect(resetX, resetY, resetS, resetS, 5);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = '#aaa';
+  ctx.font = '16px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('\u21BB', resetX + resetS / 2, resetY + resetS / 2);
+  buttons.push({ x: resetX, y: resetY, w: resetS, h: resetS, _hud: true, action: () => { loadLevel(currentLevel); state = 'playing'; frameCount = 0; } });
+}
+
+function drawSuccessOverlay() {
+  const W = canvas.width, H = canvas.height;
+
+  ctx.fillStyle = 'rgba(0,0,0,0.7)';
+  ctx.fillRect(0, 0, W, H);
+
+  const stars = getStars(currentLevel);
+
+  // Title
+  ctx.save();
+  ctx.shadowColor = '#44ff44';
+  ctx.shadowBlur = 20;
+  ctx.fillStyle = '#44ff44';
+  ctx.font = `bold ${Math.min(42, W * 0.08)}px 'Segoe UI', sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.fillText('LEVEL COMPLETE!', W / 2, H * 0.32);
+  ctx.restore();
+
+  // Stars
+  for (let s = 0; s < 3; s++) {
+    ctx.fillStyle = s < stars ? '#ffcc00' : '#333';
+    ctx.font = `${Math.min(48, W * 0.08)}px sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.fillText('\u2605', W / 2 + (s - 1) * 60, H * 0.45);
+  }
+
+  // Star info
+  ctx.fillStyle = '#888';
+  ctx.font = `13px 'Segoe UI', sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.fillText('\u2605 Complete  \u2605\u2605 Within time  \u2605\u2605\u2605 Optimal spark', W / 2, H * 0.52);
+
+  buttons = buttons.filter(b => b._hud);
+
+  // Next level button
+  if (currentLevel < LEVELS.length - 1) {
+    const btnW = 180, btnH = 48;
+    const btnX = W / 2 - btnW / 2, btnY = H * 0.6;
+    ctx.fillStyle = 'rgba(68,255,68,0.15)';
+    ctx.strokeStyle = '#44ff44';
+    ctx.lineWidth = 2;
+    roundRect(btnX, btnY, btnW, btnH, 10);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = '#fff';
+    ctx.font = `bold 18px 'Segoe UI', sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('NEXT LEVEL', W / 2, btnY + btnH / 2);
+    buttons.push({ x: btnX, y: btnY, w: btnW, h: btnH, action: () => {
+      currentLevel++;
+      loadLevel(currentLevel);
+      state = 'playing';
+      frameCount = 0;
+    }});
+  }
+
+  // Level select button
+  const lsW = 180, lsH = 44;
+  const lsX = W / 2 - lsW / 2, lsY = currentLevel < LEVELS.length - 1 ? H * 0.6 + 64 : H * 0.6;
+  ctx.fillStyle = 'rgba(255,255,255,0.05)';
+  ctx.strokeStyle = '#666';
+  ctx.lineWidth = 1;
+  roundRect(lsX, lsY, lsW, lsH, 10);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = '#aaa';
+  ctx.font = `16px 'Segoe UI', sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('LEVEL SELECT', W / 2, lsY + lsH / 2);
+  buttons.push({ x: lsX, y: lsY, w: lsW, h: lsH, action: () => { state = 'levelSelect'; } });
+}
+
+function drawFailOverlay() {
+  const W = canvas.width, H = canvas.height;
+
+  ctx.fillStyle = 'rgba(0,0,0,0.7)';
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.save();
+  ctx.shadowColor = '#ff4444';
+  ctx.shadowBlur = 20;
+  ctx.fillStyle = '#ff4444';
+  ctx.font = `bold ${Math.min(38, W * 0.07)}px 'Segoe UI', sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.fillText('CHAIN STOPPED', W / 2, H * 0.35);
+  ctx.restore();
+
+  ctx.fillStyle = '#888';
+  ctx.font = `15px 'Segoe UI', sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.fillText('Not all targets were reached', W / 2, H * 0.43);
+
+  buttons = buttons.filter(b => b._hud);
+
+  // Retry button
+  const btnW = 180, btnH = 48;
+  const btnX = W / 2 - btnW / 2, btnY = H * 0.52;
+  ctx.fillStyle = 'rgba(255,102,51,0.15)';
+  ctx.strokeStyle = ACCENT;
+  ctx.lineWidth = 2;
+  roundRect(btnX, btnY, btnW, btnH, 10);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = '#fff';
+  ctx.font = `bold 18px 'Segoe UI', sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('RETRY', W / 2, btnY + btnH / 2);
+  buttons.push({ x: btnX, y: btnY, w: btnW, h: btnH, action: () => {
+    loadLevel(currentLevel);
+    state = 'playing';
+    frameCount = 0;
+  }});
+
+  // Level select
+  const lsX = W / 2 - btnW / 2, lsY = btnY + 62;
+  ctx.fillStyle = 'rgba(255,255,255,0.05)';
+  ctx.strokeStyle = '#666';
+  ctx.lineWidth = 1;
+  roundRect(lsX, lsY, btnW, 44, 10);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = '#aaa';
+  ctx.font = `16px 'Segoe UI', sans-serif`;
+  ctx.fillText('LEVEL SELECT', W / 2, lsY + 22);
+  buttons.push({ x: lsX, y: lsY, w: btnW, h: 44, action: () => { state = 'levelSelect'; } });
+}
+
+// ============================================================
+// UTILITY
+// ============================================================
+function roundRect(x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.arcTo(x + w, y, x + w, y + r, r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
+  ctx.lineTo(x + r, y + h);
+  ctx.arcTo(x, y + h, x, y + h - r, r);
+  ctx.lineTo(x, y + r);
+  ctx.arcTo(x, y, x + r, y, r);
+  ctx.closePath();
+}
+
+// ============================================================
+// GAME LOOP
+// ============================================================
+function update() {
+  frameCount++;
+  if (state === 'simulating') {
+    stepSimulation();
+  }
+  updateParticles();
+}
+
+function render() {
+  if (state === 'menu') {
+    drawMenu();
+  } else if (state === 'levelSelect') {
+    drawLevelSelect();
+  } else {
+    drawGame();
+  }
+}
+
+function gameLoop() {
+  update();
+  render();
+  requestAnimationFrame(gameLoop);
+}
+
+// Init
+initMenuParticles();
+gameLoop();
+
+</script>
+</body>
+</html>

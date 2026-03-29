@@ -108,6 +108,15 @@
       <span class="tag" style="background:#7cf222;color:#7cf;">3D Ski Racing</span>
     </div>
   </a>
+
+  <a class="game-card" href="Cascade/index.html" style="--glow:rgba(255,102,51,0.25);--accent:#ff6633;">
+    <canvas id="cascadeThumb" width="680" height="400"></canvas>
+    <div class="game-info">
+      <h2>Cascade</h2>
+      <p>Place a single spark and watch the chain reaction unfold. Read the elements, find the one ignition point!</p>
+      <span class="tag" style="background:#ff663322;color:#ff6633;">Puzzle</span>
+    </div>
+  </a>
 </div>
 
 <script>
@@ -540,6 +549,151 @@
   ctx.fillStyle = '#88aacc';
   ctx.font = '14px sans-serif';
   ctx.fillText('Neon Space Survival', W / 2, 78);
+})();
+
+// Draw Cascade thumbnail
+(function() {
+  const c = document.getElementById('cascadeThumb');
+  const ctx = c.getContext('2d');
+  const W = c.width, H = c.height;
+
+  // Dark background
+  const bg = ctx.createRadialGradient(W/2, H/2, 50, W/2, H/2, 400);
+  bg.addColorStop(0, '#1a0f0a');
+  bg.addColorStop(1, '#0a0a1a');
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, W, H);
+
+  // Subtle grid
+  ctx.strokeStyle = 'rgba(255,102,51,0.06)';
+  ctx.lineWidth = 1;
+  for (let x = 0; x < W; x += 48) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke(); }
+  for (let y = 0; y < H; y += 48) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
+
+  // Grid of cells
+  const cellS = 42, gap = 2;
+  const cols = 10, rows = 6;
+  const gx = W/2 - (cols * (cellS + gap)) / 2 + 20;
+  const gy = H/2 - (rows * (cellS + gap)) / 2 + 30;
+
+  // Element layout for thumbnail
+  const layout = [
+    [0,0,0,0,0,0,0,0,0,0],
+    [0,1,1,6,0,0,0,0,0,0],
+    [0,0,0,6,0,9,0,0,0,0],
+    [0,0,0,2,0,9,5,5,5,0],
+    [0,0,0,0,0,9,0,0,7,0],
+    [0,0,0,8,0,0,0,0,0,0],
+  ];
+  const colors = {1:'#ff8833',2:'#ffee44',5:'#ccccdd',6:'#cc8833',7:'#bb44ff',8:'#ff2222',9:'#555566'};
+
+  for (let r = 0; r < rows; r++) {
+    for (let cc = 0; cc < cols; cc++) {
+      const x = gx + cc * (cellS + gap);
+      const y = gy + r * (cellS + gap);
+      const v = layout[r][cc];
+      if (v === 0) {
+        ctx.fillStyle = '#0d0d22';
+        ctx.fillRect(x, y, cellS, cellS);
+      } else if (v === 9) {
+        ctx.fillStyle = '#333344';
+        ctx.fillRect(x, y, cellS, cellS);
+      } else {
+        ctx.fillStyle = (colors[v] || '#555') + '33';
+        ctx.fillRect(x, y, cellS, cellS);
+        ctx.strokeStyle = (colors[v] || '#555') + '88';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(x, y, cellS, cellS);
+        // Simple icon dot
+        ctx.fillStyle = colors[v] || '#555';
+        ctx.beginPath();
+        ctx.arc(x + cellS/2, y + cellS/2, 5, 0, Math.PI*2);
+        ctx.fill();
+      }
+    }
+  }
+
+  // Simulate chain reaction: fire particles along a path
+  const chainPath = [[1,1],[1,2],[1,3],[2,3],[3,3]];
+  for (let i = 0; i < chainPath.length; i++) {
+    const [pr, pc] = chainPath[i];
+    const cx = gx + pc * (cellS + gap) + cellS/2;
+    const cy = gy + pr * (cellS + gap) + cellS/2;
+    // Glow
+    ctx.save();
+    ctx.shadowColor = '#ff6633';
+    ctx.shadowBlur = 15;
+    ctx.fillStyle = '#ff663366';
+    ctx.fillRect(gx + pc*(cellS+gap), gy + pr*(cellS+gap), cellS, cellS);
+    ctx.restore();
+    // Fire particles
+    for (let p = 0; p < 4; p++) {
+      const px = cx + (Math.random()-0.5)*20;
+      const py = cy + (Math.random()-0.5)*20 - 8;
+      ctx.fillStyle = Math.random() < 0.5 ? '#ff6633' : '#ffaa44';
+      ctx.globalAlpha = 0.5 + Math.random()*0.5;
+      ctx.beginPath();
+      ctx.arc(px, py, 1.5+Math.random()*2, 0, Math.PI*2);
+      ctx.fill();
+    }
+  }
+  ctx.globalAlpha = 1;
+
+  // Explosion at gas cell
+  const ex = gx + 3*(cellS+gap) + cellS/2;
+  const ey = gy + 3*(cellS+gap) + cellS/2;
+  ctx.save();
+  ctx.shadowColor = '#ffee44';
+  ctx.shadowBlur = 25;
+  ctx.fillStyle = '#ffee4466';
+  ctx.beginPath();
+  ctx.arc(ex, ey, 24, 0, Math.PI*2);
+  ctx.fill();
+  ctx.restore();
+  const expColors = ['#ffee44','#ff8833','#ffaa44','#ff6633'];
+  for (let i = 0; i < 15; i++) {
+    const a = Math.random()*Math.PI*2;
+    const d = 8 + Math.random()*25;
+    ctx.fillStyle = expColors[Math.floor(Math.random()*expColors.length)];
+    ctx.globalAlpha = 0.4 + Math.random()*0.6;
+    ctx.fillRect(ex+Math.cos(a)*d, ey+Math.sin(a)*d, 2+Math.random()*3, 2+Math.random()*3);
+  }
+  ctx.globalAlpha = 1;
+
+  // Target indicator on a cell
+  ctx.strokeStyle = 'rgba(255,255,68,0.8)';
+  ctx.shadowColor = '#ffff44';
+  ctx.shadowBlur = 8;
+  ctx.lineWidth = 2;
+  ctx.strokeRect(gx + 8*(cellS+gap) - 1, gy + 4*(cellS+gap) - 1, cellS+2, cellS+2);
+  ctx.shadowBlur = 0;
+
+  // Spark icon at ignition point
+  const sx = gx + 1*(cellS+gap) + cellS/2;
+  const sy = gy + 1*(cellS+gap) + cellS/2;
+  ctx.save();
+  ctx.shadowColor = '#ff6633';
+  ctx.shadowBlur = 15;
+  ctx.fillStyle = '#ff6633';
+  ctx.beginPath();
+  ctx.arc(sx, sy, 5, 0, Math.PI*2);
+  ctx.fill();
+  ctx.restore();
+
+  // Title
+  ctx.shadowColor = '#ff6633';
+  ctx.shadowBlur = 30;
+  ctx.fillStyle = '#ff6633';
+  ctx.font = 'bold 42px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'alphabetic';
+  ctx.fillText('CASCADE', W/2, 55);
+  ctx.shadowBlur = 0;
+
+  // Subtitle
+  ctx.fillStyle = '#cc8855';
+  ctx.font = '14px sans-serif';
+  ctx.fillText('Chain Reaction Architect', W/2, 78);
 })();
 </script>
 
