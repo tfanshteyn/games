@@ -96,28 +96,28 @@ const sfx = {
 const CHARACTERS = [
   {
     id: 'pulse', name: 'Ronin', desc: 'Ki bolts',
-    color: '#cc2222', accent: '#ff4444',
+    color: '#ee3333', accent: '#ff6655',
     hp: 5, speed: 4.0, fireRate: 10, bulletSpeed: 9, bulletDmg: 1, bulletRadius: 4,
     specialName: 'Kiai Burst', specialCd: 480,
     cost: 0
   },
   {
     id: 'volt', name: 'Kunoichi', desc: 'Shuriken fan',
-    color: '#3366cc', accent: '#5599ff',
+    color: '#4488ee', accent: '#66bbff',
     hp: 3, speed: 5.5, fireRate: 5, bulletSpeed: 12, bulletDmg: 0.5, bulletRadius: 3,
     specialName: 'Shadow Step', specialCd: 360,
     cost: 300
   },
   {
     id: 'titan', name: 'Oni', desc: 'Kanabo slam',
-    color: '#884422', accent: '#cc7744',
+    color: '#aa5533', accent: '#ee8855',
     hp: 8, speed: 2.8, fireRate: 18, bulletSpeed: 7, bulletDmg: 2, bulletRadius: 6,
     specialName: 'Iron Fortress', specialCd: 600,
     cost: 300
   },
   {
     id: 'phantom', name: 'Kitsune', desc: 'Foxfire',
-    color: '#cc66ff', accent: '#eebb44',
+    color: '#dd77ff', accent: '#ffcc44',
     hp: 4, speed: 4.5, fireRate: 12, bulletSpeed: 10, bulletDmg: 1, bulletRadius: 4,
     specialName: 'Spirit Walk', specialCd: 420,
     cost: 500
@@ -328,32 +328,35 @@ function hexVertices(cx, cy, r) {
   return verts;
 }
 
-function pointInHex(px, py, cx, cy, r) {
-  // Check all 6 half-planes
-  const dx = px - cx, dy = py - cy;
-  // For flat-top hex, check distance from center projected onto each axis
-  for (let i = 0; i < 6; i++) {
-    const a = (Math.PI / 3) * i;
-    const nx = Math.cos(a), ny = Math.sin(a);
-    if (dx * nx + dy * ny > r) return false;
-  }
-  return true;
+// Maximum distance from center to hex boundary at a given angle.
+// For a flat-top hex with circumradius r, vertices at 0°,60°,120°...
+// The boundary distance varies between r (at vertices) and r*cos(30°) (at edge midpoints).
+function hexMaxDist(angle, r) {
+  // Normalize angle to a 60 degree sector
+  let a = ((angle % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+  a = a % (Math.PI / 3); // reduce to one 60° sector
+  // In this sector, the hex edge runs from vertex at 0° to vertex at 60°.
+  // Distance from center to edge at angle a within sector:
+  return r * Math.cos(Math.PI / 6) / Math.cos(a - Math.PI / 6);
 }
 
-function constrainToHex(px, py, cx, cy, r, entityRadius) {
-  const effectiveR = r - entityRadius;
-  if (pointInHex(px, py, cx, cy, effectiveR)) return { x: px, y: py };
-  // Push back inside: find closest point on hex boundary
+function pointInHex(px, py, cx, cy, r) {
   const dx = px - cx, dy = py - cy;
-  let maxOver = 0, pushNx = 0, pushNy = 0;
-  for (let i = 0; i < 6; i++) {
-    const a = (Math.PI / 3) * i;
-    const nx = Math.cos(a), ny = Math.sin(a);
-    const dot = dx * nx + dy * ny;
-    const over = dot - effectiveR;
-    if (over > maxOver) { maxOver = over; pushNx = nx; pushNy = ny; }
-  }
-  return { x: px - pushNx * maxOver, y: py - pushNy * maxOver };
+  const d = Math.hypot(dx, dy);
+  if (d < 1) return true;
+  const a = Math.atan2(dy, dx);
+  return d <= hexMaxDist(a, r);
+}
+
+function constrainToHex(px, py, cx, cy, r, margin) {
+  const dx = px - cx, dy = py - cy;
+  const d = Math.hypot(dx, dy);
+  if (d < 1) return { x: px, y: py };
+  const a = Math.atan2(dy, dx);
+  const maxD = hexMaxDist(a, r) - margin;
+  if (d <= maxD) return { x: px, y: py };
+  // Clamp to boundary
+  return { x: cx + (dx / d) * maxD, y: cy + (dy / d) * maxD };
 }
 
 // ---- Arena layouts ----
@@ -429,10 +432,10 @@ function resolveCircleAABB(cx, cy, cr, rx, ry, rw, rh) {
 
 // ---- Enemy brawler types (rival warriors) ----
 const ENEMY_BRAWLERS = [
-  { id: 'pulse',   name: 'Shadow Ronin',   radius: 16, hp: 3, speed: 2.5, color: '#993333', accent: '#cc5555', score: 20, behavior: 'strafe', void: 10, fireRate: 30, bulletSpeed: 7, bulletRadius: 4 },
-  { id: 'volt',    name: 'Rogue Kunoichi', radius: 14, hp: 2, speed: 3.8, color: '#335599', accent: '#5577bb', score: 15, behavior: 'rush', void: 8, fireRate: 18, bulletSpeed: 9, bulletRadius: 3 },
-  { id: 'titan',   name: 'Wild Oni',       radius: 20, hp: 6, speed: 1.5, color: '#664422', accent: '#996644', score: 30, behavior: 'tank', void: 15, fireRate: 40, bulletSpeed: 5, bulletRadius: 6 },
-  { id: 'phantom', name: 'Dark Kitsune',   radius: 15, hp: 2, speed: 3.0, color: '#8844bb', accent: '#bb8833', score: 25, behavior: 'sniper', void: 12, fireRate: 50, bulletSpeed: 8, bulletRadius: 4 },
+  { id: 'pulse',   name: 'Shadow Ronin',   radius: 16, hp: 3, speed: 2.5, color: '#cc4444', accent: '#ff6666', score: 20, behavior: 'strafe', void: 10, fireRate: 30, bulletSpeed: 7, bulletRadius: 4 },
+  { id: 'volt',    name: 'Rogue Kunoichi', radius: 14, hp: 2, speed: 3.8, color: '#5577cc', accent: '#77aaee', score: 15, behavior: 'rush', void: 8, fireRate: 18, bulletSpeed: 9, bulletRadius: 3 },
+  { id: 'titan',   name: 'Wild Oni',       radius: 20, hp: 6, speed: 1.5, color: '#996633', accent: '#cc8855', score: 30, behavior: 'tank', void: 15, fireRate: 40, bulletSpeed: 5, bulletRadius: 6 },
+  { id: 'phantom', name: 'Dark Kitsune',   radius: 15, hp: 2, speed: 3.0, color: '#aa55dd', accent: '#ddaa44', score: 25, behavior: 'sniper', void: 12, fireRate: 50, bulletSpeed: 8, bulletRadius: 4 },
 ];
 
 // ---- Power orb types ----
@@ -502,9 +505,9 @@ function spawnWave() {
 
   for (let i = 0; i < count; i++) {
     const a = Math.random() * Math.PI * 2;
-    const d = 500 + Math.random() * 300;
+    const d = 400 + Math.random() * 300;
     let spawnX = Math.cos(a) * d, spawnY = Math.sin(a) * d;
-    const con = constrainToHex(spawnX, spawnY, 0, 0, ARENA_RADIUS, 20);
+    const con = constrainToHex(spawnX, spawnY, 0, 0, ARENA_RADIUS, 40);
     spawnX = con.x; spawnY = con.y;
 
     const typeIdx = Math.floor(Math.random() * maxType);
@@ -547,7 +550,7 @@ function spawnBoss() {
   const isWave10 = wave === 10;
   const a = Math.random() * Math.PI * 2;
   boss = {
-    x: Math.cos(a) * 500, y: Math.sin(a) * 500,
+    x: Math.cos(a) * 400, y: Math.sin(a) * 400,
     vx: 0, vy: 0,
     radius: isWave10 ? 50 : 40,
     hp: isWave10 ? 80 : 40,
@@ -661,8 +664,8 @@ function updateBoss() {
     if (res) { b.x = res.x; b.y = res.y; }
   }
 
-  // Hex boundary
-  const con = constrainToHex(b.x, b.y, 0, 0, ARENA_RADIUS, b.radius);
+  // Hex boundary — larger margin for boss body
+  const con = constrainToHex(b.x, b.y, 0, 0, ARENA_RADIUS, b.radius + 15);
   b.x = con.x; b.y = con.y;
 
   // Contact damage
@@ -795,7 +798,7 @@ function victoryScreen() {
 // ---- Particles & floating text ----
 function addParticle(x, y, color, count) {
   for (let i = 0; i < count; i++) {
-    particles.push({ x: x, y: y, vx: rnd(-3,3), vy: rnd(-3,3), life: rnd(15,30), color: color, radius: rnd(1,4) });
+    particles.push({ x: x, y: y, vx: rnd(-4,4), vy: rnd(-4,4), life: rnd(20,40), color: color, radius: rnd(2,5) });
   }
 }
 
@@ -836,6 +839,20 @@ function update() {
   updateFloatingTexts();
   updateWalls();
 
+  // Hard safety clamp — absolutely ensure player and all enemies stay inside hex
+  if (player) {
+    const pc = constrainToHex(player.x, player.y, 0, 0, ARENA_RADIUS, player.radius + 10);
+    player.x = pc.x; player.y = pc.y;
+  }
+  for (const e of enemies) {
+    const ec = constrainToHex(e.x, e.y, 0, 0, ARENA_RADIUS, e.radius + 8);
+    e.x = ec.x; e.y = ec.y;
+  }
+  if (boss) {
+    const bc = constrainToHex(boss.x, boss.y, 0, 0, ARENA_RADIUS, boss.radius + 15);
+    boss.x = bc.x; boss.y = bc.y;
+  }
+
   // Camera
   camX = lerp(camX, player.x, 0.08);
   camY = lerp(camY, player.y, 0.08);
@@ -859,9 +876,11 @@ function updatePlayer() {
     p.dashTimer--;
     if (p.dashTimer <= 0) p.dashActive = false;
     else {
-      // Dash movement
+      // Dash movement — constrain to arena
       p.x += Math.cos(p.dashAngle) * 12;
       p.y += Math.sin(p.dashAngle) * 12;
+      const dc = constrainToHex(p.x, p.y, 0, 0, ARENA_RADIUS, p.radius + 10);
+      p.x = dc.x; p.y = dc.y;
       // Damage enemies in path
       for (const e of enemies) {
         if (dist(p, e) < p.radius + e.radius) {
@@ -911,8 +930,8 @@ function updatePlayer() {
     if (res) { p.x = res.x; p.y = res.y; }
   }
 
-  // Hex boundary
-  const con = constrainToHex(p.x, p.y, 0, 0, ARENA_RADIUS, p.radius);
+  // Hex boundary — use larger margin so full body stays inside
+  const con = constrainToHex(p.x, p.y, 0, 0, ARENA_RADIUS, p.radius + 10);
   p.x = con.x; p.y = con.y;
 
   // Shooting
@@ -1209,8 +1228,8 @@ function updateEnemies() {
       if (res) { e.x = res.x; e.y = res.y; e.vx *= 0.5; e.vy *= 0.5; }
     }
 
-    // Hex boundary
-    const con = constrainToHex(e.x, e.y, 0, 0, ARENA_RADIUS, e.radius);
+    // Hex boundary — larger margin for full body
+    const con = constrainToHex(e.x, e.y, 0, 0, ARENA_RADIUS, e.radius + 8);
     e.x = con.x; e.y = con.y;
 
     // Contact damage
@@ -1298,6 +1317,7 @@ function draw() {
   const oy = H / 2 - camY + sy;
   ctx.translate(ox, oy);
 
+  drawSky(W, H);
   drawBuildings();
   drawArenaFloor();
   drawWalls();
@@ -1327,6 +1347,170 @@ function draw() {
   if (isTouchDevice) drawJoysticks(W, H);
 }
 
+function drawSky(W, H) {
+  // Draw sky background filling the visible area beyond the arena
+  const R = ARENA_RADIUS;
+  const margin = 600; // extra area to draw sky beyond arena edge
+
+  // Sky gradient — warm sunset tones
+  const skyGrad = ctx.createLinearGradient(0, -R - margin, 0, R + margin);
+  skyGrad.addColorStop(0, '#1a3355');     // deep blue at top
+  skyGrad.addColorStop(0.25, '#3366aa');  // blue
+  skyGrad.addColorStop(0.45, '#5588cc');  // lighter blue
+  skyGrad.addColorStop(0.65, '#ddaa66');  // golden horizon
+  skyGrad.addColorStop(0.8, '#ee8844');   // orange
+  skyGrad.addColorStop(1.0, '#cc5533');   // red-orange at bottom
+  ctx.fillStyle = skyGrad;
+  ctx.fillRect(-R - margin, -R - margin, (R + margin) * 2, (R + margin) * 2);
+
+  // Sun — upper right area
+  const sunX = R * 0.5, sunY = -R - 150;
+
+  // Outer glow halo
+  const sunGlow = ctx.createRadialGradient(sunX, sunY, 20, sunX, sunY, 250);
+  sunGlow.addColorStop(0, 'rgba(255,240,180,0.4)');
+  sunGlow.addColorStop(0.3, 'rgba(255,200,100,0.15)');
+  sunGlow.addColorStop(1, 'rgba(255,150,50,0)');
+  ctx.fillStyle = sunGlow;
+  ctx.fillRect(sunX - 250, sunY - 250, 500, 500);
+
+  // Sun rays
+  ctx.save();
+  ctx.translate(sunX, sunY);
+  ctx.globalAlpha = 0.08;
+  ctx.fillStyle = '#ffdd88';
+  for (let i = 0; i < 12; i++) {
+    const a = (Math.PI * 2 / 12) * i + frameCount * 0.001;
+    ctx.save();
+    ctx.rotate(a);
+    ctx.beginPath();
+    ctx.moveTo(-6, 0);
+    ctx.lineTo(200, -15);
+    ctx.lineTo(200, 15);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
+  ctx.globalAlpha = 1;
+  ctx.restore();
+
+  // Sun disc
+  ctx.shadowColor = '#ffcc66';
+  ctx.shadowBlur = 40;
+  ctx.fillStyle = '#ffdd88';
+  ctx.beginPath();
+  ctx.arc(sunX, sunY, 45, 0, Math.PI * 2);
+  ctx.fill();
+  // Bright center
+  ctx.fillStyle = '#fff8ee';
+  ctx.beginPath();
+  ctx.arc(sunX, sunY, 30, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.shadowBlur = 0;
+
+  // Rainbow arc — opposite side of sun
+  const rbX = -R * 0.4, rbY = -R * 0.2;
+  const rbR = 500;
+  const rainbowColors = ['#ff000018','#ff880018','#ffff0018','#00ff0018','#0088ff18','#4400ff18','#8800ff18'];
+  for (let i = 0; i < rainbowColors.length; i++) {
+    ctx.strokeStyle = rainbowColors[i];
+    ctx.lineWidth = 12;
+    ctx.beginPath();
+    ctx.arc(rbX, rbY, rbR - i * 14, Math.PI * 1.1, Math.PI * 1.85);
+    ctx.stroke();
+  }
+
+  // Clouds — soft wisps
+  function drawCloud(cx, cy, w, h, alpha) {
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath(); ctx.ellipse(cx, cy, w, h, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(cx - w * 0.5, cy + h * 0.3, w * 0.6, h * 0.7, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(cx + w * 0.6, cy + h * 0.2, w * 0.5, h * 0.6, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(cx + w * 0.2, cy - h * 0.3, w * 0.4, h * 0.5, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+
+  // Slowly drifting clouds
+  const cloudDrift = frameCount * 0.15;
+  drawCloud(-R * 0.6 + (cloudDrift % (R * 3)) - R, -R - 80, 80, 25, 0.12);
+  drawCloud(R * 0.2 + ((cloudDrift * 0.7) % (R * 3)) - R, -R - 200, 100, 30, 0.1);
+  drawCloud(-R * 0.3 + ((cloudDrift * 0.5 + 400) % (R * 3)) - R, -R - 300, 70, 20, 0.08);
+  drawCloud(R * 0.8 + ((cloudDrift * 0.4 + 800) % (R * 3)) - R, -R - 50, 90, 22, 0.1);
+  drawCloud(-R * 0.1 + ((cloudDrift * 0.6 + 600) % (R * 3)) - R, -R - 350, 60, 18, 0.07);
+
+  // Distant mountains — back range (behind arena, upper)
+  ctx.fillStyle = '#2a1a1066';
+  ctx.beginPath();
+  ctx.moveTo(-R - margin, -R * 0.1);
+  ctx.lineTo(-R - 200, -R * 0.3);
+  ctx.lineTo(-R + 100, -R * 0.55);
+  ctx.lineTo(-R + 400, -R * 0.35);
+  ctx.lineTo(-R + 600, -R * 0.6);
+  ctx.lineTo(0, -R * 0.4);
+  ctx.lineTo(R * 0.3, -R * 0.65);
+  ctx.lineTo(R * 0.6, -R * 0.45);
+  ctx.lineTo(R + 100, -R * 0.58);
+  ctx.lineTo(R + 400, -R * 0.35);
+  ctx.lineTo(R + margin, -R * 0.1);
+  ctx.lineTo(R + margin, R * 0.2);
+  ctx.lineTo(-R - margin, R * 0.2);
+  ctx.closePath();
+  ctx.fill();
+
+  // Closer mountains — left side
+  ctx.fillStyle = '#22140e77';
+  ctx.beginPath();
+  ctx.moveTo(-R - margin, R + margin);
+  ctx.lineTo(-R - margin, -R * 0.2);
+  ctx.lineTo(-R - 300, -R * 0.4);
+  ctx.lineTo(-R - 100, -R * 0.6);
+  ctx.lineTo(-R + 150, -R * 0.35);
+  ctx.lineTo(-R + 350, -R * 0.5);
+  ctx.lineTo(-R + 500, -R * 0.25);
+  ctx.lineTo(-R + 500, R + margin);
+  ctx.closePath();
+  ctx.fill();
+
+  // Closer mountains — right side
+  ctx.fillStyle = '#22140e77';
+  ctx.beginPath();
+  ctx.moveTo(R + margin, R + margin);
+  ctx.lineTo(R + margin, -R * 0.2);
+  ctx.lineTo(R + 300, -R * 0.45);
+  ctx.lineTo(R + 100, -R * 0.6);
+  ctx.lineTo(R - 150, -R * 0.3);
+  ctx.lineTo(R - 350, -R * 0.5);
+  ctx.lineTo(R - 500, -R * 0.2);
+  ctx.lineTo(R - 500, R + margin);
+  ctx.closePath();
+  ctx.fill();
+
+  // Bottom mountains (behind bottom buildings)
+  ctx.fillStyle = '#1e120a88';
+  ctx.beginPath();
+  ctx.moveTo(-R - margin, R + margin);
+  ctx.lineTo(-R - margin, R * 0.6);
+  ctx.lineTo(-R + 200, R * 0.4);
+  ctx.lineTo(-R + 500, R * 0.55);
+  ctx.lineTo(0, R * 0.35);
+  ctx.lineTo(R * 0.5, R * 0.5);
+  ctx.lineTo(R - 200, R * 0.38);
+  ctx.lineTo(R + margin, R * 0.55);
+  ctx.lineTo(R + margin, R + margin);
+  ctx.closePath();
+  ctx.fill();
+
+  // Green ground/grass area around all sides of arena
+  const groundGrad = ctx.createRadialGradient(0, 0, R * 0.8, 0, 0, R + margin);
+  groundGrad.addColorStop(0, '#1a150a00');
+  groundGrad.addColorStop(0.4, '#1a150a44');
+  groundGrad.addColorStop(0.7, '#1e1a0e88');
+  groundGrad.addColorStop(1, '#1a120acc');
+  ctx.fillStyle = groundGrad;
+  ctx.fillRect(-R - margin, -R - margin, (R + margin) * 2, (R + margin) * 2);
+}
+
 function drawBuildings() {
   // Japanese buildings surrounding the arena (drawn in world space, outside hex boundary)
   const R = ARENA_RADIUS;
@@ -1334,7 +1518,7 @@ function drawBuildings() {
   function drawPagoda(bx, by, w, floors, color) {
     const floorH = 35, roofOverhang = w * 0.3;
     // Base platform
-    ctx.fillStyle = '#2a2018';
+    ctx.fillStyle = '#3a2a18';
     ctx.fillRect(bx - w * 0.6, by, w * 1.2, 12);
     for (let f = 0; f < floors; f++) {
       const fy = by - f * floorH;
@@ -1342,14 +1526,17 @@ function drawBuildings() {
       // Wall
       ctx.fillStyle = color;
       ctx.fillRect(bx - fw/2, fy - floorH + 8, fw, floorH - 8);
-      // Windows
-      ctx.fillStyle = '#eebb4422';
+      // Windows — warm golden glow
+      ctx.fillStyle = '#ffcc4444';
+      ctx.shadowColor = '#ffaa33';
+      ctx.shadowBlur = 6;
       const winW = fw * 0.15, winGap = fw / (3 + 1);
       for (let wi = 1; wi <= 3; wi++) {
         ctx.fillRect(bx - fw/2 + wi * winGap - winW/2, fy - floorH + 14, winW, floorH - 20);
       }
-      // Curved roof
-      ctx.fillStyle = '#1a1a2a';
+      ctx.shadowBlur = 0;
+      // Curved roof — dark blue-grey
+      ctx.fillStyle = '#252535';
       ctx.beginPath();
       ctx.moveTo(bx - fw/2 - roofOverhang, fy + 8);
       ctx.quadraticCurveTo(bx, fy - 6, bx + fw/2 + roofOverhang, fy + 8);
@@ -1357,23 +1544,28 @@ function drawBuildings() {
       ctx.quadraticCurveTo(bx, fy - 2, bx - fw/2 - roofOverhang + 4, fy + 12);
       ctx.closePath();
       ctx.fill();
-      // Roof edge highlight
-      ctx.strokeStyle = '#c8a06033';
-      ctx.lineWidth = 1;
+      // Roof edge highlight — gold trim
+      ctx.strokeStyle = '#c8a06066';
+      ctx.lineWidth = 1.5;
       ctx.beginPath();
       ctx.moveTo(bx - fw/2 - roofOverhang, fy + 8);
       ctx.quadraticCurveTo(bx, fy - 6, bx + fw/2 + roofOverhang, fy + 8);
       ctx.stroke();
     }
-    // Spire on top
+    // Golden spire on top
     const topY = by - floors * floorH;
-    ctx.fillStyle = '#c8a060';
+    ctx.fillStyle = '#eebb44';
+    ctx.shadowColor = '#eebb44';
+    ctx.shadowBlur = 8;
     ctx.fillRect(bx - 2, topY - 20, 4, 20);
-    ctx.beginPath(); ctx.arc(bx, topY - 22, 4, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(bx, topY - 22, 5, 0, Math.PI * 2); ctx.fill();
+    ctx.shadowBlur = 0;
   }
 
   function drawToriiGate(bx, by, w, h) {
-    ctx.fillStyle = '#aa2222';
+    ctx.fillStyle = '#dd3333';
+    ctx.shadowColor = '#ff4444';
+    ctx.shadowBlur = 8;
     // Pillars
     ctx.fillRect(bx - w/2, by - h, 8, h);
     ctx.fillRect(bx + w/2 - 8, by - h, 8, h);
@@ -1387,73 +1579,88 @@ function drawBuildings() {
     ctx.quadraticCurveTo(bx, by - h - 10, bx - w/2 - 18, by - h + 6);
     ctx.closePath();
     ctx.fill();
+    ctx.shadowBlur = 0;
     // Lower beam (nuki)
+    ctx.fillStyle = '#cc2222';
     ctx.fillRect(bx - w/2 + 4, by - h + 22, w - 8, 6);
     // Pillar bases
-    ctx.fillStyle = '#666';
+    ctx.fillStyle = '#888';
     ctx.fillRect(bx - w/2 - 3, by - 8, 14, 8);
     ctx.fillRect(bx + w/2 - 11, by - 8, 14, 8);
   }
 
   function drawHouse(bx, by, w, h, color) {
-    // Wall
+    // Wall — brighter
     ctx.fillStyle = color;
     ctx.fillRect(bx - w/2, by - h, w, h);
     // Sliding door lines
-    ctx.strokeStyle = '#00000022';
+    ctx.strokeStyle = '#00000033';
     ctx.lineWidth = 1;
     ctx.beginPath(); ctx.moveTo(bx, by - h); ctx.lineTo(bx, by); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(bx - w/4, by - h); ctx.lineTo(bx - w/4, by); ctx.stroke();
-    // Warm window glow
-    ctx.fillStyle = '#eebb4415';
+    // Warm window glow — much brighter
+    ctx.fillStyle = '#ffcc4433';
+    ctx.shadowColor = '#ffaa33';
+    ctx.shadowBlur = 8;
     ctx.fillRect(bx - w/4 + 4, by - h + 8, w/4 - 8, h - 16);
     ctx.fillRect(bx + 4, by - h + 8, w/4 - 8, h - 16);
+    ctx.shadowBlur = 0;
     // Triangular roof
-    ctx.fillStyle = '#1a1a2a';
+    ctx.fillStyle = '#252535';
     ctx.beginPath();
     ctx.moveTo(bx - w/2 - 12, by - h);
     ctx.lineTo(bx, by - h - 30);
     ctx.lineTo(bx + w/2 + 12, by - h);
     ctx.closePath();
     ctx.fill();
-    ctx.strokeStyle = '#c8a06022';
+    ctx.strokeStyle = '#c8a06044';
     ctx.lineWidth = 1;
     ctx.beginPath(); ctx.moveTo(bx - w/2 - 12, by - h); ctx.lineTo(bx, by - h - 30); ctx.lineTo(bx + w/2 + 12, by - h); ctx.stroke();
   }
 
   function drawCherryTree(bx, by, size) {
     // Trunk
-    ctx.fillStyle = '#3a2215';
+    ctx.fillStyle = '#4a3020';
     ctx.fillRect(bx - 4 * size, by - 30 * size, 8 * size, 30 * size);
     // Branch
-    ctx.strokeStyle = '#3a2215';
+    ctx.strokeStyle = '#4a3020';
     ctx.lineWidth = 3 * size;
     ctx.beginPath(); ctx.moveTo(bx, by - 20 * size); ctx.quadraticCurveTo(bx + 15 * size, by - 28 * size, bx + 25 * size, by - 25 * size); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(bx, by - 22 * size); ctx.quadraticCurveTo(bx - 12 * size, by - 30 * size, bx - 20 * size, by - 28 * size); ctx.stroke();
-    // Blossom canopy
-    ctx.fillStyle = '#ff88aa18';
+    // Blossom canopy — vibrant pink with glow
+    ctx.fillStyle = '#ff88bb44';
+    ctx.shadowColor = '#ff66aa';
+    ctx.shadowBlur = 15;
     ctx.beginPath(); ctx.arc(bx, by - 35 * size, 22 * size, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = '#ff88aa10';
+    ctx.fillStyle = '#ff99cc33';
     ctx.beginPath(); ctx.arc(bx + 12 * size, by - 30 * size, 16 * size, 0, Math.PI * 2); ctx.fill();
     ctx.beginPath(); ctx.arc(bx - 10 * size, by - 32 * size, 14 * size, 0, Math.PI * 2); ctx.fill();
+    ctx.shadowBlur = 0;
+    // Scattered bright petals on canopy
+    ctx.fillStyle = '#ffaacc66';
+    for (let p = 0; p < 8; p++) {
+      const px = bx + (Math.sin(p * 3.7) * 18 * size);
+      const py = by - 35 * size + (Math.cos(p * 2.3) * 15 * size);
+      ctx.beginPath(); ctx.arc(px, py, 2 * size, 0, Math.PI * 2); ctx.fill();
+    }
   }
 
   function drawLantern(bx, by) {
     // Pole
-    ctx.fillStyle = '#333';
+    ctx.fillStyle = '#444';
     ctx.fillRect(bx - 2, by - 40, 4, 40);
-    // Lantern body
-    ctx.fillStyle = '#cc332244';
-    ctx.shadowColor = '#ff6633';
-    ctx.shadowBlur = 12;
+    // Lantern body — brighter glow
+    ctx.fillStyle = '#ee443366';
+    ctx.shadowColor = '#ff8844';
+    ctx.shadowBlur = 20;
     ctx.fillRect(bx - 8, by - 55, 16, 20);
     ctx.shadowBlur = 0;
     // Top cap
     ctx.fillStyle = '#222';
     ctx.fillRect(bx - 10, by - 57, 20, 4);
     ctx.fillRect(bx - 10, by - 36, 20, 3);
-    // Warm glow
-    ctx.fillStyle = '#ff663311';
+    // Warm glow — vibrant
+    ctx.fillStyle = '#ff884428';
     ctx.beginPath(); ctx.arc(bx, by - 45, 20, 0, Math.PI * 2); ctx.fill();
   }
 
@@ -1462,22 +1669,22 @@ function drawBuildings() {
   const offset = R + 80;
 
   // Top — large pagoda temple
-  drawPagoda(0, -offset - 40, 90, 3, '#2a1810');
+  drawPagoda(0, -offset - 40, 90, 3, '#3d2818');
 
   // Top-right — torii gate + houses
   drawToriiGate(R * 0.75, -offset * 0.45, 70, 60);
-  drawHouse(R * 0.95, -offset * 0.2, 60, 40, '#2a2018');
+  drawHouse(R * 0.95, -offset * 0.2, 60, 40, '#3a2a1a');
 
   // Bottom-right — house cluster
-  drawHouse(R * 0.85, offset * 0.35, 70, 45, '#1a1510');
-  drawHouse(R * 1.0, offset * 0.15, 50, 35, '#221a12');
+  drawHouse(R * 0.85, offset * 0.35, 70, 45, '#2e2218');
+  drawHouse(R * 1.0, offset * 0.15, 50, 35, '#352a1a');
 
   // Bottom — pagoda + cherry tree
-  drawPagoda(-60, offset + 50, 70, 2, '#1a1510');
+  drawPagoda(-60, offset + 50, 70, 2, '#2e2218');
   drawCherryTree(100, offset + 30, 1.2);
 
   // Bottom-left — houses + lanterns
-  drawHouse(-R * 0.9, offset * 0.3, 65, 42, '#2a1810');
+  drawHouse(-R * 0.9, offset * 0.3, 65, 42, '#3d2818');
   drawLantern(-R * 0.7, offset * 0.45);
   drawLantern(-R * 0.65, offset * 0.48);
 
@@ -1488,14 +1695,16 @@ function drawBuildings() {
   // Additional scattered elements
   drawLantern(R * 0.55, -offset * 0.55);
   drawLantern(-R * 0.5, -offset * 0.6);
+  drawLantern(R * 0.3, offset * 0.55);
+  drawLantern(-R * 0.2, offset * 0.58);
   drawCherryTree(R * 0.4, offset * 0.6, 0.8);
-  drawHouse(-R * 0.3, -offset - 20, 55, 38, '#221a12');
-  drawHouse(R * 0.35, -offset - 10, 50, 35, '#1a1510');
+  drawHouse(-R * 0.3, -offset - 20, 55, 38, '#352a1a');
+  drawHouse(R * 0.35, -offset - 10, 50, 35, '#2e2218');
 }
 
 function drawArenaFloor() {
-  // Wooden dojo floor
-  ctx.fillStyle = '#1a1008';
+  // Wooden dojo floor — warm rich wood
+  ctx.fillStyle = '#2a1a0e';
   const verts = hexVertices(0, 0, ARENA_RADIUS);
   ctx.beginPath();
   verts.forEach((v, i) => i === 0 ? ctx.moveTo(v.x, v.y) : ctx.lineTo(v.x, v.y));
@@ -1503,7 +1712,7 @@ function drawArenaFloor() {
   ctx.fill();
 
   // Tatami grid lines
-  ctx.strokeStyle = 'rgba(180,150,100,0.08)';
+  ctx.strokeStyle = 'rgba(200,170,110,0.12)';
   ctx.lineWidth = 1;
   const gridSize = 80;
   for (let gx = -ARENA_RADIUS; gx <= ARENA_RADIUS; gx += gridSize) {
@@ -1514,14 +1723,14 @@ function drawArenaFloor() {
   }
 
   // Hex boundary — styled as rope/shimenawa
-  ctx.strokeStyle = 'rgba(200,160,80,0.4)';
-  ctx.lineWidth = 4;
+  ctx.strokeStyle = 'rgba(220,180,90,0.6)';
+  ctx.lineWidth = 5;
   ctx.beginPath();
   verts.forEach((v, i) => i === 0 ? ctx.moveTo(v.x, v.y) : ctx.lineTo(v.x, v.y));
   ctx.closePath();
   ctx.stroke();
   // Inner golden border
-  ctx.strokeStyle = 'rgba(200,160,80,0.15)';
+  ctx.strokeStyle = 'rgba(220,180,90,0.25)';
   ctx.lineWidth = 2;
   const iv = hexVertices(0, 0, ARENA_RADIUS - 20);
   ctx.beginPath();
@@ -1530,18 +1739,18 @@ function drawArenaFloor() {
   ctx.stroke();
 
   // Center emblem — large kanji circle
-  ctx.strokeStyle = 'rgba(200,160,80,0.06)';
+  ctx.strokeStyle = 'rgba(220,180,90,0.12)';
   ctx.lineWidth = 3;
   ctx.beginPath(); ctx.arc(0, 0, 120, 0, Math.PI * 2); ctx.stroke();
   ctx.beginPath(); ctx.arc(0, 0, 115, 0, Math.PI * 2); ctx.stroke();
   // Kanji-style cross in center
-  ctx.strokeStyle = 'rgba(200,160,80,0.04)';
+  ctx.strokeStyle = 'rgba(220,180,90,0.08)';
   ctx.lineWidth = 6;
   ctx.beginPath(); ctx.moveTo(-60, 0); ctx.lineTo(60, 0); ctx.stroke();
   ctx.beginPath(); ctx.moveTo(0, -60); ctx.lineTo(0, 60); ctx.stroke();
 
-  // Falling cherry blossom petals (drawn as small pink shapes)
-  ctx.fillStyle = '#ff88aa22';
+  // Falling cherry blossom petals — brighter, more visible
+  ctx.fillStyle = '#ff88aa44';
   for (let i = 0; i < 30; i++) {
     const px = Math.sin(frameCount * 0.003 + i * 7.3) * ARENA_RADIUS * 0.8;
     const py = ((frameCount * 0.5 + i * 137) % (ARENA_RADIUS * 2)) - ARENA_RADIUS;
@@ -1623,7 +1832,7 @@ function drawBrawlerBody(x, y, ang, radius, charId, color, accent, opts) {
   if (charId === 'pulse') {
     // ---- RONIN: Samurai with hakama, top-knot, and katana ----
     // Hakama legs (wide flowing pants)
-    ctx.fillStyle = '#1a1a3388';
+    ctx.fillStyle = '#2a2a55aa';
     ctx.save(); ctx.translate(-4*s, 6*s); ctx.rotate(legKick * 0.6);
     ctx.beginPath();
     ctx.moveTo(-5*s, 0); ctx.lineTo(-7*s, 14*s); ctx.lineTo(3*s, 14*s); ctx.lineTo(5*s, 0);
@@ -1669,12 +1878,15 @@ function drawBrawlerBody(x, y, ang, radius, charId, color, accent, opts) {
     ctx.fillRect(0, -2*s, 6*s, 4*s); // arm in sleeve
     ctx.fillStyle = color + 'aa';
     ctx.fillRect(-1*s, -3*s, 7*s, 6*s); // sleeve
-    // Katana
-    ctx.fillStyle = '#dddddd';
+    // Katana — gleaming blade
+    ctx.fillStyle = '#eeeeff';
+    ctx.shadowColor = '#ffffff';
+    ctx.shadowBlur = 4;
     ctx.fillRect(5*s, -0.8*s, 14*s, 1.6*s); // blade
-    ctx.fillStyle = '#886622';
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = '#cc9922';
     ctx.fillRect(4*s, -2*s, 2*s, 4*s); // tsuba (guard)
-    ctx.fillStyle = '#442211';
+    ctx.fillStyle = '#553322';
     ctx.fillRect(2*s, -1.5*s, 3*s, 3*s); // handle
     ctx.restore();
     // Back arm in sleeve
@@ -1686,14 +1898,14 @@ function drawBrawlerBody(x, y, ang, radius, charId, color, accent, opts) {
   else if (charId === 'volt') {
     // ---- KUNOICHI: Female ninja with scarf, shuriken ----
     // Legs (slim, wrapped)
-    ctx.fillStyle = '#1a1a44aa';
+    ctx.fillStyle = '#2a2a55bb';
     ctx.save(); ctx.translate(-3*s, 5*s); ctx.rotate(legKick * 1.2);
     ctx.fillRect(-2*s, 0, 4*s, 13*s);
     ctx.fillStyle = '#333355';
     ctx.fillRect(-2.5*s, 11*s, 5*s, 3*s); // tabi boots
     ctx.restore();
     ctx.save(); ctx.translate(3*s, 5*s); ctx.rotate(-legKick * 1.2);
-    ctx.fillStyle = '#1a1a44aa';
+    ctx.fillStyle = '#2a2a55bb';
     ctx.fillRect(-2*s, 0, 4*s, 13*s);
     ctx.fillStyle = '#333355';
     ctx.fillRect(-2.5*s, 11*s, 5*s, 3*s);
@@ -1739,8 +1951,8 @@ function drawBrawlerBody(x, y, ang, radius, charId, color, accent, opts) {
     ctx.save(); ctx.translate(5*s, -3*s); ctx.rotate(armSwing);
     ctx.fillStyle = color + 'aa';
     ctx.fillRect(0, -1.5*s, 7*s, 3*s);
-    // Shuriken in hand (4-pointed star)
-    ctx.fillStyle = '#cccccc';
+    // Shuriken in hand (4-pointed star) — gleaming silver
+    ctx.fillStyle = '#ddeeff';
     ctx.save(); ctx.translate(9*s, 0); ctx.rotate(walk * 2);
     for (let j = 0; j < 4; j++) {
       ctx.save(); ctx.rotate(j * Math.PI/2);
@@ -1804,7 +2016,7 @@ function drawBrawlerBody(x, y, ang, radius, charId, color, accent, opts) {
     ctx.arc(0, -15*s, 7*s, -0.3, -Math.PI+0.3, true);
     ctx.closePath(); ctx.fill();
     // Horns
-    ctx.fillStyle = '#eeddaa';
+    ctx.fillStyle = '#ffddaa';
     ctx.beginPath(); ctx.moveTo(-5*s, -20*s); ctx.lineTo(-8*s, -28*s); ctx.lineTo(-3*s, -22*s); ctx.closePath(); ctx.fill();
     ctx.beginPath(); ctx.moveTo(5*s, -20*s); ctx.lineTo(8*s, -28*s); ctx.lineTo(3*s, -22*s); ctx.closePath(); ctx.fill();
     // Fierce eyes
@@ -1886,8 +2098,8 @@ function drawBrawlerBody(x, y, ang, radius, charId, color, accent, opts) {
     ctx.fillStyle = '#ffaaaa';
     ctx.beginPath(); ctx.moveTo(-4*s, -20*s); ctx.lineTo(-6*s, -24*s); ctx.lineTo(-2*s, -20*s); ctx.closePath(); ctx.fill();
     ctx.beginPath(); ctx.moveTo(4*s, -20*s); ctx.lineTo(6*s, -24*s); ctx.lineTo(2*s, -20*s); ctx.closePath(); ctx.fill();
-    // Mask markings (red curves)
-    ctx.strokeStyle = '#cc3333'; ctx.lineWidth = 1.5;
+    // Mask markings (vivid red curves)
+    ctx.strokeStyle = '#ee3333'; ctx.lineWidth = 2;
     ctx.beginPath(); ctx.moveTo(2*s, -15*s); ctx.quadraticCurveTo(5*s, -13*s, 4*s, -10*s); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(-2*s, -15*s); ctx.quadraticCurveTo(-5*s, -13*s, -4*s, -10*s); ctx.stroke();
     // Glowing eyes through mask
@@ -1997,7 +2209,7 @@ function drawBullets() {
   for (const b of bullets) {
     ctx.save();
     ctx.shadowColor = b.color;
-    ctx.shadowBlur = 8;
+    ctx.shadowBlur = 12;
 
     if (b.type === 'spark') {
       // Volt sparks — small electric dots with trail
@@ -2149,10 +2361,14 @@ function drawPlayer_() {
 
 function drawParticles() {
   for (const p of particles) {
-    ctx.globalAlpha = p.life / 30;
+    const t = p.life / 40;
+    ctx.globalAlpha = Math.min(1, t + 0.2);
+    ctx.shadowColor = p.color;
+    ctx.shadowBlur = 4;
     ctx.fillStyle = p.color;
-    ctx.beginPath(); ctx.arc(p.x, p.y, p.radius * (p.life / 30), 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(p.x, p.y, p.radius * Math.min(1, t + 0.3), 0, Math.PI * 2); ctx.fill();
   }
+  ctx.shadowBlur = 0;
   ctx.globalAlpha = 1;
 }
 
