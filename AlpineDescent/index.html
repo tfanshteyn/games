@@ -592,14 +592,18 @@ function getCurveOffset(z, curves) {
 function buildTerrain(track) {
   if (terrainMesh) { scene.remove(terrainMesh); terrainMesh.geometry.dispose(); }
 
-  const segX = 50, segZ = 200;
-  const geo = new THREE.PlaneGeometry(track.width * 5, track.length * 1.2, segX, segZ);
+  const segX = 50, segZ = 300;
+  const terrainLength = track.length * 2;
+  const geo = new THREE.PlaneGeometry(track.width * 6, terrainLength, segX, segZ);
   geo.rotateX(-Math.PI / 2);
 
+  // Shift terrain so it covers Z = -50 to track.length*2 - 50
+  const terrainOffset = terrainLength / 2 - 50;
   const pos = geo.attributes.position;
   for (let i = 0; i < pos.count; i++) {
     const x = pos.getX(i);
-    const z = pos.getZ(i);
+    const z = pos.getZ(i) + terrainOffset;
+    pos.setZ(i, z);
     const y = getTerrainHeight(x, z, track, trackCurveOffsets);
     pos.setY(i, y);
   }
@@ -624,9 +628,9 @@ function buildBanks(track) {
   const bankMat = new THREE.MeshLambertMaterial({ color: 0xd0d8e5, flatShading: true });
 
   [-1, 1].forEach(side => {
-    const geo = new THREE.BoxGeometry(30, 8, track.length * 1.2);
+    const geo = new THREE.BoxGeometry(30, 8, track.length * 2);
     const mesh = new THREE.Mesh(geo, bankMat);
-    mesh.position.set(side * (track.width * 1.2 + 15), 0, track.length / 2);
+    mesh.position.set(side * (track.width * 1.5 + 15), 0, track.length / 2);
     mesh.receiveShadow = true;
     scene.add(mesh);
     bankMeshes.push(mesh);
