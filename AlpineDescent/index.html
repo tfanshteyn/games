@@ -483,7 +483,7 @@ if (isMobile) {
   document.getElementById('touch-controls').style.display = 'flex';
   const btns = { 'tb-left': 'left', 'tb-right': 'right', 'tb-brake': 'brake', 'tb-tuck': 'tuck' };
   function handleTouches(e) {
-    e.preventDefault();
+    if (state === 'playing' || state === 'countdown') e.preventDefault();
     ensureAudio();
     touch.left = false; touch.right = false; touch.brake = false; touch.tuck = false;
     for (const t of e.touches) {
