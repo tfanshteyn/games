@@ -2,22 +2,33 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>Void Drift</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  body {
+  html, body {
     background: #000;
     overflow: hidden;
+    touch-action: none;
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+    position: fixed;
+    width: 100%;
+    height: 100%;
+    font-family: 'Segoe UI', Tahoma, sans-serif;
+  }
+  body {
     display: flex;
     justify-content: center;
     align-items: center;
-    height: 100vh;
-    font-family: 'Segoe UI', Tahoma, sans-serif;
   }
   canvas {
     display: block;
     image-rendering: pixelated;
+    image-rendering: -webkit-optimize-contrast;
   }
 </style>
 </head>
@@ -30,13 +41,15 @@
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
 
-// Resize to fill window
+// Resize to fill window (works around Safari 100vh bug)
 function resize() {
-  canvas.width = window.innerWidth;
-  canvas.height = window.innerHeight;
+  canvas.width = document.documentElement.clientWidth;
+  canvas.height = document.documentElement.clientHeight;
 }
 resize();
 window.addEventListener('resize', resize);
+// Safari fires orientationchange but sometimes not resize
+window.addEventListener('orientationchange', () => setTimeout(resize, 100));
 
 // ---- Constants ----
 const PLAYER_RADIUS = 14;
@@ -48,7 +61,8 @@ const FIRE_RATE = 8; // frames between shots
 const STAR_COUNT = 200;
 
 // ---- State ----
-let state = 'menu'; // menu | playing | shop | gameover
+let state = 'menu'; // menu | playing | shop | gameover | victory
+const MAX_WAVE = 20;
 let score = 0;
 let highScore = parseInt(localStorage.getItem('voidDriftHigh') || '0', 10);
 let wave = 0;
@@ -98,7 +112,7 @@ const isTouchDevice = ('ontouchstart' in window) || navigator.maxTouchPoints > 0
 window.addEventListener('keydown', e => {
   keys[e.key.toLowerCase()] = true;
   if (state === 'menu') startGame();
-  if (state === 'gameover' && e.key === ' ') startGame();
+  if ((state === 'gameover' || state === 'victory') && e.key === ' ') startGame();
   if (state === 'shop' && (e.key === 'Enter' || e.key === 'Escape' || e.key === ' ')) { closeShop(); spawnWave(); }
 });
 window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
@@ -106,7 +120,7 @@ window.addEventListener('mousemove', e => { mouseX = e.clientX; mouseY = e.clien
 window.addEventListener('mousedown', e => {
   mouseDown = true;
   if (state === 'menu') startGame();
-  if (state === 'gameover') startGame();
+  if (state === 'gameover' || state === 'victory') startGame();
   if (state === 'shop') handleShopClick(e.clientX, e.clientY);
 });
 window.addEventListener('mouseup', () => mouseDown = false);
@@ -125,7 +139,7 @@ const rightStick = { active: false, touchId: -1, baseX: 0, baseY: 0, knobX: 0, k
 function handleTouchStart(e) {
   e.preventDefault();
   if (state === 'menu') { startGame(); return; }
-  if (state === 'gameover') { startGame(); return; }
+  if (state === 'gameover' || state === 'victory') { startGame(); return; }
   if (state === 'shop') { handleShopClick(e.changedTouches[0].clientX, e.changedTouches[0].clientY); return; }
 
   for (let i = 0; i < e.changedTouches.length; i++) {
@@ -200,6 +214,8 @@ canvas.addEventListener('touchstart', handleTouchStart, { passive: false });
 canvas.addEventListener('touchmove', handleTouchMove, { passive: false });
 canvas.addEventListener('touchend', handleTouchEnd, { passive: false });
 canvas.addEventListener('touchcancel', handleTouchEnd, { passive: false });
+// Prevent Safari rubber-band scrolling and pull-to-refresh
+document.addEventListener('touchmove', e => e.preventDefault(), { passive: false });
 
 // ---- Stars (background) ----
 const stars = [];
@@ -769,6 +785,10 @@ function update() {
   if (enemies.length === 0 && !boss) {
     waveTimer--;
     if (waveTimer <= 0) {
+      if (wave >= MAX_WAVE) {
+        victory();
+        return;
+      }
       if (wave > 0) {
         openShop();
         return;
@@ -936,6 +956,28 @@ function update() {
 
   // Screen shake
   if (shakeTimer > 0) shakeTimer--;
+}
+
+function victory() {
+  state = 'victory';
+  // Victory bonus: double remaining score
+  const bonus = score;
+  score += bonus;
+  if (score > highScore) {
+    highScore = score;
+    localStorage.setItem('voidDriftHigh', highScore.toString());
+  }
+  credits += score;
+  saveData();
+  // Celebration particles
+  for (let i = 0; i < 8; i++) {
+    const a = (Math.PI * 2 / 8) * i;
+    const px = player.x + Math.cos(a) * 50;
+    const py = player.y + Math.sin(a) * 50;
+    addParticles(px, py, '#44ffaa', 15, 6, 60);
+    addParticles(px, py, '#ffd700', 10, 5, 50);
+  }
+  screenShake(8, 15);
 }
 
 function gameOver() {
@@ -1208,7 +1250,7 @@ function draw() {
 
     ctx.fillStyle = '#888';
     ctx.font = '12px sans-serif';
-    ctx.fillText('WAVE ' + wave, W - 20, 54);
+    ctx.fillText('WAVE ' + wave + ' / ' + MAX_WAVE, W - 20, 54);
 
     // Boss HP bar
     drawBossHUD(W);
@@ -1280,6 +1322,47 @@ function draw() {
     ctx.fillStyle = '#44ffaa';
     ctx.font = '18px sans-serif';
     ctx.fillText('Click or press Space to retry', W / 2, H / 2 + 130);
+  }
+
+  // ---- Victory ----
+  if (state === 'victory') {
+    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+    ctx.fillRect(0, 0, W, H);
+
+    ctx.shadowColor = '#ffd700';
+    ctx.shadowBlur = 40;
+    ctx.fillStyle = '#ffd700';
+    ctx.font = 'bold 56px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('VICTORY', W / 2, H / 2 - 70);
+    ctx.shadowBlur = 0;
+
+    ctx.fillStyle = '#44ffaa';
+    ctx.font = '22px sans-serif';
+    ctx.fillText('You conquered the void!', W / 2, H / 2 - 25);
+
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 28px sans-serif';
+    ctx.fillText('Score: ' + score.toLocaleString(), W / 2, H / 2 + 20);
+
+    ctx.fillStyle = '#ffaa44';
+    ctx.font = '16px sans-serif';
+    ctx.fillText('(includes 2x victory bonus!)', W / 2, H / 2 + 45);
+
+    ctx.fillStyle = '#44ddff';
+    ctx.font = 'bold 18px sans-serif';
+    ctx.fillText('+' + score.toLocaleString() + ' credits banked!', W / 2, H / 2 + 80);
+
+    ctx.fillStyle = '#888';
+    ctx.font = '14px sans-serif';
+    ctx.fillText('Total credits: ' + credits.toLocaleString(), W / 2, H / 2 + 105);
+
+    const pulse = 0.6 + Math.sin(Date.now() * 0.003) * 0.4;
+    ctx.globalAlpha = pulse;
+    ctx.fillStyle = '#44ffaa';
+    ctx.font = '18px sans-serif';
+    ctx.fillText('Click or press Space to play again', W / 2, H / 2 + 150);
+    ctx.globalAlpha = 1;
   }
 
   // ---- Shop ----
