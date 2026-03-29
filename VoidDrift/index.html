@@ -177,6 +177,7 @@ let enemies = [];
 let particles = [];
 let powerUps = [];
 let floatingTexts = [];
+let boss = null; // only one boss at a time
 
 // ---- Camera ----
 let camX = 0, camY = 0;
@@ -205,11 +206,28 @@ function startGame() {
   particles = [];
   powerUps = [];
   floatingTexts = [];
+  boss = null;
 }
 
 // ---- Spawn wave ----
 function spawnWave() {
   wave++;
+  const isBossWave = wave % 5 === 0;
+
+  if (isBossWave) {
+    spawnBoss();
+    addFloatingText('BOSS WAVE ' + wave, player.x, player.y - 60, '#ff2244', 120, 36);
+    // Spawn a heal power-up to help the player
+    const a = Math.random() * Math.PI * 2;
+    powerUps.push({
+      x: player.x + Math.cos(a) * 200,
+      y: player.y + Math.sin(a) * 200,
+      type: 'heal',
+      timer: 900
+    });
+    return;
+  }
+
   const count = Math.min(5 + wave * 2, 40);
   const types = Object.keys(ENEMY_TYPES);
 
@@ -252,6 +270,321 @@ function spawnWave() {
   }
 
   addFloatingText('WAVE ' + wave, player.x, player.y - 60, '#fff', 90, 28);
+}
+
+// ---- Boss system ----
+const BOSS_NAMES = ['SENTINEL', 'WARDEN', 'OVERLORD', 'DREADNOUGHT', 'VOID KING'];
+
+function spawnBoss() {
+  const bossLevel = Math.floor(wave / 5); // 1, 2, 3...
+  const a = Math.random() * Math.PI * 2;
+  const spawnDist = 500;
+
+  boss = {
+    x: player.x + Math.cos(a) * spawnDist,
+    y: player.y + Math.sin(a) * spawnDist,
+    vx: 0, vy: 0,
+    radius: 40 + bossLevel * 5,
+    hp: 30 + bossLevel * 20,
+    maxHp: 30 + bossLevel * 20,
+    speed: 1.0 + bossLevel * 0.15,
+    color: '#ff2244',
+    score: 200 + bossLevel * 100,
+    level: bossLevel,
+    name: BOSS_NAMES[Math.min(bossLevel - 1, BOSS_NAMES.length - 1)],
+    timer: 0,
+    phase: 'chase', // chase | spray | summon | dash
+    phaseTimer: 0,
+    phaseDuration: 180,
+    dashAngle: 0,
+    rotation: 0, // visual spin
+    spawnCooldown: 0,
+    // Attack speeds scale with level
+    bulletRate: Math.max(15, 40 - bossLevel * 5),
+    sprayCount: 8 + bossLevel * 4,
+    summonCount: Math.min(2 + bossLevel, 8),
+  };
+}
+
+function updateBoss() {
+  if (!boss) return;
+  const b = boss;
+  b.timer++;
+  b.rotation += 0.02;
+  b.phaseTimer++;
+
+  const a = angle(b, player);
+  const d = dist(b, player);
+
+  // Cycle through phases
+  if (b.phaseTimer >= b.phaseDuration) {
+    b.phaseTimer = 0;
+    const phases = ['chase', 'spray', 'summon', 'dash'];
+    const curIdx = phases.indexOf(b.phase);
+    b.phase = phases[(curIdx + 1) % phases.length];
+    b.phaseDuration = b.phase === 'dash' ? 60 : b.phase === 'spray' ? 90 : b.phase === 'summon' ? 120 : 180;
+  }
+
+  switch (b.phase) {
+    case 'chase':
+      // Move toward player, fire aimed shots
+      b.vx = lerp(b.vx, Math.cos(a) * b.speed, 0.04);
+      b.vy = lerp(b.vy, Math.sin(a) * b.speed, 0.04);
+      if (b.timer % b.bulletRate === 0) {
+        fireEnemyBullet(b.x, b.y, a);
+        // Higher level bosses fire more bullets
+        if (b.level >= 2) {
+          fireEnemyBullet(b.x, b.y, a + 0.2);
+          fireEnemyBullet(b.x, b.y, a - 0.2);
+        }
+        if (b.level >= 4) {
+          fireEnemyBullet(b.x, b.y, a + 0.4);
+          fireEnemyBullet(b.x, b.y, a - 0.4);
+        }
+      }
+      break;
+
+    case 'spray':
+      // Slow down and spray bullets in a ring
+      b.vx *= 0.95;
+      b.vy *= 0.95;
+      if (b.timer % 6 === 0) {
+        const sprayAngle = b.timer * 0.3;
+        for (let i = 0; i < 2; i++) {
+          fireEnemyBullet(b.x, b.y, sprayAngle + i * Math.PI);
+        }
+      }
+      break;
+
+    case 'summon':
+      // Summon minions, stay at distance
+      if (d < 250) {
+        b.vx = lerp(b.vx, Math.cos(a + Math.PI) * b.speed * 1.5, 0.05);
+        b.vy = lerp(b.vy, Math.sin(a + Math.PI) * b.speed * 1.5, 0.05);
+      } else {
+        b.vx *= 0.96;
+        b.vy *= 0.96;
+      }
+      if (b.phaseTimer === 30 && enemies.length < 20) {
+        for (let i = 0; i < b.summonCount; i++) {
+          const sa = (Math.PI * 2 / b.summonCount) * i;
+          const sx = b.x + Math.cos(sa) * (b.radius + 30);
+          const sy = b.y + Math.sin(sa) * (b.radius + 30);
+          enemies.push({
+            x: sx, y: sy, vx: Math.cos(sa) * 3, vy: Math.sin(sa) * 3,
+            radius: 10, hp: 1, maxHp: 1,
+            speed: 2.2, color: '#ff6688', score: 5,
+            behavior: 'chase', type: 'drone',
+            timer: Math.random() * 120, dashAngle: 0, dashCooldown: 0
+          });
+          addParticles(sx, sy, '#ff6688', 5, 3, 15);
+        }
+        addFloatingText('SUMMONING', b.x, b.y - b.radius - 20, '#ff6688', 40, 18);
+      }
+      break;
+
+    case 'dash':
+      // Charge at the player
+      if (b.phaseTimer === 1) {
+        b.dashAngle = a;
+        addFloatingText('!', b.x, b.y - b.radius - 20, '#ff0000', 30, 32);
+      }
+      if (b.phaseTimer < 20) {
+        // Windup - slow
+        b.vx *= 0.9;
+        b.vy *= 0.9;
+      } else {
+        // Charge
+        b.vx = Math.cos(b.dashAngle) * b.speed * 5;
+        b.vy = Math.sin(b.dashAngle) * b.speed * 5;
+      }
+      break;
+  }
+
+  b.x += b.vx;
+  b.y += b.vy;
+
+  // Boss collision with player
+  if (dist(b, player) < b.radius + PLAYER_RADIUS && player.invuln <= 0) {
+    if (player.powerUp === 'shield') {
+      player.powerUp = null;
+      player.powerTimer = 0;
+      addParticles(player.x, player.y, '#44aaff', 15, 4, 30);
+      addFloatingText('SHIELD BREAK', player.x, player.y - 30, '#44aaff', 50);
+    } else {
+      player.hp -= 2; // bosses hit harder
+      player.invuln = 50;
+      screenShake(10, 15);
+      addParticles(player.x, player.y, '#ff4444', 25, 6, 35);
+    }
+    // Knockback
+    const ka = angle(b, player);
+    player.x += Math.cos(ka) * 30;
+    player.y += Math.sin(ka) * 30;
+    if (player.hp <= 0) { player.hp = 0; gameOver(); }
+  }
+
+  // Boss hit by player bullets
+  for (let i = bullets.length - 1; i >= 0; i--) {
+    const bl = bullets[i];
+    if (!bl.friendly) continue;
+    if (dist(bl, b) < b.radius + BULLET_RADIUS) {
+      b.hp--;
+      addParticles(bl.x, bl.y, '#ff4488', 4, 3, 15);
+      bullets.splice(i, 1);
+      if (b.hp <= 0) {
+        killBoss();
+        return;
+      }
+    }
+  }
+}
+
+function killBoss() {
+  const b = boss;
+  score += b.score;
+  addFloatingText('+' + b.score, b.x, b.y - 30, '#ffaa44', 60, 28);
+  addFloatingText(b.name + ' DEFEATED', b.x, b.y - 60, '#44ffaa', 90, 24);
+  // Big explosion
+  for (let i = 0; i < 5; i++) {
+    const ox = (Math.random() - 0.5) * b.radius;
+    const oy = (Math.random() - 0.5) * b.radius;
+    addParticles(b.x + ox, b.y + oy, '#ff2244', 15, 6, 50);
+    addParticles(b.x + ox, b.y + oy, '#ff8844', 10, 5, 40);
+    addParticles(b.x + ox, b.y + oy, '#ffdd44', 8, 4, 35);
+  }
+  screenShake(15, 25);
+  // Drop a power-up
+  powerUps.push({
+    x: b.x, y: b.y,
+    type: POWER_TYPES[Math.floor(Math.random() * (POWER_TYPES.length - 1))], // not heal
+    timer: 900
+  });
+  boss = null;
+}
+
+function drawBoss() {
+  if (!boss) return;
+  const b = boss;
+
+  // Outer rotating ring
+  ctx.save();
+  ctx.translate(b.x, b.y);
+  ctx.rotate(b.rotation);
+
+  ctx.shadowColor = b.color;
+  ctx.shadowBlur = 20;
+  ctx.strokeStyle = b.color;
+  ctx.lineWidth = 3;
+
+  // Outer octagon
+  ctx.beginPath();
+  for (let i = 0; i < 8; i++) {
+    const a = (Math.PI / 4) * i;
+    const px = Math.cos(a) * b.radius;
+    const py = Math.sin(a) * b.radius;
+    if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+  }
+  ctx.closePath();
+  ctx.fillStyle = b.color + '22';
+  ctx.fill();
+  ctx.stroke();
+
+  // Inner spinning shape
+  ctx.rotate(-b.rotation * 2);
+  ctx.strokeStyle = '#ff8866';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  for (let i = 0; i < 6; i++) {
+    const a = (Math.PI / 3) * i;
+    const px = Math.cos(a) * b.radius * 0.55;
+    const py = Math.sin(a) * b.radius * 0.55;
+    if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+  }
+  ctx.closePath();
+  ctx.fillStyle = '#ff886633';
+  ctx.fill();
+  ctx.stroke();
+
+  // Core
+  ctx.shadowColor = '#ff4466';
+  ctx.shadowBlur = 15;
+  ctx.fillStyle = '#ff4466';
+  ctx.beginPath();
+  ctx.arc(0, 0, 8 + Math.sin(b.timer * 0.08) * 3, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Eye
+  ctx.fillStyle = '#fff';
+  ctx.beginPath();
+  ctx.arc(0, 0, 4, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.shadowBlur = 0;
+  ctx.restore();
+
+  // Phase indicator spikes
+  if (b.phase === 'spray') {
+    ctx.globalAlpha = 0.3 + Math.sin(b.timer * 0.2) * 0.2;
+    ctx.strokeStyle = '#ffaa44';
+    ctx.lineWidth = 1;
+    for (let i = 0; i < 12; i++) {
+      const a = (Math.PI / 6) * i + b.timer * 0.05;
+      ctx.beginPath();
+      ctx.moveTo(b.x + Math.cos(a) * (b.radius + 5), b.y + Math.sin(a) * (b.radius + 5));
+      ctx.lineTo(b.x + Math.cos(a) * (b.radius + 20), b.y + Math.sin(a) * (b.radius + 20));
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  if (b.phase === 'dash' && b.phaseTimer < 20) {
+    // Warning flash
+    ctx.globalAlpha = 0.3 + Math.sin(b.timer * 0.5) * 0.3;
+    ctx.fillStyle = '#ff0000';
+    ctx.beginPath();
+    ctx.arc(b.x, b.y, b.radius + 15, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+}
+
+function drawBossHUD(W) {
+  if (!boss) return;
+  const b = boss;
+  const barW = Math.min(400, W - 40);
+  const barH = 16;
+  const barX = (W - barW) / 2;
+  const barY = 20;
+
+  // Boss name
+  ctx.fillStyle = '#ff4466';
+  ctx.font = 'bold 14px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText(b.name + ' (Lv.' + b.level + ')', W / 2, barY - 4);
+
+  // HP bar background
+  ctx.fillStyle = '#222';
+  ctx.fillRect(barX, barY, barW, barH);
+
+  // HP bar fill with gradient
+  const hpRatio = b.hp / b.maxHp;
+  const grad = ctx.createLinearGradient(barX, 0, barX + barW * hpRatio, 0);
+  grad.addColorStop(0, '#ff2244');
+  grad.addColorStop(1, '#ff8844');
+  ctx.fillStyle = grad;
+  ctx.fillRect(barX, barY, barW * hpRatio, barH);
+
+  // Border
+  ctx.strokeStyle = '#ff4466';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(barX, barY, barW, barH);
+
+  // HP text
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 11px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText(b.hp + ' / ' + b.maxHp, W / 2, barY + barH - 3);
 }
 
 // ---- Helpers ----
@@ -370,8 +703,11 @@ function update() {
   camX = lerp(camX, player.x, 0.1);
   camY = lerp(camY, player.y, 0.1);
 
-  // Wave management
-  if (enemies.length === 0) {
+  // Update boss
+  updateBoss();
+
+  // Wave management (boss counts as enemies alive)
+  if (enemies.length === 0 && !boss) {
     waveTimer--;
     if (waveTimer <= 0) {
       spawnWave();
@@ -679,6 +1015,9 @@ function draw() {
     ctx.globalAlpha = 1;
   }
 
+  // Boss
+  drawBoss();
+
   // Player
   if (state === 'playing' || state === 'gameover') {
     const blink = player.invuln > 0 && Math.floor(player.invuln / 3) % 2;
@@ -801,6 +1140,9 @@ function draw() {
     ctx.fillStyle = '#888';
     ctx.font = '12px sans-serif';
     ctx.fillText('WAVE ' + wave, W - 20, 54);
+
+    // Boss HP bar
+    drawBossHUD(W);
 
     if (isTouchDevice) {
       // Draw virtual joysticks
