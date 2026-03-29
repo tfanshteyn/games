@@ -60,6 +60,8 @@ let shakeIntensity = 0;
 const keys = {};
 let mouseX = 0, mouseY = 0;
 let mouseDown = false;
+const isTouchDevice = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+
 window.addEventListener('keydown', e => { keys[e.key.toLowerCase()] = true; if (state === 'menu') startGame(); if (state === 'gameover' && e.key === ' ') startGame(); });
 window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
 window.addEventListener('mousemove', e => { mouseX = e.clientX; mouseY = e.clientY; });
@@ -69,21 +71,91 @@ window.addEventListener('mouseup', () => mouseDown = false);
 // Prevent context menu
 canvas.addEventListener('contextmenu', e => e.preventDefault());
 
-// Touch support
-canvas.addEventListener('touchstart', e => {
+// ---- Virtual Joysticks (touch) ----
+const JOYSTICK_RADIUS = 60;
+const JOYSTICK_KNOB = 26;
+const JOYSTICK_DEAD = 10;
+
+const leftStick = { active: false, touchId: -1, baseX: 0, baseY: 0, knobX: 0, knobY: 0, dx: 0, dy: 0 };
+const rightStick = { active: false, touchId: -1, baseX: 0, baseY: 0, knobX: 0, knobY: 0, dx: 0, dy: 0 };
+
+function handleTouchStart(e) {
   e.preventDefault();
-  const t = e.touches[0];
-  mouseX = t.clientX; mouseY = t.clientY;
-  mouseDown = true;
-  if (state === 'menu') startGame();
-  if (state === 'gameover') startGame();
-});
-canvas.addEventListener('touchmove', e => {
+  if (state === 'menu') { startGame(); return; }
+  if (state === 'gameover') { startGame(); return; }
+
+  for (let i = 0; i < e.changedTouches.length; i++) {
+    const t = e.changedTouches[i];
+    const tx = t.clientX, ty = t.clientY;
+    const halfW = canvas.width / 2;
+
+    if (tx < halfW && !leftStick.active) {
+      leftStick.active = true;
+      leftStick.touchId = t.identifier;
+      leftStick.baseX = tx;
+      leftStick.baseY = ty;
+      leftStick.knobX = tx;
+      leftStick.knobY = ty;
+      leftStick.dx = 0;
+      leftStick.dy = 0;
+    } else if (tx >= halfW && !rightStick.active) {
+      rightStick.active = true;
+      rightStick.touchId = t.identifier;
+      rightStick.baseX = tx;
+      rightStick.baseY = ty;
+      rightStick.knobX = tx;
+      rightStick.knobY = ty;
+      rightStick.dx = 0;
+      rightStick.dy = 0;
+    }
+  }
+}
+
+function handleTouchMove(e) {
   e.preventDefault();
-  const t = e.touches[0];
-  mouseX = t.clientX; mouseY = t.clientY;
-});
-canvas.addEventListener('touchend', e => { e.preventDefault(); mouseDown = false; });
+  for (let i = 0; i < e.changedTouches.length; i++) {
+    const t = e.changedTouches[i];
+    const stick = t.identifier === leftStick.touchId ? leftStick
+                : t.identifier === rightStick.touchId ? rightStick : null;
+    if (!stick) continue;
+
+    let offX = t.clientX - stick.baseX;
+    let offY = t.clientY - stick.baseY;
+    const d = Math.hypot(offX, offY);
+    if (d > JOYSTICK_RADIUS) {
+      offX = (offX / d) * JOYSTICK_RADIUS;
+      offY = (offY / d) * JOYSTICK_RADIUS;
+    }
+    stick.knobX = stick.baseX + offX;
+    stick.knobY = stick.baseY + offY;
+    stick.dx = offX / JOYSTICK_RADIUS;
+    stick.dy = offY / JOYSTICK_RADIUS;
+  }
+}
+
+function handleTouchEnd(e) {
+  e.preventDefault();
+  for (let i = 0; i < e.changedTouches.length; i++) {
+    const t = e.changedTouches[i];
+    if (t.identifier === leftStick.touchId) {
+      leftStick.active = false;
+      leftStick.touchId = -1;
+      leftStick.dx = 0;
+      leftStick.dy = 0;
+    }
+    if (t.identifier === rightStick.touchId) {
+      rightStick.active = false;
+      rightStick.touchId = -1;
+      rightStick.dx = 0;
+      rightStick.dy = 0;
+    }
+  }
+}
+
+canvas.addEventListener('touchstart', handleTouchStart, { passive: false });
+canvas.addEventListener('touchmove', handleTouchMove, { passive: false });
+canvas.addEventListener('touchend', handleTouchEnd, { passive: false });
+canvas.addEventListener('touchcancel', handleTouchEnd, { passive: false });
 
 // ---- Stars (background) ----
 const stars = [];
@@ -242,25 +314,39 @@ function update() {
 
   const W = canvas.width, H = canvas.height;
 
-  // Player movement
+  // Player movement (keyboard + left joystick)
   let dx = 0, dy = 0;
   if (keys['w'] || keys['arrowup']) dy -= 1;
   if (keys['s'] || keys['arrowdown']) dy += 1;
   if (keys['a'] || keys['arrowleft']) dx -= 1;
   if (keys['d'] || keys['arrowright']) dx += 1;
+  // Left joystick movement
+  if (leftStick.active) {
+    const mag = Math.hypot(leftStick.dx, leftStick.dy);
+    if (mag > JOYSTICK_DEAD / JOYSTICK_RADIUS) {
+      dx += leftStick.dx;
+      dy += leftStick.dy;
+    }
+  }
   if (dx || dy) {
     const len = Math.hypot(dx, dy);
     player.x += (dx / len) * PLAYER_SPEED;
     player.y += (dy / len) * PLAYER_SPEED;
   }
 
-  // Player angle toward mouse (in world coords)
-  player.angle = Math.atan2(mouseY - H / 2, mouseX - W / 2);
+  // Player angle toward mouse or right joystick
+  const rightAiming = rightStick.active && Math.hypot(rightStick.dx, rightStick.dy) > JOYSTICK_DEAD / JOYSTICK_RADIUS;
+  if (rightAiming) {
+    player.angle = Math.atan2(rightStick.dy, rightStick.dx);
+  } else {
+    player.angle = Math.atan2(mouseY - H / 2, mouseX - W / 2);
+  }
 
-  // Shooting
+  // Shooting (mouse click or right joystick)
+  const isShooting = mouseDown || rightAiming;
   if (player.fireTimer > 0) player.fireTimer--;
   const fireRate = player.powerUp === 'rapid' ? 3 : FIRE_RATE;
-  if (mouseDown && player.fireTimer <= 0) {
+  if (isShooting && player.fireTimer <= 0) {
     if (player.powerUp === 'spread') {
       for (let i = -2; i <= 2; i++) {
         fireBullet(player.x, player.y, player.angle + i * 0.15, 0.02);
@@ -716,22 +802,28 @@ function draw() {
     ctx.font = '12px sans-serif';
     ctx.fillText('WAVE ' + wave, W - 20, 54);
 
-    // Crosshair
-    ctx.strokeStyle = '#44ffaa';
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.arc(mouseX, mouseY, 12, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(mouseX - 18, mouseY);
-    ctx.lineTo(mouseX - 8, mouseY);
-    ctx.moveTo(mouseX + 8, mouseY);
-    ctx.lineTo(mouseX + 18, mouseY);
-    ctx.moveTo(mouseX, mouseY - 18);
-    ctx.lineTo(mouseX, mouseY - 8);
-    ctx.moveTo(mouseX, mouseY + 8);
-    ctx.lineTo(mouseX, mouseY + 18);
-    ctx.stroke();
+    if (isTouchDevice) {
+      // Draw virtual joysticks
+      drawJoystick(leftStick, '#44ffaa');
+      drawJoystick(rightStick, '#ff6644');
+    } else {
+      // Crosshair (desktop only)
+      ctx.strokeStyle = '#44ffaa';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(mouseX, mouseY, 12, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(mouseX - 18, mouseY);
+      ctx.lineTo(mouseX - 8, mouseY);
+      ctx.moveTo(mouseX + 8, mouseY);
+      ctx.lineTo(mouseX + 18, mouseY);
+      ctx.moveTo(mouseX, mouseY - 18);
+      ctx.lineTo(mouseX, mouseY - 8);
+      ctx.moveTo(mouseX, mouseY + 8);
+      ctx.lineTo(mouseX, mouseY + 18);
+      ctx.stroke();
+    }
   }
 
   // ---- Menu ----
@@ -772,6 +864,31 @@ function draw() {
   }
 }
 
+function drawJoystick(stick, color) {
+  if (!stick.active) return;
+  // Base circle
+  ctx.globalAlpha = 0.2;
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.arc(stick.baseX, stick.baseY, JOYSTICK_RADIUS, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.globalAlpha = 0.4;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  // Knob
+  ctx.globalAlpha = 0.6;
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.arc(stick.knobX, stick.knobY, JOYSTICK_KNOB, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.globalAlpha = 0.8;
+  ctx.strokeStyle = '#fff';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+}
+
 function drawMenu(W, H) {
   // Animated background particles for menu
   const t = Date.now() * 0.001;
@@ -793,15 +910,20 @@ function drawMenu(W, H) {
   // Controls
   ctx.fillStyle = '#666';
   ctx.font = '16px sans-serif';
-  ctx.fillText('WASD / Arrow Keys to move', W / 2, H / 2 + 30);
-  ctx.fillText('Mouse to aim \u2022 Click to shoot', W / 2, H / 2 + 55);
+  if (isTouchDevice) {
+    ctx.fillText('Left thumb to move', W / 2, H / 2 + 30);
+    ctx.fillText('Right thumb to aim & shoot', W / 2, H / 2 + 55);
+  } else {
+    ctx.fillText('WASD / Arrow Keys to move', W / 2, H / 2 + 30);
+    ctx.fillText('Mouse to aim \u2022 Click to shoot', W / 2, H / 2 + 55);
+  }
 
   // Start prompt
   const pulse = 0.6 + Math.sin(t * 3) * 0.4;
   ctx.globalAlpha = pulse;
   ctx.fillStyle = '#44ffaa';
   ctx.font = 'bold 22px sans-serif';
-  ctx.fillText('Click anywhere to start', W / 2, H / 2 + 120);
+  ctx.fillText('Tap anywhere to start', W / 2, H / 2 + 120);
   ctx.globalAlpha = 1;
 
   // High score
