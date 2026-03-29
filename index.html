@@ -117,6 +117,15 @@
       <span class="tag" style="background:#ff663322;color:#ff6633;">Puzzle</span>
     </div>
   </a>
+
+  <a class="game-card" href="VoidArena/index.html" style="--glow:rgba(200,50,50,0.25);--accent:#cc2222;">
+    <canvas id="voidArenaThumb" width="680" height="400"></canvas>
+    <div class="game-info">
+      <h2>Neon Clash</h2>
+      <p>Choose your warrior — Ronin, Kunoichi, Oni, or Kitsune — and battle rival fighters in a feudal arena!</p>
+      <span class="tag" style="background:#cc222222;color:#cc2222;">Arena Brawler</span>
+    </div>
+  </a>
 </div>
 
 <script>
@@ -694,6 +703,134 @@
   ctx.fillStyle = '#cc8855';
   ctx.font = '14px sans-serif';
   ctx.fillText('Chain Reaction Architect', W/2, 78);
+})();
+
+// Draw Neon Clash (Japanese themed) thumbnail
+(function() {
+  const c = document.getElementById('voidArenaThumb');
+  const ctx = c.getContext('2d');
+  const W = c.width, H = c.height;
+
+  // Dark warm background
+  const bg = ctx.createRadialGradient(W/2, H/2, 50, W/2, H/2, 400);
+  bg.addColorStop(0, '#1a0f0a');
+  bg.addColorStop(1, '#080504');
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, W, H);
+
+  // Tatami grid
+  ctx.strokeStyle = 'rgba(180,150,100,0.06)';
+  ctx.lineWidth = 1;
+  for (let x = 0; x < W; x += 50) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke(); }
+  for (let y = 0; y < H; y += 50) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
+
+  // Hex arena boundary (rope style)
+  ctx.strokeStyle = 'rgba(200,160,80,0.3)';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  for (let i = 0; i < 6; i++) {
+    const a = (Math.PI/3)*i;
+    const px = W/2 + Math.cos(a)*170, py = H/2 + 20 + Math.sin(a)*150;
+    i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+  }
+  ctx.closePath(); ctx.stroke();
+
+  // Cherry blossom petals
+  ctx.fillStyle = '#ff88aa22';
+  for (let i = 0; i < 15; i++) {
+    const px = 50 + Math.random() * (W-100), py = 90 + Math.random() * (H-140);
+    ctx.save(); ctx.translate(px, py); ctx.rotate(i * 1.3);
+    ctx.beginPath(); ctx.ellipse(0, 0, 4, 2, 0, 0, Math.PI*2); ctx.fill();
+    ctx.restore();
+  }
+
+  // Stone walls
+  ctx.fillStyle = 'rgba(70,65,60,0.6)';
+  ctx.strokeStyle = 'rgba(110,100,85,0.4)';
+  ctx.lineWidth = 1;
+  [[280,170,40,40],[360,240,40,40],[310,280,50,30],[380,150,30,50]].forEach(([x,y,w,h]) => {
+    ctx.fillRect(x,y,w,h); ctx.strokeRect(x,y,w,h);
+  });
+
+  // Ronin player (simple samurai silhouette)
+  const px = 280, py = 230;
+  ctx.save(); ctx.translate(px, py);
+  // Body
+  ctx.fillStyle = '#cc222277';
+  ctx.fillRect(-7, -10, 14, 18);
+  // Head
+  ctx.fillStyle = '#eeddcc';
+  ctx.beginPath(); ctx.arc(0, -14, 6, 0, Math.PI*2); ctx.fill();
+  // Top knot
+  ctx.fillStyle = '#222';
+  ctx.fillRect(-2, -22, 4, 6);
+  // Katana
+  ctx.fillStyle = '#ddd';
+  ctx.save(); ctx.rotate(-0.4);
+  ctx.fillRect(8, -1, 20, 2);
+  ctx.fillStyle = '#886622';
+  ctx.fillRect(7, -2, 3, 4);
+  ctx.restore();
+  ctx.restore();
+
+  // Enemy oni silhouette
+  ctx.save(); ctx.translate(480, 200);
+  ctx.fillStyle = '#66442288';
+  ctx.fillRect(-10, -12, 20, 22);
+  ctx.fillStyle = '#88664488';
+  ctx.beginPath(); ctx.arc(0, -16, 7, 0, Math.PI*2); ctx.fill();
+  // Horns
+  ctx.fillStyle = '#eeddaa';
+  ctx.beginPath(); ctx.moveTo(-4,-20); ctx.lineTo(-7,-28); ctx.lineTo(-2,-22); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(4,-20); ctx.lineTo(7,-28); ctx.lineTo(2,-22); ctx.fill();
+  ctx.restore();
+
+  // Enemy kunoichi
+  ctx.save(); ctx.translate(190, 290);
+  ctx.fillStyle = '#33559966';
+  ctx.fillRect(-5, -8, 10, 16);
+  ctx.fillStyle = '#eeddcc';
+  ctx.beginPath(); ctx.arc(0, -12, 5, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#111';
+  ctx.beginPath(); ctx.arc(0, -13, 5, -Math.PI*0.8, Math.PI*0.1); ctx.fill();
+  ctx.restore();
+
+  // Ki bolts from ronin
+  ctx.shadowColor = '#cc2222'; ctx.shadowBlur = 8;
+  ctx.fillStyle = '#ff4444';
+  [[310,220],[330,212],[350,204],[370,196]].forEach(([bx,by]) => {
+    ctx.beginPath(); ctx.arc(bx, by, 3, 0, Math.PI*2); ctx.fill();
+  });
+  ctx.shadowBlur = 0;
+
+  // Explosion sparks
+  const expColors = ['#cc2222','#ff8844','#eebb44'];
+  for (let i = 0; i < 10; i++) {
+    const a = Math.random()*Math.PI*2, d = 8+Math.random()*20;
+    ctx.fillStyle = expColors[Math.floor(Math.random()*expColors.length)];
+    ctx.globalAlpha = 0.4+Math.random()*0.6;
+    ctx.fillRect(480+Math.cos(a)*d, 200+Math.sin(a)*d, 2+Math.random()*3, 2+Math.random()*3);
+  }
+  ctx.globalAlpha = 1;
+
+  // Spirit meter
+  ctx.fillStyle = '#222'; ctx.fillRect(W/2 - 80, H - 40, 160, 10);
+  ctx.fillStyle = '#eebb44'; ctx.fillRect(W/2 - 80, H - 40, 110, 10);
+  ctx.strokeStyle = '#eebb4488'; ctx.lineWidth = 1; ctx.strokeRect(W/2 - 80, H - 40, 160, 10);
+  ctx.fillStyle = '#ccc'; ctx.font = '8px sans-serif'; ctx.textAlign = 'center';
+  ctx.fillText('SPIRIT ENERGY', W/2, H - 32);
+
+  // Title
+  ctx.shadowColor = '#cc2222'; ctx.shadowBlur = 30;
+  ctx.fillStyle = '#cc2222';
+  ctx.font = 'bold 42px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('NEON CLASH', W/2, 55);
+  ctx.shadowBlur = 0;
+
+  ctx.fillStyle = '#c8a060';
+  ctx.font = '14px sans-serif';
+  ctx.fillText('Feudal Arena Brawler', W/2, 78);
 })();
 </script>
 
