@@ -48,7 +48,7 @@ const FIRE_RATE = 8; // frames between shots
 const STAR_COUNT = 200;
 
 // ---- State ----
-let state = 'menu'; // menu | playing | gameover
+let state = 'menu'; // menu | playing | shop | gameover
 let score = 0;
 let highScore = parseInt(localStorage.getItem('voidDriftHigh') || '0', 10);
 let wave = 0;
@@ -56,16 +56,59 @@ let waveTimer = 0;
 let shakeTimer = 0;
 let shakeIntensity = 0;
 
+// ---- Ship Skins ----
+const SHIP_SKINS = [
+  { id: 'default',  name: 'Viper',      fill: '#44ffaa', stroke: '#88ffcc', cockpit: '#aaffdd', engine: '#4488ff', glow: '#44ffaa', cost: 0 },
+  { id: 'fire',     name: 'Inferno',     fill: '#ff6622', stroke: '#ffaa44', cockpit: '#ffdd88', engine: '#ff4400', glow: '#ff6622', cost: 500 },
+  { id: 'ice',      name: 'Frostbite',   fill: '#44ccff', stroke: '#88ddff', cockpit: '#ccf0ff', engine: '#2266ff', glow: '#44ccff', cost: 500 },
+  { id: 'purple',   name: 'Phantom',     fill: '#bb44ff', stroke: '#dd88ff', cockpit: '#eeccff', engine: '#8822cc', glow: '#bb44ff', cost: 1000 },
+  { id: 'gold',     name: 'Sovereign',   fill: '#ffd700', stroke: '#ffe866', cockpit: '#fff8cc', engine: '#ff8c00', glow: '#ffd700', cost: 2000 },
+  { id: 'void',     name: 'Void Walker', fill: '#ff2266', stroke: '#ff66aa', cockpit: '#ffaacc', engine: '#cc0044', glow: '#ff2266', cost: 5000 },
+];
+let unlockedSkins = JSON.parse(localStorage.getItem('voidDriftSkins') || '["default"]');
+let activeSkinId = localStorage.getItem('voidDriftActiveSkin') || 'default';
+let credits = parseInt(localStorage.getItem('voidDriftCredits') || '0', 10);
+function getActiveSkin() { return SHIP_SKINS.find(s => s.id === activeSkinId) || SHIP_SKINS[0]; }
+function saveData() {
+  localStorage.setItem('voidDriftSkins', JSON.stringify(unlockedSkins));
+  localStorage.setItem('voidDriftActiveSkin', activeSkinId);
+  localStorage.setItem('voidDriftCredits', credits.toString());
+}
+
+// ---- Upgrades (per-run) ----
+let upgrades = { speed: 0, fireRate: 0, damage: 0, maxHp: 0 };
+const UPGRADE_DEFS = [
+  { key: 'maxHp',    name: 'Hull Armor',   desc: '+1 Max HP',         icon: '+',  maxLevel: 5, baseCost: 80,  costMul: 1.6 },
+  { key: 'speed',    name: 'Thrusters',    desc: '+0.5 Speed',        icon: '>',  maxLevel: 5, baseCost: 60,  costMul: 1.5 },
+  { key: 'fireRate', name: 'Auto-Loader',  desc: 'Faster fire rate',  icon: 'F',  maxLevel: 5, baseCost: 70,  costMul: 1.5 },
+  { key: 'damage',   name: 'Piercing',     desc: '+1 Bullet damage',  icon: 'D',  maxLevel: 3, baseCost: 150, costMul: 2.0 },
+];
+function getUpgradeCost(def) { return Math.floor(def.baseCost * Math.pow(def.costMul, upgrades[def.key])); }
+
+// ---- Shop state ----
+let shopButtons = []; // {x, y, w, h, action, type}
+let shopScrollY = 0;
+
 // ---- Input ----
 const keys = {};
 let mouseX = 0, mouseY = 0;
 let mouseDown = false;
 const isTouchDevice = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
 
-window.addEventListener('keydown', e => { keys[e.key.toLowerCase()] = true; if (state === 'menu') startGame(); if (state === 'gameover' && e.key === ' ') startGame(); });
+window.addEventListener('keydown', e => {
+  keys[e.key.toLowerCase()] = true;
+  if (state === 'menu') startGame();
+  if (state === 'gameover' && e.key === ' ') startGame();
+  if (state === 'shop' && (e.key === 'Enter' || e.key === 'Escape' || e.key === ' ')) { closeShop(); spawnWave(); }
+});
 window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
 window.addEventListener('mousemove', e => { mouseX = e.clientX; mouseY = e.clientY; });
-window.addEventListener('mousedown', e => { mouseDown = true; if (state === 'menu') startGame(); if (state === 'gameover') startGame(); });
+window.addEventListener('mousedown', e => {
+  mouseDown = true;
+  if (state === 'menu') startGame();
+  if (state === 'gameover') startGame();
+  if (state === 'shop') handleShopClick(e.clientX, e.clientY);
+});
 window.addEventListener('mouseup', () => mouseDown = false);
 
 // Prevent context menu
@@ -83,6 +126,7 @@ function handleTouchStart(e) {
   e.preventDefault();
   if (state === 'menu') { startGame(); return; }
   if (state === 'gameover') { startGame(); return; }
+  if (state === 'shop') { handleShopClick(e.changedTouches[0].clientX, e.changedTouches[0].clientY); return; }
 
   for (let i = 0; i < e.changedTouches.length; i++) {
     const t = e.changedTouches[i];
@@ -200,6 +244,7 @@ function startGame() {
   score = 0;
   wave = 0;
   waveTimer = 120;
+  upgrades = { speed: 0, fireRate: 0, damage: 0, maxHp: 0 };
   player = { x: 0, y: 0, angle: 0, hp: 5, maxHp: 5, fireTimer: 0, invuln: 60, powerUp: null, powerTimer: 0 };
   bullets = [];
   enemies = [];
@@ -207,6 +252,16 @@ function startGame() {
   powerUps = [];
   floatingTexts = [];
   boss = null;
+}
+
+function openShop() {
+  state = 'shop';
+  shopButtons = [];
+}
+
+function closeShop() {
+  state = 'playing';
+  waveTimer = 90;
 }
 
 // ---- Spawn wave ----
@@ -429,7 +484,7 @@ function updateBoss() {
     const bl = bullets[i];
     if (!bl.friendly) continue;
     if (dist(bl, b) < b.radius + BULLET_RADIUS) {
-      b.hp--;
+      b.hp -= (1 + upgrades.damage);
       addParticles(bl.x, bl.y, '#ff4488', 4, 3, 15);
       bullets.splice(i, 1);
       if (b.hp <= 0) {
@@ -644,6 +699,8 @@ function fireEnemyBullet(ex, ey, ang) {
 // ---- Update ----
 function update() {
   if (state !== 'playing') return;
+  // Apply maxHp upgrade continuously
+  player.maxHp = 5 + upgrades.maxHp;
 
   const W = canvas.width, H = canvas.height;
 
@@ -663,8 +720,9 @@ function update() {
   }
   if (dx || dy) {
     const len = Math.hypot(dx, dy);
-    player.x += (dx / len) * PLAYER_SPEED;
-    player.y += (dy / len) * PLAYER_SPEED;
+    const spd = PLAYER_SPEED + upgrades.speed * 0.5;
+    player.x += (dx / len) * spd;
+    player.y += (dy / len) * spd;
   }
 
   // Player angle toward mouse or right joystick
@@ -678,7 +736,8 @@ function update() {
   // Shooting (mouse click or right joystick)
   const isShooting = mouseDown || rightAiming;
   if (player.fireTimer > 0) player.fireTimer--;
-  const fireRate = player.powerUp === 'rapid' ? 3 : FIRE_RATE;
+  const baseFireRate = Math.max(2, FIRE_RATE - upgrades.fireRate);
+  const fireRate = player.powerUp === 'rapid' ? Math.max(1, 3 - Math.floor(upgrades.fireRate / 2)) : baseFireRate;
   if (isShooting && player.fireTimer <= 0) {
     if (player.powerUp === 'spread') {
       for (let i = -2; i <= 2; i++) {
@@ -710,6 +769,10 @@ function update() {
   if (enemies.length === 0 && !boss) {
     waveTimer--;
     if (waveTimer <= 0) {
+      if (wave > 0) {
+        openShop();
+        return;
+      }
       spawnWave();
       waveTimer = 180;
     }
@@ -728,7 +791,7 @@ function update() {
       for (let j = enemies.length - 1; j >= 0; j--) {
         const e = enemies[j];
         if (dist(b, e) < e.radius + BULLET_RADIUS) {
-          e.hp--;
+          e.hp -= (1 + upgrades.damage);
           addParticles(b.x, b.y, e.color, 5, 3, 20);
           bullets.splice(i, 1);
           if (e.hp <= 0) {
@@ -881,6 +944,9 @@ function gameOver() {
     highScore = score;
     localStorage.setItem('voidDriftHigh', highScore.toString());
   }
+  // Bank remaining score into persistent credits
+  credits += score;
+  saveData();
   addParticles(player.x, player.y, '#ff4444', 50, 8, 60);
   addParticles(player.x, player.y, '#ff8844', 30, 6, 50);
   screenShake(12, 20);
@@ -953,10 +1019,11 @@ function draw() {
   }
 
   // Bullets
+  const bulletSkin = getActiveSkin();
   for (const b of bullets) {
-    ctx.shadowColor = b.friendly ? '#44aaff' : '#ff4444';
+    ctx.shadowColor = b.friendly ? bulletSkin.glow : '#ff4444';
     ctx.shadowBlur = 8;
-    ctx.fillStyle = b.friendly ? '#88ccff' : '#ff6666';
+    ctx.fillStyle = b.friendly ? bulletSkin.stroke : '#ff6666';
     ctx.beginPath();
     ctx.arc(b.x, b.y, BULLET_RADIUS, 0, Math.PI * 2);
     ctx.fill();
@@ -1022,11 +1089,13 @@ function draw() {
   if (state === 'playing' || state === 'gameover') {
     const blink = player.invuln > 0 && Math.floor(player.invuln / 3) % 2;
     if (!blink) {
+      const skin = getActiveSkin();
+
       // Engine glow
       const engineAngle = player.angle + Math.PI;
-      ctx.shadowColor = '#4488ff';
+      ctx.shadowColor = skin.engine;
       ctx.shadowBlur = 20;
-      ctx.fillStyle = '#4488ff';
+      ctx.fillStyle = skin.engine;
       ctx.globalAlpha = 0.4 + Math.random() * 0.3;
       ctx.beginPath();
       ctx.arc(
@@ -1058,10 +1127,10 @@ function draw() {
       }
 
       // Ship triangle
-      ctx.shadowColor = '#44ffaa';
+      ctx.shadowColor = skin.glow;
       ctx.shadowBlur = 10;
-      ctx.fillStyle = '#44ffaa';
-      ctx.strokeStyle = '#88ffcc';
+      ctx.fillStyle = skin.fill;
+      ctx.strokeStyle = skin.stroke;
       ctx.lineWidth = 2;
       ctx.beginPath();
       ctx.moveTo(18, 0);
@@ -1074,7 +1143,7 @@ function draw() {
       ctx.shadowBlur = 0;
 
       // Cockpit
-      ctx.fillStyle = '#aaffdd';
+      ctx.fillStyle = skin.cockpit;
       ctx.beginPath();
       ctx.arc(4, 0, 3, 0, Math.PI * 2);
       ctx.fill();
@@ -1200,9 +1269,22 @@ function draw() {
       ctx.fillText('Best: ' + highScore.toLocaleString(), W / 2, H / 2 + 45);
     }
 
+    ctx.fillStyle = '#44ddff';
+    ctx.font = '16px sans-serif';
+    ctx.fillText('+' + score.toLocaleString() + ' credits banked!', W / 2, H / 2 + 75);
+
+    ctx.fillStyle = '#888';
+    ctx.font = '14px sans-serif';
+    ctx.fillText('Total credits: ' + credits.toLocaleString(), W / 2, H / 2 + 98);
+
     ctx.fillStyle = '#44ffaa';
     ctx.font = '18px sans-serif';
-    ctx.fillText('Click or press Space to retry', W / 2, H / 2 + 90);
+    ctx.fillText('Click or press Space to retry', W / 2, H / 2 + 130);
+  }
+
+  // ---- Shop ----
+  if (state === 'shop') {
+    drawShop(W, H);
   }
 }
 
@@ -1229,6 +1311,233 @@ function drawJoystick(stick, color) {
   ctx.lineWidth = 2;
   ctx.stroke();
   ctx.globalAlpha = 1;
+}
+
+// ---- Shop ----
+function handleShopClick(cx, cy) {
+  for (const btn of shopButtons) {
+    if (cx >= btn.x && cx <= btn.x + btn.w && cy >= btn.y && cy <= btn.y + btn.h) {
+      if (btn.action) btn.action();
+      return;
+    }
+  }
+}
+
+function drawShop(W, H) {
+  shopButtons = [];
+  ctx.fillStyle = 'rgba(5,5,15,0.92)';
+  ctx.fillRect(0, 0, W, H);
+
+  const panelW = Math.min(520, W - 40);
+  const panelX = (W - panelW) / 2;
+  let curY = 60;
+
+  // Title
+  ctx.shadowColor = '#44ffaa';
+  ctx.shadowBlur = 20;
+  ctx.fillStyle = '#44ffaa';
+  ctx.font = 'bold 36px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('SHOP', W / 2, curY);
+  ctx.shadowBlur = 0;
+  curY += 15;
+
+  // Currency display
+  ctx.fillStyle = '#ffaa44';
+  ctx.font = 'bold 20px sans-serif';
+  ctx.fillText('Score: ' + score.toLocaleString(), W / 2 - 100, curY += 30);
+  ctx.fillStyle = '#44ddff';
+  ctx.fillText('Credits: ' + credits.toLocaleString(), W / 2 + 100, curY);
+  curY += 15;
+
+  // Section: Upgrades
+  ctx.fillStyle = '#888';
+  ctx.font = '14px sans-serif';
+  ctx.textAlign = 'left';
+  ctx.fillText('UPGRADES', panelX, curY += 30);
+  curY += 10;
+
+  for (const def of UPGRADE_DEFS) {
+    const level = upgrades[def.key];
+    const maxed = level >= def.maxLevel;
+    const cost = maxed ? 0 : getUpgradeCost(def);
+    const canBuy = !maxed && score >= cost;
+    const rowH = 50;
+
+    // Background
+    ctx.fillStyle = canBuy ? '#1a2a1a' : '#1a1a22';
+    ctx.fillRect(panelX, curY, panelW, rowH);
+    ctx.strokeStyle = canBuy ? '#44ffaa44' : '#333';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(panelX, curY, panelW, rowH);
+
+    // Icon
+    ctx.fillStyle = canBuy ? '#44ffaa' : '#555';
+    ctx.font = 'bold 20px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(def.icon, panelX + 25, curY + 32);
+
+    // Name & desc
+    ctx.textAlign = 'left';
+    ctx.fillStyle = canBuy ? '#fff' : '#777';
+    ctx.font = 'bold 15px sans-serif';
+    ctx.fillText(def.name, panelX + 50, curY + 22);
+    ctx.fillStyle = canBuy ? '#aaa' : '#555';
+    ctx.font = '12px sans-serif';
+    ctx.fillText(def.desc, panelX + 50, curY + 40);
+
+    // Level pips
+    const pipX = panelX + panelW - 160;
+    for (let i = 0; i < def.maxLevel; i++) {
+      ctx.fillStyle = i < level ? '#44ffaa' : '#333';
+      ctx.fillRect(pipX + i * 16, curY + 14, 12, 12);
+      ctx.strokeStyle = '#44ffaa44';
+      ctx.strokeRect(pipX + i * 16, curY + 14, 12, 12);
+    }
+
+    // Buy button
+    const btnW = 70;
+    const btnX = panelX + panelW - btnW - 5;
+    const btnY = curY + rowH - 25;
+    if (maxed) {
+      ctx.fillStyle = '#555';
+      ctx.font = 'bold 12px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('MAX', btnX + btnW / 2, btnY + 13);
+    } else {
+      ctx.fillStyle = canBuy ? '#44ffaa' : '#333';
+      ctx.fillRect(btnX, btnY, btnW, 20);
+      ctx.fillStyle = canBuy ? '#000' : '#666';
+      ctx.font = 'bold 12px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(cost + ' pts', btnX + btnW / 2, btnY + 14);
+      if (canBuy) {
+        shopButtons.push({
+          x: panelX, y: curY, w: panelW, h: rowH,
+          action: () => {
+            score -= cost;
+            upgrades[def.key]++;
+            if (def.key === 'maxHp') {
+              player.maxHp = 5 + upgrades.maxHp;
+              player.hp = Math.min(player.hp + 1, player.maxHp);
+            }
+          }
+        });
+      }
+    }
+
+    curY += rowH + 4;
+  }
+
+  // Section: Ship Skins
+  curY += 15;
+  ctx.fillStyle = '#888';
+  ctx.font = '14px sans-serif';
+  ctx.textAlign = 'left';
+  ctx.fillText('SHIP SKINS', panelX, curY);
+  curY += 10;
+
+  const skinSize = 70;
+  const skinGap = 10;
+  const skinsPerRow = Math.floor((panelW + skinGap) / (skinSize + skinGap));
+  const skinStartX = panelX + (panelW - skinsPerRow * (skinSize + skinGap) + skinGap) / 2;
+
+  for (let i = 0; i < SHIP_SKINS.length; i++) {
+    const skin = SHIP_SKINS[i];
+    const col = i % skinsPerRow;
+    const row = Math.floor(i / skinsPerRow);
+    const sx = skinStartX + col * (skinSize + skinGap);
+    const sy = curY + row * (skinSize + 30 + skinGap);
+
+    const owned = unlockedSkins.includes(skin.id);
+    const active = activeSkinId === skin.id;
+    const canBuy = !owned && credits >= skin.cost;
+
+    // Card background
+    ctx.fillStyle = active ? '#1a2a2a' : '#12121e';
+    ctx.fillRect(sx, sy, skinSize, skinSize + 25);
+    ctx.strokeStyle = active ? skin.fill : owned ? '#444' : '#222';
+    ctx.lineWidth = active ? 2 : 1;
+    ctx.strokeRect(sx, sy, skinSize, skinSize + 25);
+
+    // Draw mini ship
+    ctx.save();
+    ctx.translate(sx + skinSize / 2, sy + skinSize / 2 - 5);
+    ctx.shadowColor = skin.glow;
+    ctx.shadowBlur = 8;
+    ctx.fillStyle = owned ? skin.fill : '#333';
+    ctx.strokeStyle = owned ? skin.stroke : '#444';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(14, 0);
+    ctx.lineTo(-10, -9);
+    ctx.lineTo(-5, 0);
+    ctx.lineTo(-10, 9);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = owned ? skin.cockpit : '#444';
+    ctx.beginPath();
+    ctx.arc(3, 0, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    // Name
+    ctx.fillStyle = owned ? '#ccc' : '#666';
+    ctx.font = '10px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(skin.name, sx + skinSize / 2, sy + skinSize + 13);
+
+    // Status / action
+    if (active) {
+      ctx.fillStyle = skin.fill;
+      ctx.font = 'bold 9px sans-serif';
+      ctx.fillText('EQUIPPED', sx + skinSize / 2, sy + skinSize + 23);
+    } else if (owned) {
+      ctx.fillStyle = '#44ffaa';
+      ctx.font = 'bold 9px sans-serif';
+      ctx.fillText('EQUIP', sx + skinSize / 2, sy + skinSize + 23);
+      shopButtons.push({
+        x: sx, y: sy, w: skinSize, h: skinSize + 25,
+        action: () => { activeSkinId = skin.id; saveData(); }
+      });
+    } else {
+      ctx.fillStyle = canBuy ? '#ffaa44' : '#555';
+      ctx.font = 'bold 9px sans-serif';
+      ctx.fillText(skin.cost + ' cr', sx + skinSize / 2, sy + skinSize + 23);
+      if (canBuy) {
+        shopButtons.push({
+          x: sx, y: sy, w: skinSize, h: skinSize + 25,
+          action: () => { credits -= skin.cost; unlockedSkins.push(skin.id); activeSkinId = skin.id; saveData(); }
+        });
+      }
+    }
+  }
+
+  const skinRows = Math.ceil(SHIP_SKINS.length / skinsPerRow);
+  curY += skinRows * (skinSize + 30 + skinGap) + 15;
+
+  // Continue button
+  const btnW = 200;
+  const btnH = 44;
+  const btnX = (W - btnW) / 2;
+  const btnY = Math.min(curY, H - 70);
+  ctx.shadowColor = '#44ffaa';
+  ctx.shadowBlur = 15;
+  ctx.fillStyle = '#44ffaa';
+  ctx.fillRect(btnX, btnY, btnW, btnH);
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = '#000';
+  ctx.font = 'bold 18px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('NEXT WAVE', btnX + btnW / 2, btnY + 28);
+  shopButtons.push({ x: btnX, y: btnY, w: btnW, h: btnH, action: () => { closeShop(); spawnWave(); } });
+
+  // Hint
+  ctx.fillStyle = '#555';
+  ctx.font = '12px sans-serif';
+  ctx.fillText('Press Enter / Space to continue', W / 2, btnY + btnH + 22);
 }
 
 function drawMenu(W, H) {
@@ -1268,11 +1577,16 @@ function drawMenu(W, H) {
   ctx.fillText('Tap anywhere to start', W / 2, H / 2 + 120);
   ctx.globalAlpha = 1;
 
-  // High score
+  // High score & credits
   if (highScore > 0) {
     ctx.fillStyle = '#ffaa44';
     ctx.font = '16px sans-serif';
     ctx.fillText('High Score: ' + highScore.toLocaleString(), W / 2, H / 2 + 170);
+  }
+  if (credits > 0) {
+    ctx.fillStyle = '#44ddff';
+    ctx.font = '16px sans-serif';
+    ctx.fillText('Credits: ' + credits.toLocaleString(), W / 2, H / 2 + 195);
   }
 }
 
