@@ -1,0 +1,2364 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Escape Room 3D - 20 Levels</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { overflow: hidden; background: #000; font-family: 'Segoe UI', Tahoma, sans-serif; }
+canvas { display: block; }
+
+#blocker {
+  position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+  background: rgba(0,0,0,0.85); z-index: 100;
+  display: flex; align-items: center; justify-content: center;
+  flex-direction: column; cursor: pointer;
+}
+#blocker.hidden { display: none; }
+
+#title-screen {
+  text-align: center; color: #fff;
+}
+#title-screen h1 {
+  font-size: 4em; color: #00ffaa; text-shadow: 0 0 30px #00ffaa55;
+  margin-bottom: 10px; letter-spacing: 4px;
+}
+#title-screen h2 {
+  font-size: 1.4em; color: #aaa; margin-bottom: 30px;
+}
+#title-screen p {
+  font-size: 1.1em; color: #888; margin-bottom: 8px;
+}
+#title-screen .start-btn {
+  margin-top: 30px; padding: 15px 50px; font-size: 1.3em;
+  background: #00ffaa; color: #000; border: none; border-radius: 8px;
+  cursor: pointer; font-weight: bold; letter-spacing: 2px;
+  transition: all 0.3s;
+}
+#title-screen .start-btn:hover {
+  background: #00cc88; transform: scale(1.05);
+  box-shadow: 0 0 30px #00ffaa55;
+}
+
+#hud {
+  position: fixed; top: 0; left: 0; width: 100%; z-index: 50;
+  pointer-events: none; padding: 15px 20px;
+  display: flex; justify-content: space-between; align-items: flex-start;
+}
+#hud.hidden { display: none; }
+
+#level-display {
+  background: rgba(0,0,0,0.7); border: 1px solid #00ffaa;
+  border-radius: 8px; padding: 10px 20px; color: #00ffaa;
+  font-size: 1.2em; font-weight: bold;
+}
+#timer-display {
+  background: rgba(0,0,0,0.7); border: 1px solid #ffaa00;
+  border-radius: 8px; padding: 10px 20px; color: #ffaa00;
+  font-size: 1.2em; font-weight: bold; text-align: center;
+}
+#inventory-display {
+  position: fixed; bottom: 15px; left: 50%; transform: translateX(-50%);
+  display: flex; gap: 8px; z-index: 50; pointer-events: none;
+}
+#inventory-display.hidden { display: none; }
+.inv-slot {
+  width: 60px; height: 60px; background: rgba(0,0,0,0.7);
+  border: 2px solid #444; border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1.8em; transition: all 0.3s;
+}
+.inv-slot.active { border-color: #00ffaa; box-shadow: 0 0 10px #00ffaa55; }
+
+#message-box {
+  position: fixed; bottom: 100px; left: 50%; transform: translateX(-50%);
+  background: rgba(0,0,0,0.85); border: 1px solid #00ffaa;
+  border-radius: 10px; padding: 15px 30px; color: #fff;
+  font-size: 1.1em; z-index: 60; text-align: center;
+  opacity: 0; transition: opacity 0.4s; pointer-events: none;
+  max-width: 500px;
+}
+#message-box.visible { opacity: 1; }
+
+#crosshair {
+  position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%);
+  width: 20px; height: 20px; z-index: 55; pointer-events: none;
+}
+#crosshair::before, #crosshair::after {
+  content: ''; position: absolute; background: rgba(255,255,255,0.6);
+}
+#crosshair::before { width: 2px; height: 20px; left: 9px; top: 0; }
+#crosshair::after { width: 20px; height: 2px; top: 9px; left: 0; }
+#crosshair.hidden { display: none; }
+
+#puzzle-overlay {
+  position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+  background: rgba(0,0,0,0.8); z-index: 200;
+  display: none; align-items: center; justify-content: center;
+  flex-direction: column;
+}
+#puzzle-overlay.active { display: flex; }
+#puzzle-container {
+  background: #1a1a2e; border: 2px solid #00ffaa;
+  border-radius: 15px; padding: 30px; min-width: 350px;
+  max-width: 600px; text-align: center; color: #fff;
+}
+#puzzle-container h3 {
+  color: #00ffaa; margin-bottom: 15px; font-size: 1.4em;
+}
+#puzzle-container p { color: #aaa; margin-bottom: 20px; }
+#puzzle-content { margin: 20px 0; }
+.puzzle-btn {
+  padding: 10px 25px; margin: 5px; font-size: 1em;
+  background: #2a2a4a; color: #fff; border: 1px solid #00ffaa;
+  border-radius: 6px; cursor: pointer; transition: all 0.2s;
+}
+.puzzle-btn:hover { background: #00ffaa; color: #000; }
+.puzzle-input {
+  padding: 10px 15px; font-size: 1.2em; background: #0a0a1a;
+  color: #00ffaa; border: 1px solid #00ffaa; border-radius: 6px;
+  text-align: center; outline: none; width: 200px;
+}
+.puzzle-grid {
+  display: inline-grid; gap: 5px; margin: 15px 0;
+}
+.puzzle-cell {
+  width: 60px; height: 60px; background: #2a2a4a;
+  border: 2px solid #444; border-radius: 6px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1.5em; transition: all 0.2s; color: #fff;
+}
+.puzzle-cell:hover { border-color: #00ffaa; }
+.puzzle-cell.lit { background: #00ffaa; color: #000; border-color: #00ffaa; }
+.puzzle-cell.wrong { background: #ff4444; border-color: #ff4444; }
+.puzzle-cell.correct { background: #00ffaa; border-color: #00ffaa; color: #000; }
+#close-puzzle {
+  position: absolute; top: 20px; right: 30px;
+  font-size: 2em; color: #888; cursor: pointer; z-index: 210;
+}
+#close-puzzle:hover { color: #fff; }
+
+#level-complete {
+  position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+  background: rgba(0,0,0,0.85); z-index: 300;
+  display: none; align-items: center; justify-content: center;
+  flex-direction: column; color: #fff; text-align: center;
+}
+#level-complete.active { display: flex; }
+#level-complete h2 { font-size: 3em; color: #00ffaa; margin-bottom: 10px; }
+#level-complete .stats { font-size: 1.2em; color: #aaa; margin: 15px 0; }
+#level-complete .next-btn {
+  margin-top: 25px; padding: 15px 40px; font-size: 1.2em;
+  background: #00ffaa; color: #000; border: none; border-radius: 8px;
+  cursor: pointer; font-weight: bold; letter-spacing: 2px;
+}
+
+#game-complete {
+  position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+  background: rgba(0,0,0,0.9); z-index: 400;
+  display: none; align-items: center; justify-content: center;
+  flex-direction: column; color: #fff; text-align: center;
+}
+#game-complete.active { display: flex; }
+#game-complete h1 { font-size: 4em; color: #ffd700; text-shadow: 0 0 30px #ffd70055; }
+#game-complete p { font-size: 1.3em; color: #aaa; margin: 15px 0; }
+
+#hint-btn {
+  position: fixed; top: 15px; right: 15px; z-index: 55;
+  padding: 8px 16px; background: rgba(0,0,0,0.7); color: #ffaa00;
+  border: 1px solid #ffaa00; border-radius: 6px; cursor: pointer;
+  font-size: 0.9em; pointer-events: all;
+}
+#hint-btn:hover { background: #ffaa00; color: #000; }
+#hint-btn.hidden { display: none; }
+</style>
+</head>
+<body>
+
+<div id="blocker">
+  <div id="title-screen">
+    <h1>ESCAPE ROOM 3D</h1>
+    <h2>20 Rooms. Each Harder Than the Last.</h2>
+    <p>WASD to move | Mouse to look | Click to interact</p>
+    <p>E to pick up items | Q to use items | H for hints</p>
+    <button class="start-btn" id="start-btn">ENTER THE ROOM</button>
+  </div>
+</div>
+
+<div id="hud" class="hidden">
+  <div id="level-display">Level 1 / 20</div>
+  <div id="timer-display">00:00</div>
+</div>
+<div id="inventory-display" class="hidden"></div>
+<div id="message-box"></div>
+<div id="crosshair" class="hidden"></div>
+<button id="hint-btn" class="hidden">H - Hint</button>
+
+<div id="puzzle-overlay">
+  <span id="close-puzzle">&times;</span>
+  <div id="puzzle-container">
+    <h3 id="puzzle-title">Puzzle</h3>
+    <p id="puzzle-desc"></p>
+    <div id="puzzle-content"></div>
+  </div>
+</div>
+
+<div id="level-complete">
+  <h2>ROOM ESCAPED!</h2>
+  <div class="stats" id="level-stats"></div>
+  <button class="next-btn" id="next-level-btn">NEXT ROOM</button>
+</div>
+
+<div id="game-complete">
+  <h1>YOU ESCAPED ALL 20 ROOMS!</h1>
+  <p id="final-stats"></p>
+  <p style="color:#ffd700; font-size:1.5em; margin-top:20px;">Master Escape Artist</p>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+// ============================================================
+// ESCAPE ROOM 3D - 20 Levels of Increasing Difficulty
+// ============================================================
+
+// --- GLOBALS ---
+let scene, camera, renderer, clock;
+let moveForward = false, moveBackward = false, moveLeft = false, moveRight = false;
+let velocity = new THREE.Vector3();
+let direction = new THREE.Vector3();
+let isLocked = false;
+let currentLevel = 1;
+let timerStart = 0;
+let timerInterval = null;
+let totalTime = 0;
+let inventory = [];
+let interactables = [];
+let puzzleActive = false;
+let levelState = {};
+let raycaster = new THREE.Raycaster();
+let mouse = new THREE.Vector2(0, 0);
+const euler = new THREE.Euler(0, 0, 0, 'YXZ');
+const PI_2 = Math.PI / 2;
+let yaw = 0, pitch = 0;
+
+// DOM refs
+const blocker = document.getElementById('blocker');
+const hud = document.getElementById('hud');
+const levelDisplay = document.getElementById('level-display');
+const timerDisplay = document.getElementById('timer-display');
+const inventoryDisplay = document.getElementById('inventory-display');
+const messageBox = document.getElementById('message-box');
+const crosshair = document.getElementById('crosshair');
+const puzzleOverlay = document.getElementById('puzzle-overlay');
+const puzzleTitle = document.getElementById('puzzle-title');
+const puzzleDesc = document.getElementById('puzzle-desc');
+const puzzleContent = document.getElementById('puzzle-content');
+const closePuzzle = document.getElementById('close-puzzle');
+const levelComplete = document.getElementById('level-complete');
+const levelStats = document.getElementById('level-stats');
+const nextLevelBtn = document.getElementById('next-level-btn');
+const gameComplete = document.getElementById('game-complete');
+const finalStats = document.getElementById('final-stats');
+const hintBtn = document.getElementById('hint-btn');
+
+// --- INIT ---
+function init() {
+  scene = new THREE.Scene();
+  clock = new THREE.Clock();
+  camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+  camera.position.set(0, 1.6, 0);
+
+  renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setPixelRatio(window.devicePixelRatio);
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 0.8;
+  document.body.appendChild(renderer.domElement);
+
+  window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  });
+
+  document.addEventListener('keydown', onKeyDown);
+  document.addEventListener('keyup', onKeyUp);
+  document.addEventListener('click', onClick);
+  document.addEventListener('mousemove', onMouseMove);
+  closePuzzle.addEventListener('click', closePuzzleOverlay);
+  hintBtn.addEventListener('click', showHint);
+
+  document.getElementById('start-btn').addEventListener('click', startGame);
+  nextLevelBtn.addEventListener('click', nextLevel);
+
+  document.addEventListener('pointerlockchange', () => {
+    isLocked = document.pointerLockElement === renderer.domElement;
+  });
+  renderer.domElement.addEventListener('click', () => {
+    if (!isLocked && !puzzleActive && blocker.classList.contains('hidden')
+        && !levelComplete.classList.contains('active')
+        && !gameComplete.classList.contains('active')) {
+      renderer.domElement.requestPointerLock();
+    }
+  });
+
+  animate();
+}
+
+function startGame() {
+  blocker.classList.add('hidden');
+  hud.classList.remove('hidden');
+  inventoryDisplay.classList.remove('hidden');
+  crosshair.classList.remove('hidden');
+  hintBtn.classList.remove('hidden');
+  renderer.domElement.requestPointerLock();
+  loadLevel(1);
+}
+
+function onMouseMove(e) {
+  if (!isLocked || puzzleActive) return;
+  const sensitivity = 0.002;
+  yaw -= e.movementX * sensitivity;
+  pitch -= e.movementY * sensitivity;
+  pitch = Math.max(-PI_2, Math.min(PI_2, pitch));
+  camera.quaternion.setFromEuler(new THREE.Euler(pitch, yaw, 0, 'YXZ'));
+}
+
+// --- INPUT ---
+function onKeyDown(e) {
+  if (puzzleActive) return;
+  switch(e.code) {
+    case 'KeyW': case 'ArrowUp': moveForward = true; break;
+    case 'KeyS': case 'ArrowDown': moveBackward = true; break;
+    case 'KeyA': case 'ArrowLeft': moveLeft = true; break;
+    case 'KeyD': case 'ArrowRight': moveRight = true; break;
+    case 'KeyE': tryPickup(); break;
+    case 'KeyQ': tryUseItem(); break;
+    case 'KeyH': showHint(); break;
+  }
+}
+function onKeyUp(e) {
+  switch(e.code) {
+    case 'KeyW': case 'ArrowUp': moveForward = false; break;
+    case 'KeyS': case 'ArrowDown': moveBackward = false; break;
+    case 'KeyA': case 'ArrowLeft': moveLeft = false; break;
+    case 'KeyD': case 'ArrowRight': moveRight = false; break;
+  }
+}
+
+function onClick(e) {
+  if (puzzleActive || !isLocked) return;
+  tryInteract();
+}
+
+// --- MESSAGES ---
+let messageTimeout;
+function showMessage(text, duration = 3000) {
+  messageBox.textContent = text;
+  messageBox.classList.add('visible');
+  clearTimeout(messageTimeout);
+  messageTimeout = setTimeout(() => messageBox.classList.remove('visible'), duration);
+}
+
+// --- INVENTORY ---
+function updateInventoryUI() {
+  inventoryDisplay.innerHTML = '';
+  for (let i = 0; i < 6; i++) {
+    const slot = document.createElement('div');
+    slot.className = 'inv-slot' + (inventory[i] ? ' active' : '');
+    slot.textContent = inventory[i] ? inventory[i].icon : '';
+    inventoryDisplay.appendChild(slot);
+  }
+}
+
+function addToInventory(item) {
+  if (inventory.length < 6) {
+    inventory.push(item);
+    updateInventoryUI();
+    showMessage(`Picked up: ${item.name}`);
+    return true;
+  }
+  showMessage('Inventory full!');
+  return false;
+}
+
+function hasItem(id) { return inventory.some(i => i.id === id); }
+function removeItem(id) {
+  inventory = inventory.filter(i => i.id !== id);
+  updateInventoryUI();
+}
+
+// --- TIMER ---
+function startTimer() {
+  timerStart = Date.now();
+  clearInterval(timerInterval);
+  timerInterval = setInterval(() => {
+    const elapsed = Math.floor((Date.now() - timerStart) / 1000);
+    const m = String(Math.floor(elapsed / 60)).padStart(2, '0');
+    const s = String(elapsed % 60).padStart(2, '0');
+    timerDisplay.textContent = `${m}:${s}`;
+  }, 1000);
+}
+
+// --- RAYCASTING / INTERACTION ---
+function getTarget() {
+  raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+  const hits = raycaster.intersectObjects(scene.children, true);
+  for (const hit of hits) {
+    if (hit.distance < 3.5) {
+      let obj = hit.object;
+      while (obj) {
+        if (obj.userData && obj.userData.interactable) return obj;
+        obj = obj.parent;
+      }
+    }
+  }
+  return null;
+}
+
+function tryInteract() {
+  const target = getTarget();
+  if (target && target.userData.onInteract) {
+    target.userData.onInteract(target);
+  }
+}
+
+function tryPickup() {
+  const target = getTarget();
+  if (target && target.userData.pickupable) {
+    if (addToInventory({ id: target.userData.itemId, name: target.userData.itemName, icon: target.userData.icon })) {
+      scene.remove(target);
+    }
+  }
+}
+
+function tryUseItem() {
+  const target = getTarget();
+  if (!target) {
+    showMessage("Nothing to use items on here.");
+    return;
+  }
+  if (!target.userData.requiresItem) {
+    showMessage("This doesn't need an item. Try clicking it instead.");
+    return;
+  }
+  if (inventory.length === 0) {
+    showMessage("You don't have any items.");
+    return;
+  }
+  const needed = target.userData.requiresItem;
+  if (hasItem(needed)) {
+    removeItem(needed);
+    if (target.userData.onUseItem) target.userData.onUseItem(target);
+  } else {
+    showMessage("That item doesn't work here.");
+  }
+}
+
+// --- PUZZLE SYSTEM ---
+function openPuzzle(title, desc, contentHTML, onSetup) {
+  puzzleActive = true;
+  document.exitPointerLock();
+  puzzleTitle.textContent = title;
+  puzzleDesc.textContent = desc;
+  puzzleContent.innerHTML = contentHTML;
+  puzzleOverlay.classList.add('active');
+  if (onSetup) onSetup();
+}
+
+function closePuzzleOverlay() {
+  puzzleActive = false;
+  puzzleOverlay.classList.remove('active');
+  puzzleContent.innerHTML = '';
+  renderer.domElement.requestPointerLock();
+}
+
+function puzzleSolved() {
+  closePuzzleOverlay();
+  levelState.puzzleSolved = true;
+  showMessage('Puzzle solved! The door is unlocked!', 3000);
+  if (levelState.door) {
+    levelState.door.userData.locked = false;
+    levelState.door.material.emissive.setHex(0x00ff00);
+    levelState.door.material.emissiveIntensity = 0.3;
+  }
+}
+
+// --- ROOM BUILDER HELPERS ---
+function clearScene() {
+  while (scene.children.length > 0) scene.remove(scene.children[0]);
+  interactables = [];
+  inventory = [];
+  updateInventoryUI();
+  levelState = {};
+}
+
+function createTexture(color) {
+  const c = document.createElement('canvas');
+  c.width = 128; c.height = 128;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = color;
+  ctx.fillRect(0, 0, 128, 128);
+  // grid pattern
+  ctx.strokeStyle = 'rgba(0,0,0,0.1)';
+  ctx.lineWidth = 1;
+  for (let i = 0; i < 128; i += 16) {
+    ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, 128); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(128, i); ctx.stroke();
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  return tex;
+}
+
+function makeRoom(w, h, d, wallColor, floorColor, ceilColor) {
+  const wallTex = createTexture(wallColor || '#2a2a3a');
+  wallTex.repeat.set(w/2, h/2);
+  const floorTex = createTexture(floorColor || '#1a1a2a');
+  floorTex.repeat.set(w/2, d/2);
+  const ceilTex = createTexture(ceilColor || '#1a1a1a');
+  ceilTex.repeat.set(w/2, d/2);
+
+  const wallMat = new THREE.MeshStandardMaterial({ map: wallTex, roughness: 0.8, side: THREE.DoubleSide });
+  const floorMat = new THREE.MeshStandardMaterial({ map: floorTex, roughness: 0.9 });
+  const ceilMat = new THREE.MeshStandardMaterial({ map: ceilTex, roughness: 0.8 });
+
+  // Floor
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(w, d), floorMat);
+  floor.rotation.x = -Math.PI / 2; floor.position.y = 0;
+  floor.receiveShadow = true;
+  scene.add(floor);
+
+  // Ceiling
+  const ceil = new THREE.Mesh(new THREE.PlaneGeometry(w, d), ceilMat);
+  ceil.rotation.x = Math.PI / 2; ceil.position.y = h;
+  scene.add(ceil);
+
+  // Walls
+  const back = new THREE.Mesh(new THREE.PlaneGeometry(w, h), wallMat);
+  back.position.set(0, h/2, -d/2);
+  scene.add(back);
+
+  const front = new THREE.Mesh(new THREE.PlaneGeometry(w, h), wallMat);
+  front.position.set(0, h/2, d/2); front.rotation.y = Math.PI;
+  scene.add(front);
+
+  const left = new THREE.Mesh(new THREE.PlaneGeometry(d, h), wallMat);
+  left.position.set(-w/2, h/2, 0); left.rotation.y = Math.PI/2;
+  scene.add(left);
+
+  const right = new THREE.Mesh(new THREE.PlaneGeometry(d, h), wallMat);
+  right.position.set(w/2, h/2, 0); right.rotation.y = -Math.PI/2;
+  scene.add(right);
+
+  return { floor, ceil, back, front, left, right };
+}
+
+function makeDoor(x, y, z, rotY) {
+  const doorGroup = new THREE.Group();
+  const frame = new THREE.Mesh(
+    new THREE.BoxGeometry(1.2, 2.4, 0.15),
+    new THREE.MeshStandardMaterial({ color: 0x444444, metalness: 0.5 })
+  );
+  const door = new THREE.Mesh(
+    new THREE.BoxGeometry(1, 2.2, 0.1),
+    new THREE.MeshStandardMaterial({ color: 0x885533, metalness: 0.2, roughness: 0.6, emissive: 0xff0000, emissiveIntensity: 0.15 })
+  );
+  door.position.z = 0.03;
+  const handle = new THREE.Mesh(
+    new THREE.SphereGeometry(0.06, 8, 8),
+    new THREE.MeshStandardMaterial({ color: 0xffcc00, metalness: 0.8 })
+  );
+  handle.position.set(0.35, 0, 0.08);
+  doorGroup.add(frame); doorGroup.add(door); doorGroup.add(handle);
+  doorGroup.position.set(x, y + 1.2, z);
+  if (rotY) doorGroup.rotation.y = rotY;
+  doorGroup.userData = {
+    interactable: true,
+    locked: true,
+    onInteract: (obj) => {
+      if (obj.userData.locked) {
+        showMessage("The door is locked. Solve the puzzle to escape!");
+      } else {
+        completeLevel();
+      }
+    }
+  };
+  scene.add(doorGroup);
+  levelState.door = doorGroup;
+  return doorGroup;
+}
+
+function makeBox(x, y, z, w, h, d, color, opts = {}) {
+  const mesh = new THREE.Mesh(
+    new THREE.BoxGeometry(w, h, d),
+    new THREE.MeshStandardMaterial({
+      color, roughness: opts.roughness || 0.5,
+      metalness: opts.metalness || 0.1,
+      emissive: opts.emissive || 0x000000,
+      emissiveIntensity: opts.emissiveIntensity || 0
+    })
+  );
+  mesh.position.set(x, y, z);
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  if (opts.userData) Object.assign(mesh.userData, opts.userData);
+  scene.add(mesh);
+  return mesh;
+}
+
+function makeSphere(x, y, z, r, color, opts = {}) {
+  const mesh = new THREE.Mesh(
+    new THREE.SphereGeometry(r, 16, 16),
+    new THREE.MeshStandardMaterial({
+      color, roughness: opts.roughness || 0.3,
+      metalness: opts.metalness || 0.2,
+      emissive: opts.emissive || 0x000000,
+      emissiveIntensity: opts.emissiveIntensity || 0
+    })
+  );
+  mesh.position.set(x, y, z);
+  mesh.castShadow = true;
+  if (opts.userData) Object.assign(mesh.userData, opts.userData);
+  scene.add(mesh);
+  return mesh;
+}
+
+function makeCylinder(x, y, z, rTop, rBot, h, color, opts = {}) {
+  const mesh = new THREE.Mesh(
+    new THREE.CylinderGeometry(rTop, rBot, h, 16),
+    new THREE.MeshStandardMaterial({
+      color, roughness: opts.roughness || 0.4,
+      metalness: opts.metalness || 0.3,
+      emissive: opts.emissive || 0x000000,
+      emissiveIntensity: opts.emissiveIntensity || 0
+    })
+  );
+  mesh.position.set(x, y, z);
+  mesh.castShadow = true;
+  if (opts.userData) Object.assign(mesh.userData, opts.userData);
+  scene.add(mesh);
+  return mesh;
+}
+
+function addLight(type, color, intensity, x, y, z) {
+  let light;
+  if (type === 'point') {
+    light = new THREE.PointLight(color, intensity, 20);
+    light.castShadow = true;
+  } else if (type === 'spot') {
+    light = new THREE.SpotLight(color, intensity, 20, Math.PI/4, 0.5);
+    light.castShadow = true;
+  } else {
+    light = new THREE.AmbientLight(color, intensity);
+    scene.add(light);
+    return light;
+  }
+  light.position.set(x, y, z);
+  scene.add(light);
+  return light;
+}
+
+function makePickup(x, y, z, icon, itemId, itemName, color) {
+  const obj = makeSphere(x, y, z, 0.15, color || 0xffcc00, {
+    emissive: color || 0xffcc00, emissiveIntensity: 0.5,
+    userData: {
+      interactable: true, pickupable: true,
+      itemId, itemName, icon,
+      onInteract: () => showMessage(`Press E to pick up: ${itemName}`)
+    }
+  });
+  obj.userData.floatY = y;
+  obj.userData.animate = (t) => {
+    obj.position.y = obj.userData.floatY + Math.sin(t * 2) * 0.1;
+    obj.rotation.y = t;
+  };
+  return obj;
+}
+
+// --- LEVEL COMPLETE ---
+function completeLevel() {
+  clearInterval(timerInterval);
+  const elapsed = Math.floor((Date.now() - timerStart) / 1000);
+  totalTime += elapsed;
+  const m = String(Math.floor(elapsed / 60)).padStart(2, '0');
+  const s = String(elapsed % 60).padStart(2, '0');
+  document.exitPointerLock();
+
+  if (currentLevel >= 20) {
+    const tm = String(Math.floor(totalTime / 60)).padStart(2, '0');
+    const ts = String(totalTime % 60).padStart(2, '0');
+    finalStats.textContent = `Total Time: ${tm}:${ts}`;
+    gameComplete.classList.add('active');
+  } else {
+    levelStats.textContent = `Time: ${m}:${s} | Level ${currentLevel} / 20`;
+    levelComplete.classList.add('active');
+  }
+}
+
+function nextLevel() {
+  levelComplete.classList.remove('active');
+  currentLevel++;
+  loadLevel(currentLevel);
+  renderer.domElement.requestPointerLock();
+}
+
+// --- COLLISION ---
+function collideWalls(pos, roomW, roomD, margin) {
+  const hw = roomW / 2 - margin;
+  const hd = roomD / 2 - margin;
+  pos.x = Math.max(-hw, Math.min(hw, pos.x));
+  pos.z = Math.max(-hd, Math.min(hd, pos.z));
+}
+
+// ============================================================
+// LEVEL DEFINITIONS
+// ============================================================
+
+const levelDefs = [];
+const levelHints = [];
+
+// --- LEVEL 1: Find the Key ---
+levelDefs[1] = function() {
+  makeRoom(8, 3, 8, '#2a2a3a', '#1a1a2a', '#1a1a1a');
+  addLight('ambient', 0x404060, 0.4);
+  addLight('point', 0xffffcc, 1.0, 0, 2.5, 0);
+
+  makeDoor(0, 0, -3.92, 0);
+  camera.position.set(0, 1.6, 3);
+  yaw = Math.PI; pitch = 0;
+
+  // Table
+  makeBox(-2, 0.4, -1, 1.2, 0.05, 0.8, 0x664422);
+  makeBox(-2.4, 0.2, -1.3, 0.08, 0.4, 0.08, 0x553311);
+  makeBox(-1.6, 0.2, -1.3, 0.08, 0.4, 0.08, 0x553311);
+  makeBox(-2.4, 0.2, -0.7, 0.08, 0.4, 0.08, 0x553311);
+  makeBox(-1.6, 0.2, -0.7, 0.08, 0.4, 0.08, 0x553311);
+
+  // Key hidden behind a box
+  makeBox(3, 0.5, 2, 1, 1, 1, 0x555555, {
+    userData: {
+      interactable: true,
+      onInteract: () => showMessage("A large crate. Something glimmers behind it...")
+    }
+  });
+  makePickup(3.5, 0.5, 2.8, '🔑', 'key1', 'Brass Key', 0xffcc00);
+
+  levelState.door.userData.requiresItem = 'key1';
+  levelState.door.userData.onUseItem = (obj) => {
+    obj.userData.locked = false;
+    obj.material && (obj.children[1].material.emissive.setHex(0x00ff00));
+    showMessage('Door unlocked!');
+  };
+  levelState.door.userData.onInteract = (obj) => {
+    if (obj.userData.locked) {
+      if (hasItem('key1')) {
+        removeItem('key1');
+        obj.userData.locked = false;
+        obj.children[1].material.emissive.setHex(0x00ff00);
+        showMessage('Door unlocked! Click to escape!');
+      } else {
+        showMessage("The door is locked. Find a key!");
+      }
+    } else {
+      completeLevel();
+    }
+  };
+  levelState.roomW = 8; levelState.roomD = 8;
+};
+levelHints[1] = "Look behind the large crate in the corner.";
+
+// --- LEVEL 2: Code Lock ---
+levelDefs[2] = function() {
+  makeRoom(8, 3, 8, '#2e1a1a', '#1a1010', '#1a1010');
+  addLight('ambient', 0x402020, 0.3);
+  addLight('point', 0xff8866, 0.8, 0, 2.5, 0);
+  addLight('point', 0xff4422, 0.5, -3, 1.5, -3);
+
+  makeDoor(0, 0, -3.92, 0);
+  camera.position.set(0, 1.6, 3); yaw = Math.PI; pitch = 0;
+
+  // Clue paintings with numbers
+  makeBox(-3.9, 1.8, -1, 0.05, 0.6, 0.6, 0x000000, {
+    userData: { interactable: true, onInteract: () => showMessage("The painting reads: '4'") }
+  });
+  makeBox(-3.9, 1.8, 1, 0.05, 0.6, 0.6, 0x000000, {
+    userData: { interactable: true, onInteract: () => showMessage("The painting reads: '7'") }
+  });
+  makeBox(3.9, 1.8, 0, 0.05, 0.6, 0.6, 0x000000, {
+    userData: { interactable: true, onInteract: () => showMessage("The painting reads: '2'") }
+  });
+
+  // Code panel
+  makeBox(0, 1.2, -3.5, 0.8, 0.6, 0.1, 0x333333, {
+    emissive: 0x00aaff, emissiveIntensity: 0.2,
+    userData: {
+      interactable: true,
+      onInteract: () => {
+        openPuzzle('Code Lock', 'Enter the 3-digit code found in the room.',
+          `<input class="puzzle-input" id="code-input" maxlength="3" placeholder="_ _ _" autofocus>
+           <br><button class="puzzle-btn" id="code-submit">SUBMIT</button>`,
+          () => {
+            document.getElementById('code-submit').addEventListener('click', () => {
+              const val = document.getElementById('code-input').value;
+              if (val === '472') { puzzleSolved(); }
+              else { showMessage('Wrong code! Look at the paintings.'); }
+            });
+            document.getElementById('code-input').addEventListener('keydown', (e) => {
+              if (e.key === 'Enter') document.getElementById('code-submit').click();
+            });
+          });
+      }
+    }
+  });
+
+  // Furniture
+  makeBox(2, 0.3, 2, 0.8, 0.6, 0.8, 0x553322);
+  makeBox(-2, 0.3, -2, 0.6, 0.6, 0.6, 0x443322);
+  levelState.roomW = 8; levelState.roomD = 8;
+};
+levelHints[2] = "Check the three paintings on the walls for digits. The code reads left-right.";
+
+// --- LEVEL 3: Light Switch Puzzle ---
+levelDefs[3] = function() {
+  makeRoom(8, 3, 8, '#1a2a1a', '#101a10', '#0a0a0a');
+  addLight('ambient', 0x203020, 0.2);
+  const mainLight = addLight('point', 0x44ff44, 0.3, 0, 2.5, 0);
+
+  makeDoor(0, 0, -3.92, 0);
+  camera.position.set(0, 1.6, 3); yaw = Math.PI; pitch = 0;
+
+  levelState.switches = [false, false, false, false];
+  // target: all ON
+  const colors = [0xff0000, 0x00ff00, 0x0000ff, 0xffff00];
+  const positions = [[-2, 1.2, -3.5], [2, 1.2, -3.5], [-2, 1.2, 3.4], [2, 1.2, 3.4]];
+
+  positions.forEach((pos, i) => {
+    const sw = makeBox(pos[0], pos[1], pos[2], 0.3, 0.5, 0.15, 0x333333, {
+      emissive: 0x330000, emissiveIntensity: 0.3,
+      userData: {
+        interactable: true,
+        switchIndex: i,
+        onInteract: (obj) => {
+          // Toggle this and adjacent
+          levelState.switches[i] = !levelState.switches[i];
+          if (i > 0) levelState.switches[i-1] = !levelState.switches[i-1];
+          if (i < 3) levelState.switches[i+1] = !levelState.switches[i+1];
+          updateSwitches3();
+        }
+      }
+    });
+    sw.userData.switchMesh = sw;
+  });
+
+  levelState.switchMeshes = scene.children.filter(c => c.userData && c.userData.switchIndex !== undefined);
+
+  function updateSwitches3() {
+    levelState.switchMeshes.forEach((m, i) => {
+      if (levelState.switches[i]) {
+        m.material.emissive.setHex(colors[i]);
+        m.material.emissiveIntensity = 0.8;
+      } else {
+        m.material.emissive.setHex(0x330000);
+        m.material.emissiveIntensity = 0.3;
+      }
+    });
+    if (levelState.switches.every(s => s)) {
+      showMessage('All switches activated! Door unlocked!');
+      levelState.door.userData.locked = false;
+      levelState.door.children[1].material.emissive.setHex(0x00ff00);
+      mainLight.intensity = 1.5;
+    }
+  }
+
+  makeBox(-3, 0.5, 0, 0.8, 1, 0.8, 0x334433);
+  makeBox(3, 0.3, -1, 1, 0.6, 0.6, 0x443344);
+  levelState.roomW = 8; levelState.roomD = 8;
+};
+levelHints[3] = "Each switch toggles itself AND its neighbors. Work backwards from the goal: all lit.";
+
+// --- LEVEL 4: Memory Sequence ---
+levelDefs[4] = function() {
+  makeRoom(10, 3.5, 10, '#1a1a2e', '#10101e', '#0a0a15');
+  addLight('ambient', 0x303050, 0.3);
+  addLight('point', 0x8888ff, 0.8, 0, 3, 0);
+
+  makeDoor(0, 0, -4.92, 0);
+  camera.position.set(0, 1.6, 4); yaw = Math.PI; pitch = 0;
+
+  // Memory pad on wall
+  makeBox(0, 1.5, -4.5, 1.5, 1.2, 0.1, 0x222244, {
+    emissive: 0x4444ff, emissiveIntensity: 0.1,
+    userData: {
+      interactable: true,
+      onInteract: () => {
+        const seq = levelState.sequence;
+        levelState.playerSeq = [];
+        let html = '<div class="puzzle-grid" style="grid-template-columns:repeat(3,1fr)">';
+        for (let i = 0; i < 9; i++) {
+          html += `<div class="puzzle-cell" data-idx="${i}">${i + 1}</div>`;
+        }
+        html += '</div><p style="color:#aaa;margin-top:10px" id="seq-status">Watch the sequence, then repeat it!</p>';
+        html += '<button class="puzzle-btn" id="seq-show">Show Sequence</button>';
+
+        openPuzzle('Memory Sequence', 'Watch the pattern, then repeat it in order.', html, () => {
+          const cells = document.querySelectorAll('.puzzle-cell');
+          document.getElementById('seq-show').addEventListener('click', () => {
+            document.getElementById('seq-show').disabled = true;
+            let i = 0;
+            const iv = setInterval(() => {
+              cells.forEach(c => c.classList.remove('lit'));
+              if (i < seq.length) {
+                cells[seq[i]].classList.add('lit');
+                i++;
+              } else {
+                clearInterval(iv);
+                document.getElementById('seq-status').textContent = 'Now repeat the sequence!';
+                cells.forEach(c => {
+                  c.addEventListener('click', () => {
+                    const idx = parseInt(c.dataset.idx);
+                    levelState.playerSeq.push(idx);
+                    c.classList.add('lit');
+                    setTimeout(() => c.classList.remove('lit'), 300);
+                    const pos = levelState.playerSeq.length - 1;
+                    if (seq[pos] !== idx) {
+                      document.getElementById('seq-status').textContent = 'Wrong! Try again.';
+                      document.getElementById('seq-status').style.color = '#ff4444';
+                      levelState.playerSeq = [];
+                    } else if (levelState.playerSeq.length === seq.length) {
+                      puzzleSolved();
+                    }
+                  });
+                });
+              }
+            }, 600);
+          });
+        });
+      }
+    }
+  });
+
+  // Generate sequence of length 5
+  levelState.sequence = [];
+  for (let i = 0; i < 5; i++) levelState.sequence.push(Math.floor(Math.random() * 9));
+
+  // Decor
+  makeCylinder(-3, 0.75, -3, 0.3, 0.3, 1.5, 0x554433);
+  makeSphere(-3, 1.7, -3, 0.3, 0x44ff44, { emissive: 0x44ff44, emissiveIntensity: 0.5 });
+  makeBox(3, 0.4, 2, 1.5, 0.8, 0.8, 0x333355);
+  levelState.roomW = 10; levelState.roomD = 10;
+};
+levelHints[4] = "Click 'Show Sequence' and memorize the highlighted numbers, then click them in order.";
+
+// --- LEVEL 5: Jigsaw Color Match ---
+levelDefs[5] = function() {
+  makeRoom(10, 3.5, 10, '#2a1a2a', '#1a0a1a', '#0f0a0f');
+  addLight('ambient', 0x402040, 0.3);
+  addLight('point', 0xff44ff, 0.7, 0, 3, 0);
+  addLight('point', 0x4444ff, 0.4, -4, 2, -4);
+
+  makeDoor(0, 0, -4.92, 0);
+  camera.position.set(0, 1.6, 4); yaw = Math.PI; pitch = 0;
+
+  const targetColors = ['#ff0000', '#00ff00', '#0000ff', '#ffff00'];
+  levelState.currentColors = [0, 0, 0, 0]; // indices into color array
+  const colorNames = ['Red', 'Green', 'Blue', 'Yellow'];
+  const colorHexes = [0xff0000, 0x00ff00, 0x0000ff, 0xffff00];
+  // Target: each slot = its index color
+  // Clue on wall
+  makeBox(-4.9, 1.5, 0, 0.05, 0.8, 0.8, 0x222222, {
+    userData: { interactable: true, onInteract: () => showMessage("Hint: Match each pedestal to its label color.") }
+  });
+
+  const pedestals = [];
+  for (let i = 0; i < 4; i++) {
+    const x = -3 + i * 2;
+    makeCylinder(x, 0.5, -2, 0.3, 0.35, 1, 0x444444);
+    // Label
+    makeBox(x, 0.05, -1.2, 0.4, 0.05, 0.2, colorHexes[i]);
+
+    const orb = makeSphere(x, 1.2, -2, 0.25, colorHexes[0], {
+      emissive: colorHexes[0], emissiveIntensity: 0.5,
+      userData: {
+        interactable: true,
+        orbIndex: i,
+        onInteract: (obj) => {
+          levelState.currentColors[i] = (levelState.currentColors[i] + 1) % 4;
+          const ci = levelState.currentColors[i];
+          obj.material.color.setHex(colorHexes[ci]);
+          obj.material.emissive.setHex(colorHexes[ci]);
+          showMessage(`Orb ${i+1}: ${colorNames[ci]}`);
+
+          // Check win
+          if (levelState.currentColors.every((c, idx) => c === idx)) {
+            showMessage('Colors matched! Door unlocked!');
+            levelState.door.userData.locked = false;
+            levelState.door.children[1].material.emissive.setHex(0x00ff00);
+          }
+        }
+      }
+    });
+    pedestals.push(orb);
+  }
+
+  makeBox(3, 0.3, 3, 1, 0.6, 1, 0x443344);
+  levelState.roomW = 10; levelState.roomD = 10;
+};
+levelHints[5] = "Click each orb to cycle its color. Match each orb to the colored label on the floor in front of it.";
+
+// --- LEVEL 6: Pressure Plates + Key ---
+levelDefs[6] = function() {
+  makeRoom(12, 4, 12, '#1a2020', '#0a1515', '#0a0a0a');
+  addLight('ambient', 0x203030, 0.25);
+  addLight('point', 0x00cccc, 0.7, 0, 3.5, 0);
+  addLight('point', 0x00ffaa, 0.3, -4, 1, 4);
+
+  makeDoor(0, 0, -5.92, 0);
+  camera.position.set(0, 1.6, 5); yaw = Math.PI; pitch = 0;
+
+  // 3 pressure plates that must be activated in order
+  levelState.plateOrder = [2, 0, 1]; // correct order
+  levelState.plateProgress = 0;
+
+  const plateColors = [0xff4444, 0x44ff44, 0x4444ff];
+  const platePos = [[-3, 0.02, 0], [0, 0.02, -2], [3, 0.02, 2]];
+
+  platePos.forEach((pos, i) => {
+    const plate = makeBox(pos[0], pos[1], pos[2], 1.2, 0.04, 1.2, 0x555555, {
+      emissive: plateColors[i], emissiveIntensity: 0.1,
+      userData: {
+        interactable: true,
+        plateIndex: i,
+        onInteract: (obj) => {
+          const expected = levelState.plateOrder[levelState.plateProgress];
+          if (i === expected) {
+            obj.material.emissiveIntensity = 0.8;
+            levelState.plateProgress++;
+            showMessage(`Plate ${levelState.plateProgress}/3 activated!`);
+            if (levelState.plateProgress >= 3) {
+              showMessage('All plates activated! A key appears!');
+              makePickup(0, 0.5, 0, '🔑', 'key6', 'Crystal Key', 0x00ffff);
+            }
+          } else {
+            levelState.plateProgress = 0;
+            scene.children.filter(c => c.userData.plateIndex !== undefined)
+              .forEach(c => c.material.emissiveIntensity = 0.1);
+            showMessage('Wrong order! Plates reset.');
+          }
+        }
+      }
+    });
+  });
+
+  // Clue: numbers etched on wall
+  makeBox(-5.9, 1.5, 0, 0.05, 0.5, 0.5, 0x222222, {
+    userData: { interactable: true, onInteract: () => showMessage("Wall etching: Blue(3) → Red(1) → Green(2)") }
+  });
+
+  levelState.door.userData.onInteract = (obj) => {
+    if (obj.userData.locked) {
+      if (hasItem('key6')) {
+        removeItem('key6');
+        obj.userData.locked = false;
+        obj.children[1].material.emissive.setHex(0x00ff00);
+        showMessage('Door unlocked!');
+      } else {
+        showMessage("Door is locked. Find the key!");
+      }
+    } else { completeLevel(); }
+  };
+
+  makeBox(4, 0.75, -4, 1, 1.5, 1, 0x334444);
+  makeBox(-4, 0.4, -4, 1.5, 0.8, 0.8, 0x443344);
+  levelState.roomW = 12; levelState.roomD = 12;
+};
+levelHints[6] = "Read the wall etching for plate order: Blue first, then Red, then Green. A key spawns after.";
+
+// --- LEVEL 7: Slider Puzzle ---
+levelDefs[7] = function() {
+  makeRoom(10, 3.5, 10, '#2a2a1a', '#1a1a0a', '#0f0f05');
+  addLight('ambient', 0x404020, 0.3);
+  addLight('point', 0xffcc44, 0.8, 0, 3, 0);
+
+  makeDoor(0, 0, -4.92, 0);
+  camera.position.set(0, 1.6, 4); yaw = Math.PI; pitch = 0;
+
+  makeBox(0, 1.5, -4.5, 1.5, 1.2, 0.1, 0x333322, {
+    emissive: 0xaaaa00, emissiveIntensity: 0.1,
+    userData: {
+      interactable: true,
+      onInteract: () => {
+        // 3x3 slider puzzle (8-puzzle)
+        levelState.tiles = [1,2,3,4,0,5,6,7,8]; // 0 = empty, almost solved
+        // Shuffle a few moves
+        for (let i = 0; i < 8; i++) {
+          const emptyIdx = levelState.tiles.indexOf(0);
+          const neighbors = [];
+          if (emptyIdx % 3 > 0) neighbors.push(emptyIdx - 1);
+          if (emptyIdx % 3 < 2) neighbors.push(emptyIdx + 1);
+          if (emptyIdx >= 3) neighbors.push(emptyIdx - 3);
+          if (emptyIdx < 6) neighbors.push(emptyIdx + 3);
+          const swap = neighbors[Math.floor(Math.random() * neighbors.length)];
+          levelState.tiles[emptyIdx] = levelState.tiles[swap];
+          levelState.tiles[swap] = 0;
+        }
+        renderSlider();
+      }
+    }
+  });
+
+  function renderSlider() {
+    let html = '<div class="puzzle-grid" style="grid-template-columns:repeat(3,1fr)">';
+    for (let i = 0; i < 9; i++) {
+      const v = levelState.tiles[i];
+      const cls = v === 0 ? 'style="visibility:hidden"' : '';
+      html += `<div class="puzzle-cell" data-idx="${i}" ${cls}>${v || ''}</div>`;
+    }
+    html += '</div>';
+    openPuzzle('Slider Puzzle', 'Arrange tiles 1-8 in order. Click a tile next to the gap to slide it.', html, () => {
+      document.querySelectorAll('.puzzle-cell').forEach(cell => {
+        cell.addEventListener('click', () => {
+          const idx = parseInt(cell.dataset.idx);
+          const emptyIdx = levelState.tiles.indexOf(0);
+          const validMoves = [];
+          if (emptyIdx % 3 > 0) validMoves.push(emptyIdx - 1);
+          if (emptyIdx % 3 < 2) validMoves.push(emptyIdx + 1);
+          if (emptyIdx >= 3) validMoves.push(emptyIdx - 3);
+          if (emptyIdx < 6) validMoves.push(emptyIdx + 3);
+          if (validMoves.includes(idx)) {
+            levelState.tiles[emptyIdx] = levelState.tiles[idx];
+            levelState.tiles[idx] = 0;
+            closePuzzleOverlay();
+            // Check win
+            const goal = [1,2,3,4,5,6,7,8,0];
+            if (levelState.tiles.every((v, i) => v === goal[i])) {
+              puzzleSolved();
+            } else {
+              setTimeout(() => renderSlider(), 100);
+            }
+          }
+        });
+      });
+    });
+  }
+
+  makeBox(-3, 0.4, 2, 1, 0.8, 1, 0x554422);
+  makeCylinder(3, 0.6, -2, 0.2, 0.2, 1.2, 0x886644);
+  levelState.roomW = 10; levelState.roomD = 10;
+};
+levelHints[7] = "Click tiles adjacent to the empty space. Arrange 1-8 in order, empty at bottom-right.";
+
+// --- LEVEL 8: Dark Room - Find items with flashlight ---
+levelDefs[8] = function() {
+  makeRoom(10, 3, 10, '#0a0a0a', '#050505', '#030303');
+  addLight('ambient', 0x101010, 0.1);
+
+  makeDoor(0, 0, -4.92, 0);
+  camera.position.set(0, 1.6, 4); yaw = Math.PI; pitch = 0;
+
+  // Flashlight (always visible with glow)
+  makePickup(-3, 0.5, 3, '🔦', 'flashlight', 'Flashlight', 0xffffaa);
+
+  levelState.foundItems = 0;
+  levelState.neededItems = 3;
+
+  // Hidden items only visible when close
+  const hiddenPositions = [[3, 0.3, -3], [-4, 0.3, -1], [2, 0.3, 4]];
+  const icons = ['🔧', '⚙️', '🗝️'];
+  const names = ['Wrench', 'Gear', 'Small Key'];
+
+  hiddenPositions.forEach((pos, i) => {
+    const item = makeSphere(pos[0], pos[1], pos[2], 0.15, 0x888888, {
+      userData: {
+        interactable: true,
+        onInteract: (obj) => {
+          if (!hasItem('flashlight')) {
+            showMessage("Too dark to see... find a light source!");
+            return;
+          }
+          scene.remove(obj);
+          levelState.foundItems++;
+          showMessage(`Found ${names[i]}! (${levelState.foundItems}/${levelState.neededItems})`);
+          if (levelState.foundItems >= levelState.neededItems) {
+            showMessage('All parts found! Door unlocked!');
+            levelState.door.userData.locked = false;
+            levelState.door.children[1].material.emissive.setHex(0x00ff00);
+            addLight('point', 0xffffff, 0.5, 0, 2.5, 0);
+          }
+        }
+      }
+    });
+  });
+
+  // Light appears when you have flashlight
+  levelState.flashlight = null;
+  levelState.checkFlashlight = () => {
+    if (hasItem('flashlight') && !levelState.flashlight) {
+      levelState.flashlight = addLight('point', 0xffffcc, 1.0, 0, 1.6, 0);
+    }
+  };
+
+  makeBox(0, 0.3, 0, 2, 0.6, 1, 0x222222);
+  levelState.roomW = 10; levelState.roomD = 10;
+};
+levelHints[8] = "Find the glowing flashlight first, then explore the dark room for 3 hidden items.";
+
+// --- LEVEL 9: Wire Connection Puzzle ---
+levelDefs[9] = function() {
+  makeRoom(10, 3.5, 10, '#1a1a2e', '#0f0f1e', '#080815');
+  addLight('ambient', 0x202040, 0.3);
+  addLight('point', 0x6666ff, 0.6, 0, 3, 0);
+  addLight('point', 0xff2200, 0.3, 3, 1.5, -4);
+
+  makeDoor(0, 0, -4.92, 0);
+  camera.position.set(0, 1.6, 4); yaw = Math.PI; pitch = 0;
+
+  makeBox(0, 1.5, -4.5, 2, 1.5, 0.1, 0x222233, {
+    emissive: 0x2222ff, emissiveIntensity: 0.1,
+    userData: {
+      interactable: true,
+      onInteract: () => {
+        // Match pairs puzzle
+        levelState.selected = null;
+        levelState.matched = new Set();
+        const symbols = ['★', '♦', '♠', '♣', '★', '♦', '♠', '♣'];
+        // shuffle
+        for (let i = symbols.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [symbols[i], symbols[j]] = [symbols[j], symbols[i]];
+        }
+        levelState.symbols = symbols;
+
+        let html = '<div class="puzzle-grid" style="grid-template-columns:repeat(4,1fr)">';
+        for (let i = 0; i < 8; i++) {
+          html += `<div class="puzzle-cell" data-idx="${i}" style="width:70px;height:70px;font-size:1.8em">?</div>`;
+        }
+        html += '</div>';
+
+        openPuzzle('Wire Matching', 'Find all 4 matching pairs!', html, () => {
+          const cells = document.querySelectorAll('.puzzle-cell');
+          cells.forEach(cell => {
+            cell.addEventListener('click', () => {
+              const idx = parseInt(cell.dataset.idx);
+              if (levelState.matched.has(idx)) return;
+
+              cell.textContent = symbols[idx];
+              cell.classList.add('lit');
+
+              if (levelState.selected === null) {
+                levelState.selected = idx;
+              } else {
+                const prev = levelState.selected;
+                levelState.selected = null;
+                if (symbols[prev] === symbols[idx] && prev !== idx) {
+                  levelState.matched.add(prev);
+                  levelState.matched.add(idx);
+                  cells[prev].classList.add('correct');
+                  cell.classList.add('correct');
+                  if (levelState.matched.size === 8) {
+                    setTimeout(() => puzzleSolved(), 500);
+                  }
+                } else {
+                  setTimeout(() => {
+                    cells[prev].textContent = '?';
+                    cells[prev].classList.remove('lit');
+                    cell.textContent = '?';
+                    cell.classList.remove('lit');
+                  }, 600);
+                }
+              }
+            });
+          });
+        });
+      }
+    }
+  });
+
+  makeBox(-3, 0.5, -2, 1, 1, 0.5, 0x333355);
+  makeCylinder(3, 0.8, 2, 0.4, 0.4, 1.6, 0x444455);
+  levelState.roomW = 10; levelState.roomD = 10;
+};
+levelHints[9] = "Click cards to flip them. Find all 4 matching pairs to unlock the door.";
+
+// --- LEVEL 10: Math Equations ---
+levelDefs[10] = function() {
+  makeRoom(12, 4, 12, '#2a1a1a', '#1a0a0a', '#100808');
+  addLight('ambient', 0x402020, 0.3);
+  addLight('point', 0xff6644, 0.8, 0, 3.5, 0);
+
+  makeDoor(0, 0, -5.92, 0);
+  camera.position.set(0, 1.6, 5); yaw = Math.PI; pitch = 0;
+
+  levelState.mathSolved = 0;
+  const equations = [
+    { q: "12 × 13 = ?", a: "156" },
+    { q: "√(625) = ?", a: "25" },
+    { q: "7³ = ?", a: "343" }
+  ];
+
+  equations.forEach((eq, i) => {
+    const x = -4 + i * 4;
+    makeBox(x, 1.5, -5.5, 1.2, 0.8, 0.1, 0x332222, {
+      emissive: 0xff4400, emissiveIntensity: 0.2,
+      userData: {
+        interactable: true,
+        eqIndex: i,
+        onInteract: () => {
+          if (levelState['eq_' + i]) { showMessage('Already solved!'); return; }
+          openPuzzle(`Equation ${i + 1}`, eq.q,
+            `<input class="puzzle-input" id="math-input" autofocus>
+             <br><button class="puzzle-btn" id="math-submit">ANSWER</button>`,
+            () => {
+              document.getElementById('math-submit').addEventListener('click', () => {
+                if (document.getElementById('math-input').value.trim() === eq.a) {
+                  levelState['eq_' + i] = true;
+                  levelState.mathSolved++;
+                  closePuzzleOverlay();
+                  showMessage(`Correct! (${levelState.mathSolved}/3)`);
+                  if (levelState.mathSolved >= 3) {
+                    levelState.door.userData.locked = false;
+                    levelState.door.children[1].material.emissive.setHex(0x00ff00);
+                    showMessage('All equations solved! Door unlocked!');
+                  }
+                } else {
+                  showMessage('Wrong answer, try again!');
+                }
+              });
+              document.getElementById('math-input').addEventListener('keydown', e => {
+                if (e.key === 'Enter') document.getElementById('math-submit').click();
+              });
+            });
+        }
+      }
+    });
+  });
+
+  makeBox(-4, 0.5, 3, 1.5, 1, 1, 0x442222);
+  makeBox(4, 0.3, 0, 0.8, 0.6, 0.8, 0x333322);
+  levelState.roomW = 12; levelState.roomD = 12;
+};
+levelHints[10] = "Solve all 3 math equations on the wall panels. 12×13, √625, and 7³.";
+
+// --- LEVEL 11: Simon Says (longer sequence) ---
+levelDefs[11] = function() {
+  makeRoom(10, 4, 10, '#0a1a2a', '#050f1a', '#030810');
+  addLight('ambient', 0x102030, 0.2);
+  addLight('point', 0x0088ff, 0.6, 0, 3.5, 0);
+
+  makeDoor(0, 0, -4.92, 0);
+  camera.position.set(0, 1.6, 4); yaw = Math.PI; pitch = 0;
+
+  const colors = [0xff0000, 0x00ff00, 0x0000ff, 0xffff00];
+  const pads = [];
+
+  for (let i = 0; i < 4; i++) {
+    const angle = (i / 4) * Math.PI * 2;
+    const x = Math.cos(angle) * 2;
+    const z = Math.sin(angle) * 2;
+    const pad = makeBox(x, 0.1, z, 0.8, 0.2, 0.8, colors[i], {
+      emissive: colors[i], emissiveIntensity: 0.1,
+      userData: {
+        interactable: true,
+        padIndex: i,
+        onInteract: (obj) => {
+          if (!levelState.playerTurn) return;
+          obj.material.emissiveIntensity = 0.8;
+          setTimeout(() => obj.material.emissiveIntensity = 0.1, 300);
+
+          levelState.playerInput.push(i);
+          const pos = levelState.playerInput.length - 1;
+          if (levelState.simonSeq[pos] !== i) {
+            showMessage('Wrong! Sequence reset.');
+            levelState.round = 0;
+            levelState.playerInput = [];
+            levelState.playerTurn = false;
+            setTimeout(() => playSimonRound(), 1000);
+          } else if (levelState.playerInput.length === levelState.simonSeq.length) {
+            if (levelState.simonSeq.length >= 7) {
+              showMessage('Sequence complete! Door unlocked!');
+              levelState.door.userData.locked = false;
+              levelState.door.children[1].material.emissive.setHex(0x00ff00);
+            } else {
+              levelState.simonSeq.push(Math.floor(Math.random() * 4));
+              levelState.playerInput = [];
+              levelState.playerTurn = false;
+              showMessage(`Round ${levelState.simonSeq.length - 2}! Watch carefully...`);
+              setTimeout(() => playSimonRound(), 1500);
+            }
+          }
+        }
+      }
+    });
+    pads.push(pad);
+  }
+  levelState.pads = pads;
+
+  // Generate initial sequence of 3
+  levelState.simonSeq = [];
+  for (let i = 0; i < 3; i++) levelState.simonSeq.push(Math.floor(Math.random() * 4));
+  levelState.playerInput = [];
+  levelState.playerTurn = false;
+
+  function playSimonRound() {
+    let i = 0;
+    const iv = setInterval(() => {
+      pads.forEach(p => p.material.emissiveIntensity = 0.1);
+      if (i < levelState.simonSeq.length) {
+        pads[levelState.simonSeq[i]].material.emissiveIntensity = 0.8;
+        i++;
+      } else {
+        clearInterval(iv);
+        levelState.playerTurn = true;
+        levelState.playerInput = [];
+        showMessage("Your turn! Repeat the sequence.");
+      }
+    }, 700);
+  }
+
+  showMessage('Watch the colored pads!');
+  setTimeout(() => playSimonRound(), 2000);
+
+  levelState.roomW = 10; levelState.roomD = 10;
+};
+levelHints[11] = "Watch which colored pads light up, then step on them in the same order. Complete 5 rounds.";
+
+// --- LEVEL 12: Riddle Room ---
+levelDefs[12] = function() {
+  makeRoom(10, 4, 10, '#1a1020', '#0f0810', '#080510');
+  addLight('ambient', 0x201030, 0.3);
+  addLight('point', 0xaa44ff, 0.7, 0, 3.5, 0);
+  addLight('point', 0xff00aa, 0.3, -4, 2, 0);
+
+  makeDoor(0, 0, -4.92, 0);
+  camera.position.set(0, 1.6, 4); yaw = Math.PI; pitch = 0;
+
+  const riddles = [
+    { q: "I have keys but no locks. I have space but no room. You can enter but can't go inside. What am I?", a: "keyboard" },
+    { q: "What has a head and a tail but no body?", a: "coin" },
+    { q: "I speak without a mouth and hear without ears. I have no body but come alive with the wind. What am I?", a: "echo" }
+  ];
+  levelState.riddleSolved = 0;
+
+  riddles.forEach((r, i) => {
+    const z = -3 + i * 3;
+    makeSphere(-4.5, 1.5, z, 0.3, 0xaa44ff, {
+      emissive: 0xaa44ff, emissiveIntensity: 0.4,
+      userData: {
+        interactable: true,
+        onInteract: () => {
+          if (levelState['riddle_' + i]) { showMessage('Already solved!'); return; }
+          openPuzzle(`Riddle ${i+1}`, r.q,
+            `<input class="puzzle-input" id="riddle-input" autofocus placeholder="answer...">
+             <br><button class="puzzle-btn" id="riddle-submit">ANSWER</button>`,
+            () => {
+              document.getElementById('riddle-submit').addEventListener('click', () => {
+                const ans = document.getElementById('riddle-input').value.trim().toLowerCase();
+                if (ans === r.a || ans === 'a ' + r.a) {
+                  levelState['riddle_' + i] = true;
+                  levelState.riddleSolved++;
+                  closePuzzleOverlay();
+                  showMessage(`Correct! (${levelState.riddleSolved}/3)`);
+                  if (levelState.riddleSolved >= 3) {
+                    levelState.door.userData.locked = false;
+                    levelState.door.children[1].material.emissive.setHex(0x00ff00);
+                    showMessage('All riddles solved!');
+                  }
+                } else { showMessage('Not quite... think harder!'); }
+              });
+              document.getElementById('riddle-input').addEventListener('keydown', e => {
+                if (e.key === 'Enter') document.getElementById('riddle-submit').click();
+              });
+            });
+        }
+      }
+    });
+  });
+
+  makeBox(3, 0.5, -2, 1.5, 1, 1, 0x332244);
+  levelState.roomW = 10; levelState.roomD = 10;
+};
+levelHints[12] = "Interact with the 3 glowing orbs. Answers: keyboard, coin, echo.";
+
+// --- LEVEL 13: Maze of Buttons ---
+levelDefs[13] = function() {
+  makeRoom(14, 3, 14, '#1a1a1a', '#0f0f0f', '#080808');
+  addLight('ambient', 0x222222, 0.3);
+  addLight('point', 0xffffff, 0.5, 0, 2.5, 0);
+
+  makeDoor(0, 0, -6.92, 0);
+  camera.position.set(0, 1.6, 6); yaw = Math.PI; pitch = 0;
+
+  // Internal walls forming a mini maze
+  const walls = [
+    [-3, 1.5, 0, 0.2, 3, 6], [3, 1.5, 0, 0.2, 3, 6],
+    [0, 1.5, 3, 4, 3, 0.2], [0, 1.5, -3, 4, 3, 0.2],
+    [-5, 1.5, -3, 0.2, 3, 3], [5, 1.5, 3, 0.2, 3, 3],
+  ];
+  walls.forEach(w => {
+    makeBox(w[0], w[1], w[2], w[3], w[4], w[5], 0x444444);
+  });
+
+  levelState.buttonsPressed = 0;
+  const btnPositions = [[-5, 1, -5], [5, 1, 5], [-5, 1, 5], [5, 1, -5], [0, 1, 0]];
+
+  btnPositions.forEach((pos, i) => {
+    makeSphere(pos[0], pos[1], pos[2], 0.2, 0xff4444, {
+      emissive: 0xff0000, emissiveIntensity: 0.4,
+      userData: {
+        interactable: true,
+        onInteract: (obj) => {
+          if (obj.userData.pressed) return;
+          obj.userData.pressed = true;
+          obj.material.emissive.setHex(0x00ff00);
+          obj.material.color.setHex(0x00ff00);
+          levelState.buttonsPressed++;
+          showMessage(`Button ${levelState.buttonsPressed}/5 pressed!`);
+          if (levelState.buttonsPressed >= 5) {
+            levelState.door.userData.locked = false;
+            levelState.door.children[1].material.emissive.setHex(0x00ff00);
+            showMessage('All buttons pressed! Door unlocked!');
+          }
+        }
+      }
+    });
+  });
+
+  levelState.roomW = 14; levelState.roomD = 14;
+};
+levelHints[13] = "Navigate the maze and find all 5 red buttons. Click each one to activate it.";
+
+// --- LEVEL 14: Rotating Lock ---
+levelDefs[14] = function() {
+  makeRoom(10, 4, 10, '#201a10', '#150f08', '#0a0805');
+  addLight('ambient', 0x302010, 0.3);
+  addLight('point', 0xffaa44, 0.8, 0, 3.5, 0);
+
+  makeDoor(0, 0, -4.92, 0);
+  camera.position.set(0, 1.6, 4); yaw = Math.PI; pitch = 0;
+
+  // Combination lock with 4 dials
+  makeBox(0, 1.5, -4.5, 2, 1.5, 0.15, 0x443322, {
+    emissive: 0xaa6622, emissiveIntensity: 0.1,
+    userData: {
+      interactable: true,
+      onInteract: () => {
+        levelState.dials = levelState.dials || [0, 0, 0, 0];
+        // Target: 3-8-1-5
+        let html = '<div style="display:flex;gap:20px;justify-content:center;align-items:center">';
+        for (let i = 0; i < 4; i++) {
+          html += `<div style="text-align:center">
+            <button class="puzzle-btn" data-dial="${i}" data-dir="up">▲</button>
+            <div class="puzzle-cell" id="dial-${i}" style="width:50px;height:50px;margin:5px auto">${levelState.dials[i]}</div>
+            <button class="puzzle-btn" data-dial="${i}" data-dir="down">▼</button>
+          </div>`;
+        }
+        html += '</div><br><button class="puzzle-btn" id="lock-submit">UNLOCK</button>';
+        html += '<p style="color:#666;margin-top:10px;font-size:0.8em">Hint: Check the room for clues</p>';
+
+        openPuzzle('Combination Lock', 'Set the correct 4-digit combination.', html, () => {
+          document.querySelectorAll('[data-dial]').forEach(btn => {
+            btn.addEventListener('click', () => {
+              const d = parseInt(btn.dataset.dial);
+              const dir = btn.dataset.dir;
+              levelState.dials[d] = (levelState.dials[d] + (dir === 'up' ? 1 : 9)) % 10;
+              document.getElementById('dial-' + d).textContent = levelState.dials[d];
+            });
+          });
+          document.getElementById('lock-submit').addEventListener('click', () => {
+            const code = levelState.dials.join('');
+            if (code === '3815') { puzzleSolved(); }
+            else { showMessage('Wrong combination!'); }
+          });
+        });
+      }
+    }
+  });
+
+  // Clues scattered around
+  makeBox(-4.5, 1.5, 2, 0.6, 0.4, 0.05, 0x222222, {
+    userData: { interactable: true, onInteract: () => showMessage("Note: 'The first digit is 3'") }
+  });
+  makeBox(4.5, 1.5, -1, 0.05, 0.4, 0.6, 0x222222, {
+    userData: { interactable: true, onInteract: () => showMessage("Note: 'Second is 8, last is 5'") }
+  });
+  makeBox(0, 0.05, 0, 0.5, 0.05, 0.5, 0x222222, {
+    userData: { interactable: true, onInteract: () => showMessage("Floor tile: 'Third digit is 1'") }
+  });
+
+  makeBox(-3, 0.5, -3, 1, 1, 1, 0x443322);
+  makeBox(3, 0.75, 2, 0.8, 1.5, 0.8, 0x554433);
+  levelState.roomW = 10; levelState.roomD = 10;
+};
+levelHints[14] = "Find 3 notes in the room. The combination is 3-8-1-5.";
+
+// --- LEVEL 15: Light Beam Puzzle ---
+levelDefs[15] = function() {
+  makeRoom(12, 4, 12, '#0a0a1a', '#050510', '#030308');
+  addLight('ambient', 0x101020, 0.15);
+  addLight('point', 0x4444ff, 0.3, 0, 3.5, 0);
+
+  makeDoor(0, 0, -5.92, 0);
+  camera.position.set(0, 1.6, 5); yaw = Math.PI; pitch = 0;
+
+  // 5 mirrors to rotate
+  levelState.mirrors = [0, 0, 0, 0, 0]; // rotation states (0-3 = N,E,S,W)
+  const target = [1, 2, 3, 0, 1]; // target rotations
+
+  const mirrorPositions = [[-4, 1, -4], [-2, 1, 0], [0, 1, -2], [2, 1, 2], [4, 1, -1]];
+  const mirrorMeshes = [];
+
+  mirrorPositions.forEach((pos, i) => {
+    const mirror = makeBox(pos[0], pos[1], pos[2], 0.6, 0.8, 0.1, 0x88aaff, {
+      metalness: 0.9, roughness: 0.1,
+      emissive: 0x2244ff, emissiveIntensity: 0.2,
+      userData: {
+        interactable: true,
+        mirrorIndex: i,
+        onInteract: (obj) => {
+          levelState.mirrors[i] = (levelState.mirrors[i] + 1) % 4;
+          obj.rotation.y = levelState.mirrors[i] * Math.PI / 2;
+          const dirs = ['North', 'East', 'South', 'West'];
+          showMessage(`Mirror ${i+1} facing ${dirs[levelState.mirrors[i]]}`);
+
+          // Check solution
+          if (levelState.mirrors.every((m, idx) => m === target[idx])) {
+            showMessage('Light beam connected! Door unlocked!');
+            levelState.door.userData.locked = false;
+            levelState.door.children[1].material.emissive.setHex(0x00ff00);
+            addLight('point', 0x00ffff, 1, 0, 2, 0);
+          }
+        }
+      }
+    });
+    mirrorMeshes.push(mirror);
+  });
+
+  // Light source
+  makeSphere(-5.5, 1, -5.5, 0.2, 0xffffff, { emissive: 0xffffff, emissiveIntensity: 1 });
+  // Target
+  makeSphere(5.5, 1, -5.5, 0.2, 0xff0000, { emissive: 0xff0000, emissiveIntensity: 0.5 });
+
+  // Clue
+  makeBox(0, 0.05, 4, 1, 0.05, 0.5, 0x6688cc, {
+    emissive: 0x4466aa, emissiveIntensity: 0.4,
+    userData: { interactable: true, onInteract: () => showMessage("Floor plan: mirrors should face E, S, W, N, E") }
+  });
+
+  levelState.roomW = 12; levelState.roomD = 12;
+};
+levelHints[15] = "Rotate each mirror by clicking. Target directions: E, S, W, N, E. Check the floor plan note.";
+
+// --- LEVEL 16: Multi-step Key Chain ---
+levelDefs[16] = function() {
+  makeRoom(14, 4, 14, '#1a0a0a', '#100505', '#080303');
+  addLight('ambient', 0x301010, 0.2);
+  addLight('point', 0xff2222, 0.5, 0, 3.5, 0);
+  addLight('point', 0xff8800, 0.3, -5, 2, -5);
+  addLight('point', 0xff0044, 0.3, 5, 2, 5);
+
+  makeDoor(0, 0, -6.92, 0);
+  camera.position.set(0, 1.6, 6); yaw = Math.PI; pitch = 0;
+
+  // Locked chest chain: key1 → chest1 → key2 → chest2 → key3 → door
+  makePickup(-6, 0.5, 5, '🔑', 'rkey1', 'Iron Key', 0xaaaaaa);
+
+  // Chest 1
+  makeBox(-5, 0.5, -4, 1, 1, 0.8, 0x664422, {
+    emissive: 0xff4400, emissiveIntensity: 0.1,
+    userData: {
+      interactable: true,
+      requiresItem: 'rkey1',
+      onInteract: (obj) => {
+        if (obj.userData.opened) { showMessage('Already opened.'); return; }
+        if (hasItem('rkey1')) {
+          removeItem('rkey1');
+          obj.userData.opened = true;
+          obj.material.emissive.setHex(0x00ff00);
+          showMessage('Chest opened! Found a Gold Key!');
+          makePickup(-5, 1.3, -4, '🗝️', 'rkey2', 'Gold Key', 0xffcc00);
+        } else { showMessage('This chest needs a key...'); }
+      }
+    }
+  });
+
+  // Chest 2
+  makeBox(5, 0.5, 0, 1, 1, 0.8, 0x664422, {
+    emissive: 0xff4400, emissiveIntensity: 0.1,
+    userData: {
+      interactable: true,
+      onInteract: (obj) => {
+        if (obj.userData.opened) { showMessage('Already opened.'); return; }
+        if (hasItem('rkey2')) {
+          removeItem('rkey2');
+          obj.userData.opened = true;
+          obj.material.emissive.setHex(0x00ff00);
+          showMessage('Chest opened! Found the Master Key!');
+          makePickup(5, 1.3, 0, '🔐', 'rkey3', 'Master Key', 0xff00ff);
+        } else { showMessage('This chest needs a special key...'); }
+      }
+    }
+  });
+
+  // Safe puzzle before final door
+  levelState.door.userData.onInteract = (obj) => {
+    if (obj.userData.locked) {
+      if (hasItem('rkey3')) {
+        removeItem('rkey3');
+        obj.userData.locked = false;
+        obj.children[1].material.emissive.setHex(0x00ff00);
+        showMessage('Door unlocked!');
+      } else { showMessage('This door requires the Master Key.'); }
+    } else { completeLevel(); }
+  };
+
+  // Walls / obstacles
+  makeBox(-2, 2, 0, 0.2, 4, 8, 0x444444);
+  makeBox(2, 2, 0, 0.2, 4, 4, 0x444444);
+
+  makeBox(0, 0.3, 4, 2, 0.6, 1, 0x442222);
+  levelState.roomW = 14; levelState.roomD = 14;
+};
+levelHints[16] = "Find the Iron Key, open chest 1 for Gold Key, open chest 2 for Master Key, then use on door.";
+
+// --- LEVEL 17: Decryption Puzzle ---
+levelDefs[17] = function() {
+  makeRoom(10, 4, 10, '#0a1a0a', '#050f05', '#030803');
+  addLight('ambient', 0x103010, 0.25);
+  addLight('point', 0x00ff44, 0.7, 0, 3.5, 0);
+
+  makeDoor(0, 0, -4.92, 0);
+  camera.position.set(0, 1.6, 4); yaw = Math.PI; pitch = 0;
+
+  // Caesar cipher puzzle
+  const shift = 3;
+  const answer = "ESCAPE";
+  const encrypted = answer.split('').map(c =>
+    String.fromCharCode(((c.charCodeAt(0) - 65 + shift) % 26) + 65)
+  ).join('');
+
+  makeBox(0, 1.8, -4.5, 2, 1, 0.1, 0x113311, {
+    emissive: 0x00aa22, emissiveIntensity: 0.15,
+    userData: {
+      interactable: true,
+      onInteract: () => {
+        openPuzzle('Decryption Terminal', `Encrypted message: "${encrypted}" | Cipher: Caesar, shift ${shift}`,
+          `<p style="color:#00ff44;font-size:1.3em;font-family:monospace">${encrypted}</p>
+           <p style="color:#666">Each letter shifted +${shift} positions. Decrypt it.</p>
+           <input class="puzzle-input" id="decrypt-input" autofocus placeholder="ANSWER">
+           <br><button class="puzzle-btn" id="decrypt-submit">DECRYPT</button>`,
+          () => {
+            document.getElementById('decrypt-submit').addEventListener('click', () => {
+              const val = document.getElementById('decrypt-input').value.trim().toUpperCase();
+              if (val === answer) { puzzleSolved(); }
+              else { showMessage('Decryption failed. Shift each letter back by ' + shift + '.'); }
+            });
+            document.getElementById('decrypt-input').addEventListener('keydown', e => {
+              if (e.key === 'Enter') document.getElementById('decrypt-submit').click();
+            });
+          });
+      }
+    }
+  });
+
+  // Computer terminal decor
+  makeBox(-3, 0.6, -3, 1, 1.2, 0.8, 0x113311);
+  makeBox(-3, 1.4, -3.2, 0.8, 0.6, 0.1, 0x00ff44, { emissive: 0x00ff44, emissiveIntensity: 0.3 });
+  makeBox(3, 0.4, 2, 1.2, 0.8, 0.8, 0x224422);
+  levelState.roomW = 10; levelState.roomD = 10;
+};
+levelHints[17] = "Caesar cipher: shift each letter back by 3. HVFDSH → ESCAPE.";
+
+// --- LEVEL 18: Multi-Puzzle Room ---
+levelDefs[18] = function() {
+  makeRoom(14, 4, 14, '#1a1020', '#100818', '#080510');
+  addLight('ambient', 0x201030, 0.2);
+  addLight('point', 0x8844ff, 0.5, 0, 3.5, 0);
+  addLight('point', 0xff4488, 0.3, -5, 2, -5);
+  addLight('point', 0x4488ff, 0.3, 5, 2, 5);
+
+  makeDoor(0, 0, -6.92, 0);
+  camera.position.set(0, 1.6, 6); yaw = Math.PI; pitch = 0;
+
+  levelState.puzzlesSolved = 0;
+  const totalPuzzles = 3;
+
+  function checkAllSolved() {
+    if (levelState.puzzlesSolved >= totalPuzzles) {
+      levelState.door.userData.locked = false;
+      levelState.door.children[1].material.emissive.setHex(0x00ff00);
+      showMessage('All puzzles complete! Door unlocked!');
+    }
+  }
+
+  // Puzzle 1: Pattern completion (what comes next: 2, 6, 18, 54, ?)
+  makeBox(-5, 1.5, -5, 1, 0.8, 0.1, 0x442244, {
+    emissive: 0x8800ff, emissiveIntensity: 0.2,
+    userData: {
+      interactable: true,
+      onInteract: () => {
+        if (levelState.p1done) { showMessage('Already solved!'); return; }
+        openPuzzle('Pattern', 'What comes next? 2, 6, 18, 54, ?',
+          `<input class="puzzle-input" id="pat-input" autofocus>
+           <br><button class="puzzle-btn" id="pat-submit">ANSWER</button>`,
+          () => {
+            document.getElementById('pat-submit').addEventListener('click', () => {
+              if (document.getElementById('pat-input').value.trim() === '162') {
+                levelState.p1done = true; levelState.puzzlesSolved++;
+                closePuzzleOverlay();
+                showMessage(`Pattern solved! (${levelState.puzzlesSolved}/${totalPuzzles})`);
+                checkAllSolved();
+              } else { showMessage('Wrong! Each number is multiplied by...'); }
+            });
+            document.getElementById('pat-input').addEventListener('keydown', e => {
+              if (e.key === 'Enter') document.getElementById('pat-submit').click();
+            });
+          });
+      }
+    }
+  });
+
+  // Puzzle 2: Anagram - "MOORED" → "ROOMED"
+  makeBox(5, 1.5, 0, 0.1, 0.8, 1, 0x224444, {
+    emissive: 0x0088ff, emissiveIntensity: 0.2,
+    userData: {
+      interactable: true,
+      onInteract: () => {
+        if (levelState.p2done) { showMessage('Already solved!'); return; }
+        openPuzzle('Anagram', 'Unscramble this word related to where you are: MOORED',
+          `<input class="puzzle-input" id="ana-input" autofocus>
+           <br><button class="puzzle-btn" id="ana-submit">ANSWER</button>`,
+          () => {
+            document.getElementById('ana-submit').addEventListener('click', () => {
+              const val = document.getElementById('ana-input').value.trim().toUpperCase();
+              if (val === 'ROOMED') {
+                levelState.p2done = true; levelState.puzzlesSolved++;
+                closePuzzleOverlay();
+                showMessage(`Anagram solved! (${levelState.puzzlesSolved}/${totalPuzzles})`);
+                checkAllSolved();
+              } else { showMessage('Not quite... think about where you are.'); }
+            });
+            document.getElementById('ana-input').addEventListener('keydown', e => {
+              if (e.key === 'Enter') document.getElementById('ana-submit').click();
+            });
+          });
+      }
+    }
+  });
+
+  // Puzzle 3: Toggle grid (5x5, make all green)
+  makeBox(0, 1.5, 5.5, 1.5, 1, 0.1, 0x444422, {
+    emissive: 0xaaaa00, emissiveIntensity: 0.2,
+    userData: {
+      interactable: true,
+      onInteract: () => {
+        if (levelState.p3done) { showMessage('Already solved!'); return; }
+        levelState.grid = Array(16).fill(false);
+        levelState.gridMoves = 0;
+        // Pre-toggle a pattern
+        [0, 1, 4, 5, 10, 11, 14, 15].forEach(i => levelState.grid[i] = true);
+
+        function getNeighbors(idx) {
+          const n = [idx];
+          if (idx % 4 > 0) n.push(idx - 1);
+          if (idx % 4 < 3) n.push(idx + 1);
+          if (idx >= 4) n.push(idx - 4);
+          if (idx < 12) n.push(idx + 4);
+          return n;
+        }
+
+        let html = '<div class="puzzle-grid" style="grid-template-columns:repeat(4,1fr)">';
+        for (let i = 0; i < 16; i++) {
+          html += `<div class="puzzle-cell ${levelState.grid[i] ? 'lit' : ''}" data-idx="${i}" style="width:64px;height:64px;font-size:1.2em">${levelState.grid[i] ? '●' : ''}</div>`;
+        }
+        html += '</div>';
+        html += '<p id="grid-status" style="color:#aaa;font-size:0.9em;margin:8px 0">Lit: 8 / 16 &nbsp; Moves: 0</p>';
+        html += '<p style="color:#666;font-size:0.8em;margin:4px 0">Click a cell to toggle it <b>and its neighbors</b>. Make all cells green.</p>';
+        html += '<button class="puzzle-btn" id="grid-reset" style="margin-top:6px;font-size:0.85em">↺ Reset Grid</button>';
+
+        openPuzzle('Light Grid', 'Toggle all cells to green (lit).', html, () => {
+          function updateStatus() {
+            const litCount = levelState.grid.filter(g => g).length;
+            const el = document.getElementById('grid-status');
+            if (el) el.innerHTML = `Lit: ${litCount} / 16 &nbsp; Moves: ${levelState.gridMoves}`;
+          }
+          function clearHighlights() {
+            document.querySelectorAll('.puzzle-cell').forEach(c => c.style.boxShadow = '');
+          }
+          function refreshCells() {
+            document.querySelectorAll('.puzzle-cell').forEach(c => {
+              const i = parseInt(c.dataset.idx);
+              if (levelState.grid[i]) { c.classList.add('lit'); c.textContent = '●'; }
+              else { c.classList.remove('lit'); c.textContent = ''; }
+            });
+          }
+
+          document.querySelectorAll('.puzzle-cell').forEach(cell => {
+            cell.addEventListener('mouseenter', () => {
+              clearHighlights();
+              const idx = parseInt(cell.dataset.idx);
+              getNeighbors(idx).forEach(t => {
+                const c = document.querySelector(`[data-idx="${t}"]`);
+                if (c) c.style.boxShadow = 'inset 0 0 12px rgba(0,255,170,0.5)';
+              });
+            });
+            cell.addEventListener('mouseleave', clearHighlights);
+
+            cell.addEventListener('click', () => {
+              const idx = parseInt(cell.dataset.idx);
+              const toToggle = getNeighbors(idx);
+              levelState.gridMoves++;
+
+              toToggle.forEach(t => {
+                levelState.grid[t] = !levelState.grid[t];
+                const c = document.querySelector(`[data-idx="${t}"]`);
+                if (levelState.grid[t]) { c.classList.add('lit'); c.textContent = '●'; }
+                else { c.classList.remove('lit'); c.textContent = ''; }
+              });
+
+              updateStatus();
+
+              if (levelState.grid.every(g => g)) {
+                levelState.p3done = true; levelState.puzzlesSolved++;
+                closePuzzleOverlay();
+                showMessage(`Grid solved in ${levelState.gridMoves} moves! (${levelState.puzzlesSolved}/${totalPuzzles})`);
+                checkAllSolved();
+              }
+            });
+          });
+
+          document.getElementById('grid-reset').addEventListener('click', () => {
+            levelState.grid = Array(16).fill(false);
+            [0, 1, 4, 5, 10, 11, 14, 15].forEach(i => levelState.grid[i] = true);
+            levelState.gridMoves = 0;
+            refreshCells();
+            updateStatus();
+          });
+        });
+      }
+    }
+  });
+
+  makeBox(-4, 0.5, 4, 1.5, 1, 1, 0x332244);
+  makeBox(4, 0.4, -4, 1, 0.8, 1, 0x443322);
+  levelState.roomW = 14; levelState.roomD = 14;
+};
+levelHints[18] = "3 puzzles: Pattern (×3 → 162), Anagram (MOORED → ROOMED), and a lights-out grid.";
+
+// --- LEVEL 19: The Gauntlet ---
+levelDefs[19] = function() {
+  makeRoom(16, 4, 16, '#1a0a0a', '#0f0505', '#080303');
+  addLight('ambient', 0x200808, 0.2);
+  addLight('point', 0xff0000, 0.4, 0, 3.5, 0);
+  addLight('point', 0xff4400, 0.3, -6, 2, -6);
+  addLight('point', 0xff0044, 0.3, 6, 2, 6);
+
+  makeDoor(0, 0, -7.92, 0);
+  camera.position.set(0, 1.6, 7); yaw = Math.PI; pitch = 0;
+
+  levelState.gauntletStage = 0;
+  const stages = 4;
+
+  function advanceGauntlet() {
+    levelState.gauntletStage++;
+    showMessage(`Stage ${levelState.gauntletStage}/${stages} complete!`);
+    if (levelState.gauntletStage >= stages) {
+      levelState.door.userData.locked = false;
+      levelState.door.children[1].material.emissive.setHex(0x00ff00);
+      showMessage('THE GAUNTLET IS COMPLETE! Door unlocked!');
+      addLight('point', 0x00ff00, 1, 0, 3, 0);
+    }
+  }
+
+  // Stage 1: Find hidden key
+  makePickup(-7, 0.3, -7, '🔑', 'gkey', 'Gauntlet Key', 0xff4444);
+  makeBox(-5, 0.5, -5, 1.5, 1, 1.5, 0x442222, {
+    userData: {
+      interactable: true,
+      onInteract: (obj) => {
+        if (levelState.gauntletStage > 0) { showMessage('Already done.'); return; }
+        if (hasItem('gkey')) {
+          removeItem('gkey');
+          obj.material.emissive.setHex(0x00ff00);
+          obj.material.emissiveIntensity = 0.3;
+          advanceGauntlet();
+        } else { showMessage('This chest needs a key. Search the corners!'); }
+      }
+    }
+  });
+
+  // Stage 2: Quick math
+  makeBox(5, 1.5, -5, 1, 0.8, 0.1, 0x332222, {
+    emissive: 0xff2200, emissiveIntensity: 0.2,
+    userData: {
+      interactable: true,
+      onInteract: () => {
+        if (levelState.gauntletStage !== 1) { showMessage(levelState.gauntletStage < 1 ? 'Complete stage 1 first!' : 'Already done.'); return; }
+        openPuzzle('Quick Math', '(17 × 23) - (15 × 15) = ?',
+          `<input class="puzzle-input" id="gm-input" autofocus>
+           <br><button class="puzzle-btn" id="gm-submit">ANSWER</button>`,
+          () => {
+            document.getElementById('gm-submit').addEventListener('click', () => {
+              if (document.getElementById('gm-input').value.trim() === '166') {
+                closePuzzleOverlay(); advanceGauntlet();
+              } else { showMessage('Wrong!'); }
+            });
+            document.getElementById('gm-input').addEventListener('keydown', e => {
+              if (e.key === 'Enter') document.getElementById('gm-submit').click();
+            });
+          });
+      }
+    }
+  });
+
+  // Stage 3: Color sequence
+  makeBox(-5, 1.5, 5, 1, 0.8, 0.1, 0x222233, {
+    emissive: 0x2222ff, emissiveIntensity: 0.2,
+    userData: {
+      interactable: true,
+      onInteract: () => {
+        if (levelState.gauntletStage !== 2) { showMessage(levelState.gauntletStage < 2 ? 'Complete previous stages first!' : 'Already done.'); return; }
+        const seq = ['Red', 'Blue', 'Green', 'Red', 'Yellow'];
+        levelState.colorSeqIdx = 0;
+        const colors = { 'Red': '#ff4444', 'Blue': '#4444ff', 'Green': '#44ff44', 'Yellow': '#ffff44' };
+
+        let html = `<p style="color:#aaa">Repeat: <span style="color:${colors[seq[0]]}">${seq[0]}</span>, ` +
+          `<span style="color:${colors[seq[1]]}">${seq[1]}</span>, ` +
+          `<span style="color:${colors[seq[2]]}">${seq[2]}</span>, ` +
+          `<span style="color:${colors[seq[3]]}">${seq[3]}</span>, ` +
+          `<span style="color:${colors[seq[4]]}">${seq[4]}</span></p>`;
+        html += '<div style="margin-top:15px">';
+        ['Red', 'Blue', 'Green', 'Yellow'].forEach(c => {
+          html += `<button class="puzzle-btn" data-color="${c}" style="background:${colors[c]};color:#000;font-weight:bold">${c}</button>`;
+        });
+        html += '</div><p id="seq-prog" style="color:#888;margin-top:10px">0/5</p>';
+
+        openPuzzle('Color Sequence', 'Click the colors in the correct order.', html, () => {
+          document.querySelectorAll('[data-color]').forEach(btn => {
+            btn.addEventListener('click', () => {
+              if (btn.dataset.color === seq[levelState.colorSeqIdx]) {
+                levelState.colorSeqIdx++;
+                document.getElementById('seq-prog').textContent = `${levelState.colorSeqIdx}/5`;
+                if (levelState.colorSeqIdx >= 5) {
+                  closePuzzleOverlay(); advanceGauntlet();
+                }
+              } else {
+                levelState.colorSeqIdx = 0;
+                document.getElementById('seq-prog').textContent = 'Wrong! 0/5';
+                document.getElementById('seq-prog').style.color = '#ff4444';
+              }
+            });
+          });
+        });
+      }
+    }
+  });
+
+  // Stage 4: Word puzzle
+  makeBox(5, 1.5, 5, 1, 0.8, 0.1, 0x223322, {
+    emissive: 0x22ff22, emissiveIntensity: 0.2,
+    userData: {
+      interactable: true,
+      onInteract: () => {
+        if (levelState.gauntletStage !== 3) { showMessage(levelState.gauntletStage < 3 ? 'Complete previous stages first!' : 'Already done.'); return; }
+        openPuzzle('Final Word', 'I am always in front of you but can never be seen. What am I?',
+          `<input class="puzzle-input" id="fw-input" autofocus>
+           <br><button class="puzzle-btn" id="fw-submit">ANSWER</button>`,
+          () => {
+            document.getElementById('fw-submit').addEventListener('click', () => {
+              const val = document.getElementById('fw-input').value.trim().toLowerCase();
+              if (val === 'future' || val === 'the future') {
+                closePuzzleOverlay(); advanceGauntlet();
+              } else { showMessage('Think about time...'); }
+            });
+            document.getElementById('fw-input').addEventListener('keydown', e => {
+              if (e.key === 'Enter') document.getElementById('fw-submit').click();
+            });
+          });
+      }
+    }
+  });
+
+  // Maze walls
+  makeBox(0, 2, -3, 10, 4, 0.2, 0x333333);
+  makeBox(-3, 2, 2, 0.2, 4, 8, 0x333333);
+  makeBox(3, 2, 3, 0.2, 4, 6, 0x333333);
+
+  levelState.roomW = 16; levelState.roomD = 16;
+};
+levelHints[19] = "4 stages in order: find key→chest, math (391-225=166), color sequence, riddle (future).";
+
+// --- LEVEL 20: THE FINAL ROOM ---
+levelDefs[20] = function() {
+  makeRoom(16, 5, 16, '#0a0a0a', '#050505', '#020202');
+  addLight('ambient', 0x111111, 0.15);
+  addLight('point', 0xff0000, 0.3, -6, 4, -6);
+  addLight('point', 0x0000ff, 0.3, 6, 4, 6);
+  addLight('point', 0x00ff00, 0.3, -6, 4, 6);
+  addLight('point', 0xff00ff, 0.3, 6, 4, -6);
+
+  makeDoor(0, 0, -7.92, 0);
+  camera.position.set(0, 1.6, 7); yaw = Math.PI; pitch = 0;
+
+  levelState.finalStages = 0;
+  const totalStages = 5;
+
+  function checkFinal() {
+    levelState.finalStages++;
+    showMessage(`${levelState.finalStages}/${totalStages} locks opened!`);
+    if (levelState.finalStages >= totalStages) {
+      levelState.door.userData.locked = false;
+      levelState.door.children[1].material.emissive.setHex(0x00ff00);
+      showMessage('ALL LOCKS OPEN! YOU CAN ESCAPE!');
+      addLight('point', 0xffd700, 2, 0, 4, 0);
+    }
+  }
+
+  // Lock 1: Reverse word
+  makeBox(-7, 1.5, -4, 0.1, 1, 1, 0x442222, {
+    emissive: 0xff0000, emissiveIntensity: 0.3,
+    userData: {
+      interactable: true,
+      onInteract: () => {
+        if (levelState.f1) { showMessage('Solved!'); return; }
+        openPuzzle('Lock 1: Reversal', 'What is "DESSERTS" spelled backwards?',
+          `<input class="puzzle-input" id="f1-input" autofocus>
+           <br><button class="puzzle-btn" id="f1-submit">ANSWER</button>`,
+          () => {
+            document.getElementById('f1-submit').addEventListener('click', () => {
+              if (document.getElementById('f1-input').value.trim().toLowerCase() === 'stressed') {
+                levelState.f1 = true; closePuzzleOverlay(); checkFinal();
+              } else { showMessage('Wrong!'); }
+            });
+            document.getElementById('f1-input').addEventListener('keydown', e => {
+              if (e.key === 'Enter') document.getElementById('f1-submit').click();
+            });
+          });
+      }
+    }
+  });
+
+  // Lock 2: Binary code
+  makeBox(7, 1.5, 0, 0.1, 1, 1, 0x222244, {
+    emissive: 0x0000ff, emissiveIntensity: 0.3,
+    userData: {
+      interactable: true,
+      onInteract: () => {
+        if (levelState.f2) { showMessage('Solved!'); return; }
+        openPuzzle('Lock 2: Binary', 'Convert binary 01000010 to decimal.',
+          `<input class="puzzle-input" id="f2-input" autofocus>
+           <br><button class="puzzle-btn" id="f2-submit">ANSWER</button>`,
+          () => {
+            document.getElementById('f2-submit').addEventListener('click', () => {
+              if (document.getElementById('f2-input').value.trim() === '66') {
+                levelState.f2 = true; closePuzzleOverlay(); checkFinal();
+              } else { showMessage('Wrong! Convert 01000010 from binary.'); }
+            });
+            document.getElementById('f2-input').addEventListener('keydown', e => {
+              if (e.key === 'Enter') document.getElementById('f2-submit').click();
+            });
+          });
+      }
+    }
+  });
+
+  // Lock 3: Symbol sequence puzzle
+  makeBox(0, 1.5, 7, 1, 1, 0.1, 0x224422, {
+    emissive: 0x00ff00, emissiveIntensity: 0.3,
+    userData: {
+      interactable: true,
+      onInteract: () => {
+        if (levelState.f3) { showMessage('Solved!'); return; }
+        levelState.symSeq = [];
+        const target = [2, 0, 3, 1, 2]; // target click order
+        const syms = ['◆', '●', '▲', '■'];
+
+        let html = '<p style="color:#aaa">Enter: ▲ ◆ ■ ● ▲</p><div style="margin:15px 0">';
+        syms.forEach((s, i) => {
+          html += `<button class="puzzle-btn" data-si="${i}" style="font-size:1.5em;width:60px;height:60px">${s}</button>`;
+        });
+        html += '</div><p id="sym-prog" style="color:#888">0/5</p>';
+
+        openPuzzle('Lock 3: Symbols', 'Enter the symbol sequence shown above.', html, () => {
+          document.querySelectorAll('[data-si]').forEach(btn => {
+            btn.addEventListener('click', () => {
+              const si = parseInt(btn.dataset.si);
+              levelState.symSeq.push(si);
+              const pos = levelState.symSeq.length - 1;
+              if (target[pos] !== si) {
+                levelState.symSeq = [];
+                document.getElementById('sym-prog').textContent = 'Wrong! 0/5';
+                document.getElementById('sym-prog').style.color = '#ff4444';
+              } else {
+                document.getElementById('sym-prog').textContent = `${levelState.symSeq.length}/5`;
+                document.getElementById('sym-prog').style.color = '#00ff44';
+                if (levelState.symSeq.length >= 5) {
+                  levelState.f3 = true; closePuzzleOverlay(); checkFinal();
+                }
+              }
+            });
+          });
+        });
+      }
+    }
+  });
+
+  // Lock 4: Math chain
+  makeBox(-7, 1.5, 4, 0.1, 1, 1, 0x442244, {
+    emissive: 0xff00ff, emissiveIntensity: 0.3,
+    userData: {
+      interactable: true,
+      onInteract: () => {
+        if (levelState.f4) { showMessage('Solved!'); return; }
+        openPuzzle('Lock 4: Chain', '((8 × 7) + 13) × 2 - 17 = ?',
+          `<input class="puzzle-input" id="f4-input" autofocus>
+           <br><button class="puzzle-btn" id="f4-submit">ANSWER</button>`,
+          () => {
+            document.getElementById('f4-submit').addEventListener('click', () => {
+              // (56 + 13) * 2 - 17 = 69 * 2 - 17 = 138 - 17 = 121
+              if (document.getElementById('f4-input').value.trim() === '121') {
+                levelState.f4 = true; closePuzzleOverlay(); checkFinal();
+              } else { showMessage('Wrong! Follow order of operations.'); }
+            });
+            document.getElementById('f4-input').addEventListener('keydown', e => {
+              if (e.key === 'Enter') document.getElementById('f4-submit').click();
+            });
+          });
+      }
+    }
+  });
+
+  // Lock 5: Hidden key + final code
+  makePickup(6, 0.3, -6, '🔑', 'finalkey', 'Final Key', 0xffd700);
+
+  makeBox(0, 1.5, -7.3, 1.5, 1, 0.1, 0x444400, {
+    emissive: 0xffcc00, emissiveIntensity: 0.3,
+    userData: {
+      interactable: true,
+      onInteract: () => {
+        if (levelState.f5) { showMessage('Solved!'); return; }
+        if (!hasItem('finalkey')) {
+          showMessage('This lock requires a special key. Search the room!');
+          return;
+        }
+        removeItem('finalkey');
+        levelState.f5 = true;
+        checkFinal();
+        showMessage('Final lock opened with key!');
+      }
+    }
+  });
+
+  // Maze walls for complexity
+  makeBox(-3, 2.5, -3, 0.2, 5, 10, 0x222222);
+  makeBox(3, 2.5, 3, 0.2, 5, 10, 0x222222);
+  makeBox(0, 2.5, 0, 8, 5, 0.2, 0x222222);
+
+  // Decorative elements
+  for (let i = 0; i < 8; i++) {
+    const angle = (i / 8) * Math.PI * 2;
+    const r = 6;
+    makeCylinder(Math.cos(angle) * r, 2.5, Math.sin(angle) * r, 0.15, 0.15, 5, 0x333333);
+  }
+
+  levelState.roomW = 16; levelState.roomD = 16;
+};
+levelHints[20] = "5 locks: reverse DESSERTS, binary 01000010=66, symbol sequence, math=121, find golden key.";
+
+// ============================================================
+// LOAD LEVEL
+// ============================================================
+function loadLevel(n) {
+  clearScene();
+  currentLevel = n;
+  levelDisplay.textContent = `Level ${n} / 20`;
+  camera.position.set(0, 1.6, 0);
+  yaw = Math.PI; pitch = 0;
+
+  if (levelDefs[n]) levelDefs[n]();
+
+  startTimer();
+  showMessage(`Level ${n}: ${getLevelName(n)}`, 3000);
+}
+
+function getLevelName(n) {
+  const names = {
+    1: "Find the Key", 2: "Code Lock", 3: "Light Switches",
+    4: "Memory Sequence", 5: "Color Match", 6: "Pressure Plates",
+    7: "Slider Puzzle", 8: "Dark Room", 9: "Wire Matching",
+    10: "Math Challenge", 11: "Simon Says", 12: "Riddle Room",
+    13: "Button Maze", 14: "Combination Lock", 15: "Light Beams",
+    16: "Key Chain", 17: "Decryption", 18: "Multi-Puzzle",
+    19: "The Gauntlet", 20: "THE FINAL ROOM"
+  };
+  return names[n] || "Unknown";
+}
+
+function showHint() {
+  if (levelHints[currentLevel]) {
+    showMessage('HINT: ' + levelHints[currentLevel], 5000);
+  }
+}
+
+// ============================================================
+// ANIMATION LOOP
+// ============================================================
+function animate() {
+  requestAnimationFrame(animate);
+  const delta = clock.getDelta();
+  const time = clock.getElapsedTime();
+
+  if (isLocked && !puzzleActive) {
+    // Movement
+    velocity.x -= velocity.x * 10.0 * delta;
+    velocity.z -= velocity.z * 10.0 * delta;
+
+    direction.z = Number(moveForward) - Number(moveBackward);
+    direction.x = Number(moveRight) - Number(moveLeft);
+    direction.normalize();
+
+    const speed = 5;
+    if (moveForward || moveBackward) velocity.z -= direction.z * speed * delta;
+    if (moveLeft || moveRight) velocity.x -= direction.x * speed * delta;
+
+    // Apply movement relative to camera direction
+    const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+    forward.y = 0; forward.normalize();
+    const right = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion);
+    right.y = 0; right.normalize();
+
+    camera.position.add(forward.multiplyScalar(-velocity.z));
+    camera.position.add(right.multiplyScalar(-velocity.x));
+    camera.position.y = 1.6;
+
+    // Room collision
+    if (levelState.roomW) {
+      collideWalls(camera.position, levelState.roomW, levelState.roomD, 0.5);
+    }
+  }
+
+  // Animate floating pickups
+  scene.children.forEach(obj => {
+    if (obj.userData && obj.userData.animate) {
+      obj.userData.animate(time);
+    }
+  });
+
+  // Level 8 flashlight follow
+  if (currentLevel === 8) {
+    if (levelState.checkFlashlight) levelState.checkFlashlight();
+    if (levelState.flashlight) {
+      levelState.flashlight.position.copy(camera.position);
+    }
+  }
+
+  renderer.render(scene, camera);
+}
+
+// --- START ---
+init();
+</script>
+</body>
+</html>

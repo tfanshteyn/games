@@ -126,6 +126,15 @@
       <span class="tag" style="background:#cc222222;color:#cc2222;">Arena Brawler</span>
     </div>
   </a>
+
+  <a class="game-card" href="escape-room/index.html" style="--glow:rgba(0,255,170,0.25);--accent:#00ffaa;">
+    <canvas id="escapeRoomThumb" width="680" height="400"></canvas>
+    <div class="game-info">
+      <h2>Escape Room 3D</h2>
+      <p>Explore mysterious rooms, solve puzzles, find keys and codes to escape through 20 increasingly devious levels!</p>
+      <span class="tag" style="background:#00ffaa22;color:#00ffaa;">3D Puzzle</span>
+    </div>
+  </a>
 </div>
 
 <script>
@@ -831,6 +840,151 @@
   ctx.fillStyle = '#c8a060';
   ctx.font = '14px sans-serif';
   ctx.fillText('Feudal Arena Brawler', W/2, 78);
+})();
+
+// Draw Escape Room 3D thumbnail
+(function() {
+  const c = document.getElementById('escapeRoomThumb');
+  const ctx = c.getContext('2d');
+  const W = c.width, H = c.height;
+
+  // Dark room background
+  const bg = ctx.createRadialGradient(W/2, H/2, 20, W/2, H/2, 350);
+  bg.addColorStop(0, '#1a2a2a');
+  bg.addColorStop(1, '#050a0a');
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, W, H);
+
+  // Floor in perspective
+  ctx.fillStyle = '#0d1a1a';
+  ctx.beginPath();
+  ctx.moveTo(0, H);
+  ctx.lineTo(W, H);
+  ctx.lineTo(W * 0.75, H * 0.55);
+  ctx.lineTo(W * 0.25, H * 0.55);
+  ctx.fill();
+
+  // Floor grid lines
+  ctx.strokeStyle = '#00ffaa15';
+  ctx.lineWidth = 1;
+  for (let i = 0; i < 8; i++) {
+    const y = H * 0.55 + i * (H * 0.45 / 8);
+    const spread = (y - H * 0.55) / (H * 0.45);
+    const lx = W * 0.25 - spread * W * 0.25;
+    const rx = W * 0.75 + spread * W * 0.25;
+    ctx.beginPath(); ctx.moveTo(lx, y); ctx.lineTo(rx, y); ctx.stroke();
+  }
+  for (let i = 0; i < 6; i++) {
+    const t = i / 5;
+    const topX = W * 0.25 + t * W * 0.5;
+    const botX = t * W;
+    ctx.beginPath(); ctx.moveTo(topX, H * 0.55); ctx.lineTo(botX, H); ctx.stroke();
+  }
+
+  // Back wall
+  ctx.fillStyle = '#111d1d';
+  ctx.fillRect(W * 0.25, H * 0.1, W * 0.5, H * 0.45);
+  ctx.strokeStyle = '#00ffaa20';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(W * 0.25, H * 0.1, W * 0.5, H * 0.45);
+
+  // Door on back wall
+  ctx.fillStyle = '#0a1515';
+  ctx.fillRect(W * 0.44, H * 0.2, W * 0.12, H * 0.35);
+  ctx.strokeStyle = '#00ffaa40';
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(W * 0.44, H * 0.2, W * 0.12, H * 0.35);
+  // Door handle
+  ctx.fillStyle = '#00ffaa';
+  ctx.beginPath();
+  ctx.arc(W * 0.44 + W * 0.1, H * 0.38, 3, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Glowing lock on door
+  ctx.shadowColor = '#00ffaa';
+  ctx.shadowBlur = 15;
+  ctx.fillStyle = '#00ffaa';
+  ctx.fillRect(W * 0.485, H * 0.34, 12, 14);
+  ctx.fillStyle = '#0a1515';
+  ctx.beginPath();
+  ctx.arc(W * 0.485 + 6, H * 0.34 + 5, 3, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillRect(W * 0.485 + 5, H * 0.34 + 5, 2, 6);
+  ctx.shadowBlur = 0;
+
+  // Key floating on the right side
+  ctx.save();
+  ctx.translate(520, 260);
+  ctx.rotate(-0.3);
+  ctx.shadowColor = '#ffdd44';
+  ctx.shadowBlur = 12;
+  ctx.fillStyle = '#ffdd44';
+  // Key head (circle)
+  ctx.beginPath(); ctx.arc(0, 0, 8, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#0a1515';
+  ctx.beginPath(); ctx.arc(0, 0, 4, 0, Math.PI * 2); ctx.fill();
+  // Key shaft
+  ctx.fillStyle = '#ffdd44';
+  ctx.fillRect(6, -2, 18, 4);
+  // Key teeth
+  ctx.fillRect(18, 2, 3, 5);
+  ctx.fillRect(22, 2, 3, 5);
+  ctx.shadowBlur = 0;
+  ctx.restore();
+
+  // Puzzle code panel on left wall
+  ctx.fillStyle = '#0a1212';
+  ctx.fillRect(160, 200, 60, 80);
+  ctx.strokeStyle = '#00ffaa55';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(160, 200, 60, 80);
+  // Code digits
+  ctx.fillStyle = '#00ffaa';
+  ctx.font = 'bold 16px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('4  7  2', 190, 235);
+  // Keypad dots
+  for (let r = 0; r < 3; r++) {
+    for (let col = 0; col < 3; col++) {
+      ctx.fillStyle = '#00ffaa44';
+      ctx.beginPath();
+      ctx.arc(172 + col * 18, 252 + r * 14, 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  // Mysterious light rays from ceiling
+  ctx.globalAlpha = 0.06;
+  ctx.fillStyle = '#00ffaa';
+  ctx.beginPath();
+  ctx.moveTo(W * 0.48, 0);
+  ctx.lineTo(W * 0.35, H * 0.7);
+  ctx.lineTo(W * 0.65, H * 0.7);
+  ctx.lineTo(W * 0.52, 0);
+  ctx.fill();
+  ctx.globalAlpha = 1;
+
+  // Floating particles
+  ctx.shadowColor = '#00ffaa'; ctx.shadowBlur = 6;
+  for (let i = 0; i < 15; i++) {
+    ctx.fillStyle = `rgba(0,255,170,${0.2 + Math.random() * 0.5})`;
+    ctx.beginPath();
+    ctx.arc(100 + Math.random() * (W - 200), 80 + Math.random() * (H - 160), 1 + Math.random() * 2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.shadowBlur = 0;
+
+  // Title
+  ctx.shadowColor = '#00ffaa'; ctx.shadowBlur = 30;
+  ctx.fillStyle = '#00ffaa';
+  ctx.font = 'bold 38px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('ESCAPE ROOM', W/2, 55);
+  ctx.shadowBlur = 0;
+
+  ctx.fillStyle = '#88ccaa';
+  ctx.font = '14px sans-serif';
+  ctx.fillText('20 Rooms \u2022 Find the Way Out', W/2, 78);
 })();
 </script>
 
