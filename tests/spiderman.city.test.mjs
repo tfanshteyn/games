@@ -13,6 +13,16 @@ test('SpatialGrid returns boxes overlapping the query and nothing else', () => {
   assert.deepEqual(g.query({ x: 100, y: 0, z: 100 }, { x: 101, y: 1, z: 101 }), []);
 });
 
+test('SpatialGrid returns a box spanning several cells exactly once', () => {
+  const g = new SpatialGrid(50, 300);
+  const wide = { id: 7, min: { x: -60, y: 0, z: -60 }, max: { x: 60, y: 20, z: 60 } }; // covers 3×3 cells
+  g.insert(wide);
+  const hits = g.query({ x: -100, y: 0, z: -100 }, { x: 100, y: 5, z: 100 });
+  assert.deepEqual(hits.map(h => h.id), [7]);
+  // y-range exclusion: same XZ footprint, query entirely above the box
+  assert.deepEqual(g.query({ x: -100, y: 30, z: -100 }, { x: 100, y: 40, z: 100 }), []);
+});
+
 test('generateCity is deterministic for a seed', () => {
   const a = generateCity(7), b = generateCity(7);
   assert.deepEqual(a.buildings, b.buildings);
