@@ -219,12 +219,16 @@ function resolveCollisions(pos, vel, grid) {
 // --- Ray vs AABBs (slab method); returns nearest hit ---
 function raycastAABBs(origin, dir, grid, maxDist) {
   const end = { x: origin.x + dir.x * maxDist, y: origin.y + dir.y * maxDist, z: origin.z + dir.z * maxDist };
-  const qmin = { x: Math.min(origin.x, end.x), y: Math.min(origin.y, end.y), z: Math.min(origin.z, end.z) };
-  const qmax = { x: Math.max(origin.x, end.x), y: Math.max(origin.y, end.y), z: Math.max(origin.z, end.z) };
+  const qmin = { x: Math.min(origin.x, end.x) - 1, y: Math.min(origin.y, end.y) - 1, z: Math.min(origin.z, end.z) - 1 };
+  const qmax = { x: Math.max(origin.x, end.x) + 1, y: Math.max(origin.y, end.y) + 1, z: Math.max(origin.z, end.z) + 1 };
   let best = null;
   for (const b of grid.query(qmin, qmax)) {
     let tmin = 0, tmax = maxDist, axis = -1, sign = 0;
     for (const k of ['x', 'y', 'z']) {
+      if (dir[k] === 0) {                                   // parallel to this slab: inside it or a certain miss
+        if (origin[k] < b.min[k] || origin[k] > b.max[k]) { tmin = Infinity; break; }
+        continue;
+      }
       const inv = 1 / dir[k];
       let t1 = (b.min[k] - origin[k]) * inv, t2 = (b.max[k] - origin[k]) * inv, s = -1;
       if (t1 > t2) { [t1, t2] = [t2, t1]; s = 1; }

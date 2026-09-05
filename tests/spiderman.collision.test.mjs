@@ -44,3 +44,15 @@ test('raycast hits nearest face with normal', () => {
   assert.equal(raycastAABBs({ x: -10, y: 10, z: 10 }, { x: -1, y: 0, z: 0 }, g, 200), null);
   assert.equal(raycastAABBs({ x: -10, y: 10, z: 10 }, { x: 1, y: 0, z: 0 }, g, 5), null, 'beyond maxDist');
 });
+
+test('raycast: zero direction component with origin on a face plane is not a false hit', () => {
+  const g = gridWith({ min: { x: 30, y: 0, z: 0 }, max: { x: 60, y: 40, z: 20 } });
+  // origin exactly at the box's max.y, outside its z-range → must miss
+  assert.equal(raycastAABBs({ x: 5, y: 40, z: 50 }, { x: 1, y: 0, z: 0 }, g, 200), null);
+  // same height, inside the z-range → grazes the top face plane; either a hit on the -X face at x=30 or null is acceptable, but never NaN
+  const h = raycastAABBs({ x: 5, y: 40, z: 10 }, { x: 1, y: 0, z: 0 }, g, 200);
+  if (h) { assert.ok(Number.isFinite(h.dist)); assert.ok(Math.abs(h.point.x - 30) < 1e-9); }
+  // origin exactly on min.y plane, level ray inside the footprint → hit the -X face
+  const h2 = raycastAABBs({ x: 5, y: 0, z: 10 }, { x: 1, y: 0, z: 0 }, g, 200);
+  assert.ok(h2 && Math.abs(h2.dist - 25) < 1e-9);
+});
