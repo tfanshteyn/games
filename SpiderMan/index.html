@@ -519,7 +519,63 @@ function stepHero(hero, input, dt, world) {
   return events;
 }
 
-const PURE = { CONFIG, mulberry32, V, yawDir, SpatialGrid, generateCity, resolveCollisions, raycastAABBs, findAnchor, createHero, makeInput, stepHero, moveDir };
+// --- Missions: a list of steps; one active at a time ---
+function createMission(def) {
+  return { id: def.id, title: def.title, steps: def.steps, current: 0, state: 'active', timer: 0 };
+}
+function currentStep(m) { return m.state === 'active' ? m.steps[m.current] || null : null; }
+function stepProgress(m, ctx) {
+  const s = currentStep(m); if (!s) return '';
+  switch (s.type) {
+    case 'collect': return `${s.tokenIds.filter(id => ctx.tokens[id]?.collected).length} / ${s.tokenIds.length}`;
+    case 'webUp': return `${s.thugIds.filter(id => ctx.thugs[id]?.webbed).length} / ${s.thugIds.length}`;
+    case 'chase': return `${Math.ceil(Math.max(0, s.duration - m.timer))}s`;
+    default: return '';
+  }
+}
+function advanceMission(m, events) {
+  events.push({ type: 'stepComplete', index: m.current });
+  m.current++; m.timer = 0;
+  if (m.current >= m.steps.length) { m.state = 'complete'; events.push({ type: 'missionComplete' }); }
+}
+function updateMission(m, ctx, dt) {
+  const events = [];
+  const s = currentStep(m); if (!s) return events;
+  const near = (p, r) => V.dist(ctx.heroPos, p) <= r;
+  switch (s.type) {
+    case 'reach':
+      if (near(s.target, s.radius)) advanceMission(m, events);
+      break;
+    case 'collect':
+      for (const id of s.tokenIds) {
+        const t = ctx.tokens[id];
+        if (t && !t.collected && near(t.pos, 2.5)) { t.collected = true; events.push({ type: 'tokenCollected', id }); }
+      }
+      if (s.tokenIds.every(id => ctx.tokens[id]?.collected)) advanceMission(m, events);
+      break;
+    case 'chase': {
+      const d = V.dist(ctx.heroPos, ctx.vanPos);
+      if (d > s.loseDist) { m.timer = 0; events.push({ type: 'chaseLost' }); }
+      else if (d <= s.maxDist) { m.timer += dt; if (m.timer >= s.duration) advanceMission(m, events); }
+      break;
+    }
+    case 'webUp':
+      if (ctx.webPressed) {
+        for (const id of s.thugIds) {
+          const t = ctx.thugs[id];
+          if (t && !t.webbed && near(t.pos, 5)) { t.webbed = true; events.push({ type: 'thugWebbed', id }); break; }
+        }
+      }
+      if (s.thugIds.every(id => ctx.thugs[id]?.webbed)) advanceMission(m, events);
+      break;
+    case 'interact':
+      if (ctx.interactPressed && near(s.target, s.radius)) advanceMission(m, events);
+      break;
+  }
+  return events;
+}
+
+const PURE = { CONFIG, mulberry32, V, yawDir, SpatialGrid, generateCity, resolveCollisions, raycastAABBs, findAnchor, createHero, makeInput, stepHero, moveDir, createMission, updateMission, currentStep, stepProgress };
 // ==== PURE END ====
 
 // (rendering, input, HUD, audio and main loop are added in later tasks)
