@@ -245,7 +245,56 @@ function raycastAABBs(origin, dir, grid, maxDist) {
   return best;
 }
 
-const PURE = { CONFIG, mulberry32, V, yawDir, SpatialGrid, generateCity, resolveCollisions, raycastAABBs };
+// 2D (XZ) test: does the hero's forward segment, padded by `pad`, cross this building's footprint?
+function pathBlocked(head, forward, b, pad, maxD) {
+  let tmin = 0, tmax = maxD;
+  for (const k of ['x', 'z']) {
+    const lo = b.min[k] - pad, hi = b.max[k] + pad;
+    if (forward[k] === 0) { if (head[k] < lo || head[k] > hi) return false; continue; }
+    const inv = 1 / forward[k];
+    let t1 = (lo - head[k]) * inv, t2 = (hi - head[k]) * inv;
+    if (t1 > t2) [t1, t2] = [t2, t1];
+    tmin = Math.max(tmin, t1); tmax = Math.min(tmax, t2);
+    if (tmin > tmax) return false;
+  }
+  return true;
+}
+
+// --- Auto-anchor: best roof edge/corner in a forward cone; sky fallback ---
+function findAnchor(pos, forward, grid) {
+  const head = { x: pos.x, y: pos.y + CONFIG.heroHeight, z: pos.z };
+  const maxD = CONFIG.anchorMaxDist, cosCone = Math.cos(CONFIG.anchorConeDeg * Math.PI / 180);
+  const qmin = { x: head.x - maxD, y: head.y + CONFIG.anchorMinAbove, z: head.z - maxD };
+  const qmax = { x: head.x + maxD, y: 1000, z: head.z + maxD };
+  let bestClear = null, bestClearScore = -Infinity, bestBlocked = null, bestBlockedScore = -Infinity;
+  for (const b of grid.query(qmin, qmax)) {
+    if (b.max.y < head.y + CONFIG.anchorMinAbove) continue;
+    const blocked = pathBlocked(head, forward, b, CONFIG.heroRadius + 1, maxD);
+    // candidate points: 4 roof corners + 4 roof edge midpoints
+    const xs = [b.min.x, b.max.x, (b.min.x + b.max.x) / 2], zs = [b.min.z, b.max.z, (b.min.z + b.max.z) / 2];
+    for (const x of xs) for (const z of zs) {
+      if (x === xs[2] && z === zs[2]) continue;               // skip roof centre
+      const c = { x, y: b.max.y, z };
+      const d = V.sub(c, head), dh = { x: d.x, y: 0, z: d.z };
+      const distH = V.len(dh), dist = V.len(d);
+      if (dist < CONFIG.anchorMinDist || dist > maxD || distH < 1e-6) continue;
+      const cosA = V.dot(dh, forward) / distH;
+      if (cosA < cosCone) continue;
+      // prefer forward-aligned, moderately high, mid-range anchors
+      const height = d.y / dist;                             // 0..1
+      const score = cosA * 2 + height * 1.5 - Math.abs(dist - 40) / 40;
+      if (!blocked) { if (score > bestClearScore) { bestClearScore = score; bestClear = { x, y: b.max.y, z, sky: false }; } }
+      else { if (score > bestBlockedScore) { bestBlockedScore = score; bestBlocked = { x, y: b.max.y, z, sky: false }; } }
+    }
+  }
+  if (bestClear) return bestClear;
+  if (bestBlocked) return bestBlocked;
+  if (pos.y >= 200) return null;
+  const s = 30;
+  return { x: head.x + forward.x * s, y: head.y + CONFIG.skyAnchorHeight, z: head.z + forward.z * s, sky: true };
+}
+
+const PURE = { CONFIG, mulberry32, V, yawDir, SpatialGrid, generateCity, resolveCollisions, raycastAABBs, findAnchor };
 // ==== PURE END ====
 
 // (rendering, input, HUD, audio and main loop are added in later tasks)
