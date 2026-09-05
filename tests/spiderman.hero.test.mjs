@@ -141,7 +141,7 @@ test('crawl: A/D moves along the wall; Space jumps away from it', () => {
   const w = world(wallB); const h = createHero({ x: 0, y: 0, z: 0 });
   const inp = makeInput(); inp.forward = 1; run(h, inp, w, 200); assert.equal(h.state, 'crawl');
   inp.forward = 0; inp.strafe = 1; const x0 = h.pos.x; run(h, inp, w, 60);
-  assert.ok(Math.abs(h.pos.x - x0) > 3, 'moved sideways');
+  assert.ok(h.pos.x - x0 > 3, 'D moved camera-right (+x)');
   assert.ok(Math.abs(h.pos.z - (-20 + CONFIG.heroRadius)) < 1e-6, 'still glued');
   inp.strafe = 0; inp.jump = true; const ev = run(h, inp, w, 1);
   assert.equal(h.state, 'air'); assert.equal(ev[0].type, 'wallJump'); assert.ok(h.vel.z > 0 && h.vel.y > 0);
@@ -164,4 +164,26 @@ test('zip: nothing in range → no state change', () => {
   const w = world(); const h = createHero({ x: 0, y: 0, z: 0 });
   const inp = makeInput(); inp.jump = true; run(h, inp, w, 2); inp.zip = true; run(h, inp, w, 1);
   assert.equal(h.state, 'air');
+});
+
+test('zip: top-face hit lands on the roof; mid-wall hit hands off to crawl', () => {
+  const b = { min: { x: -10, y: 0, z: -50 }, max: { x: 10, y: 60, z: -30 } };
+  const w = world(b);
+  // looking down onto the roof from high above
+  const h = createHero({ x: 0, y: 80, z: 0 }); h.state = 'air';
+  const inp = makeInput(); inp.camYaw = 0; inp.camPitch = Math.atan2(60 - 81.8, 40); inp.zip = true;
+  let ev = run(h, inp, w, 1);
+  assert.equal(ev[0].type, 'zipStart'); assert.deepEqual(h.zipNormal, { x: 0, y: 1, z: 0 });
+  ev = run(h, inp, w, 120);
+  assert.ok(ev.some(e => e.type === 'zipEnd')); assert.equal(h.state, 'ground');
+  assert.ok(Math.abs(h.pos.y - 60) < 1e-9 && Math.abs(h.pos.z + 40) < 1e-6, `landed at ${JSON.stringify(h.pos)}`);
+  // mid-wall hit, far below the roof → hang on the wall
+  const h2 = createHero({ x: 0, y: 5, z: 0 }); h2.state = 'air';
+  const inp2 = makeInput(); inp2.camPitch = Math.atan2(20 - 6.8, 30); inp2.zip = true;
+  ev = run(h2, inp2, w, 1);
+  assert.equal(ev[0].type, 'zipStart'); assert.deepEqual(h2.zipNormal, { x: 0, y: 0, z: 1 });
+  ev = run(h2, inp2, w, 120);
+  assert.ok(ev.some(e => e.type === 'zipEnd') && ev.some(e => e.type === 'crawlStart'), JSON.stringify(ev.map(e => e.type)));
+  assert.equal(h2.state, 'crawl'); assert.deepEqual(h2.wall.normal, { x: 0, y: 0, z: 1 });
+  assert.ok(Math.abs(h2.pos.z - (-30 + CONFIG.heroRadius)) < 1e-6, 'glued to the face');
 });
