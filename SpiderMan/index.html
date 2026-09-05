@@ -29,6 +29,13 @@
   <button id="startBtn">START PATROL</button>
 </div>
 
+<div id="pause" class="overlay hidden">
+  <h1>PAUSED</h1>
+  <p><kbd>W A S D</kbd> move · <kbd>Shift</kbd> sprint · <kbd>Space</kbd> jump (tap again on landing for a high jump) · hold <kbd>LMB</kbd> swing, release on the upswing · <kbd>E</kbd> zip to what you're looking at / interact · <kbd>Esc</kbd> pause</p>
+  <button id="resumeBtn">RESUME</button>
+  <button id="restartBtn">RESTART MISSION</button>
+</div>
+
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
 // ==== PURE BEGIN ====
@@ -138,7 +145,7 @@ function generateCity(seed = CONFIG.citySeed) {
     const bx = streetLine(ix) + CONFIG.streetW / 2, bz = streetLine(iz) + CONFIG.streetW / 2; // block min corner (5..45)
     const B = CONFIG.blockSize, m = 2;                                                     // 2 m margin from sidewalk
     if (ix === 6 && iz === 6) {                                                            // landmark: central spire
-      buildings.push(box(bx + 10, bz + 10, bx + B - 10, bz + B - 10, 130, 7, 'spire'));
+      buildings.push(box(bx + 10, bz + 10, bx + B - 10, bz + B - 10, 130, 5, 'spire'));
       continue;
     }
     if (ix === 6 && iz === 0) {                                                            // landmark: waterfront crane
@@ -673,7 +680,7 @@ function buildCityMeshes(c) {
 function mergeGeos(list) {
   // manual merge (BufferGeometryUtils is not in three.min.js)
   let total = 0; for (const g of list) total += g.index ? g.index.count : g.attributes.position.count;
-  const pos = new Float32Array(total * 3), nor = new Float32Array(total * 3); let off = 0; const idx = [];
+  const pos = new Float32Array(total * 3), nor = new Float32Array(total * 3); let off = 0;
   for (const g of list) {
     const ng = g.index ? g.toNonIndexed() : g;
     pos.set(ng.attributes.position.array, off * 3); nor.set(ng.attributes.normal.array, off * 3); off += ng.attributes.position.count;
@@ -684,7 +691,7 @@ function mergeGeos(list) {
 }
 function updateCivilians(t) {
   for (const g of civMeshes) {
-    const cv = g.userData, s = 1.2;
+    const cv = g.userData;
     const off = Math.sin(t * 0.25 + cv.phase) * 6;          // wander back and forth 6 m
     if (cv.axis === 'z') g.position.z = cv.z + off * cv.dir; else g.position.x = cv.x + off * cv.dir;
     g.rotation.y = cv.axis === 'z' ? 0 : Math.PI / 2;
@@ -692,14 +699,204 @@ function updateCivilians(t) {
   }
 }
 
-// ==== MAIN (temporary — replaced in Task 11) ====
+// ==== INPUT ====
+const input = makeInput();
+const keys = {};
+let pointerLocked = false, paused = false, started = false;
+const pressedThisFrame = { jump: false, zip: false, web: false, interact: false };
+const camState = { yaw: 0, pitch: -0.25, idleT: 0, dist: CONFIG.camDist, fov: CONFIG.camFovMin };
+
+document.addEventListener('keydown', e => {
+  if (e.repeat) return;
+  keys[e.code] = true;
+  if (e.code === 'Space') { pressedThisFrame.jump = true; e.preventDefault(); }
+  if (e.code === 'KeyE') { pressedThisFrame.zip = true; pressedThisFrame.interact = true; }
+});
+document.addEventListener('keyup', e => { keys[e.code] = false; });
+document.addEventListener('mousedown', e => { if (pointerLocked && e.button === 0) { keys.LMB = true; pressedThisFrame.web = true; } });
+document.addEventListener('mouseup', e => { if (e.button === 0) keys.LMB = false; });
+document.addEventListener('mousemove', e => {
+  if (!pointerLocked) return;
+  camState.yaw -= e.movementX * CONFIG.mouseSens;
+  camState.pitch = Math.max(-1.2, Math.min(0.9, camState.pitch - e.movementY * CONFIG.mouseSens));
+  camState.idleT = 0;
+});
+document.addEventListener('pointerlockchange', () => {
+  pointerLocked = document.pointerLockElement === renderer.domElement;
+  if (!pointerLocked && started) setPaused(true);
+});
+function lockPointer() { try { const p = renderer.domElement.requestPointerLock(); if (p && p.catch) p.catch(() => {}); } catch (e) {} }
+function setPaused(p) { paused = p; document.getElementById('pause').classList.toggle('hidden', !p); if (!p) lockPointer(); }
+
+function readInput() {
+  input.forward = (keys.KeyW || keys.ArrowUp ? 1 : 0) - (keys.KeyS || keys.ArrowDown ? 1 : 0);
+  input.strafe = (keys.KeyD || keys.ArrowRight ? 1 : 0) - (keys.KeyA || keys.ArrowLeft ? 1 : 0);
+  input.sprint = !!(keys.ShiftLeft || keys.ShiftRight);
+  input.jumpHeld = !!keys.Space;
+  input.swing = !!keys.LMB;
+  input.jump = pressedThisFrame.jump; input.zip = pressedThisFrame.zip;
+  input.camYaw = camState.yaw; input.camPitch = camState.pitch;
+}
+function clearPressed() { for (const k in pressedThisFrame) pressedThisFrame[k] = false; }
+
+// ==== HERO MESH & WEB ====
+let hero, heroGroup, heroParts, webLine, webSplat, pops = [];
+const RED = new THREE.MeshLambertMaterial({ color: 0xe62429 }), BLUE = new THREE.MeshLambertMaterial({ color: 0x0b3d91 });
+const OUTLINE = new THREE.MeshBasicMaterial({ color: 0x000000, side: THREE.BackSide });
+function part(geo, mat, x, y, z) {
+  const grp = new THREE.Group();
+  const m = new THREE.Mesh(geo, mat); grp.add(m);
+  const o = new THREE.Mesh(geo, OUTLINE); o.scale.setScalar(1.12); grp.add(o);
+  grp.position.set(x, y, z); return grp;
+}
+function buildHeroMesh() {
+  heroGroup = new THREE.Group();
+  const torso = part(new THREE.BoxGeometry(0.5, 0.65, 0.3), RED, 0, 1.15, 0);
+  const hips = part(new THREE.BoxGeometry(0.44, 0.3, 0.28), BLUE, 0, 0.72, 0);
+  const head = part(new THREE.SphereGeometry(0.19, 12, 10), RED, 0, 1.68, 0);
+  // eyes: two white flat lenses
+  const eyeGeo = new THREE.SphereGeometry(0.07, 8, 6); eyeGeo.scale(1, 1.4, 0.4);
+  const eyeMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+  const eL = new THREE.Mesh(eyeGeo, eyeMat); eL.position.set(-0.075, 1.7, -0.16); eL.rotation.z = 0.35;
+  const eR = new THREE.Mesh(eyeGeo, eyeMat); eR.position.set(0.075, 1.7, -0.16); eR.rotation.z = -0.35;
+  // web lines on torso and head: thin black lines
+  const lineMat = new THREE.LineBasicMaterial({ color: 0x000000 });
+  const lines = new THREE.Group();
+  for (let i = 0; i < 5; i++) {
+    const y = 0.85 + i * 0.15;
+    const g = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(-0.26, y, -0.16), new THREE.Vector3(0.26, y, -0.16)]);
+    lines.add(new THREE.Line(g, lineMat));
+  }
+  for (let i = -2; i <= 2; i++) {
+    const g = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(i * 0.12, 0.82, -0.16), new THREE.Vector3(i * 0.12, 1.48, -0.16)]);
+    lines.add(new THREE.Line(g, lineMat));
+  }
+  const limb = (mat, len) => { const g = new THREE.BoxGeometry(0.16, len, 0.16); g.translate(0, -len / 2, 0); return part(g, mat, 0, 0, 0); };
+  const armL = limb(RED, 0.65), armR = limb(RED, 0.65), legL = limb(BLUE, 0.7), legR = limb(BLUE, 0.7);
+  armL.position.set(-0.34, 1.45, 0); armR.position.set(0.34, 1.45, 0); legL.position.set(-0.13, 0.7, 0); legR.position.set(0.13, 0.7, 0);
+  heroGroup.add(torso, hips, head, eL, eR, lines, armL, armR, legL, legR);
+  heroParts = { armL, armR, legL, legR, torso };
+  scene.add(heroGroup);
+  // web strand: a thin cylinder we re-aim every frame
+  webLine = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 1, 6, 1, true), new THREE.MeshBasicMaterial({ color: 0xf5f5f5 }));
+  webLine.visible = false; scene.add(webLine);
+  webSplat = new THREE.Mesh(new THREE.CircleGeometry(0.6, 8), new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide }));
+  webSplat.visible = false; scene.add(webSplat);
+}
+// procedural poses per state (target angles, eased each frame)
+function poseHero(h, t) {
+  const P = heroParts, lerpR = (obj, x, z) => { obj.rotation.x += (x - obj.rotation.x) * 0.2; obj.rotation.z += (z - obj.rotation.z) * 0.2; };
+  const speed = V.len(V.horiz(h.vel));
+  switch (h.state) {
+    case 'ground': { const s = Math.sin(t * (speed > 0.5 ? 12 : 0)) * Math.min(speed / 8, 1);
+      lerpR(P.armL, -s * 1.0, 0.1); lerpR(P.armR, s * 1.0, -0.1); lerpR(P.legL, s * 0.9, 0); lerpR(P.legR, -s * 0.9, 0); break; }
+    case 'air': lerpR(P.armL, -0.6, 1.4); lerpR(P.armR, -0.6, -1.4); lerpR(P.legL, 0.6, 0.3); lerpR(P.legR, -0.4, -0.3); break;
+    case 'swing': lerpR(P.armL, -2.9, 0.15); lerpR(P.armR, -2.6, -0.4); lerpR(P.legL, 0.9, 0.2); lerpR(P.legR, 0.3, -0.2); break;
+    case 'crawl': lerpR(P.armL, -2.2, 0.6); lerpR(P.armR, -2.2, -0.6); lerpR(P.legL, 1.6, 0.5); lerpR(P.legR, 1.6, -0.5); break;
+    case 'zip': lerpR(P.armL, -3.0, 0); lerpR(P.armR, -3.0, 0); lerpR(P.legL, 0, 0); lerpR(P.legR, 0, 0); break;
+  }
+  heroGroup.position.set(h.pos.x, h.pos.y, h.pos.z);
+  if (h.state === 'crawl') {
+    const n = h.wall.normal; heroGroup.rotation.set(0, Math.atan2(-n.x, -n.z), 0);      // face the wall
+    heroGroup.rotation.x = -Math.PI / 2 * 0.85; heroGroup.position.y += 0.9;             // lie against it
+  } else {
+    heroGroup.rotation.set(0, Math.atan2(h.facing.x, h.facing.z) + Math.PI, 0);
+    if (h.state === 'swing' || h.state === 'air') heroGroup.rotation.x = Math.max(-0.9, Math.min(0.9, -h.vel.y * 0.04));
+    if (h.state === 'zip') heroGroup.rotation.x = -1.2;
+  }
+}
+function updateWebStrand() {
+  if (hero.state === 'swing' && hero.anchor) {
+    const a = new THREE.Vector3(hero.anchor.x, hero.anchor.y, hero.anchor.z);
+    const b = new THREE.Vector3(hero.pos.x, hero.pos.y + 1.6, hero.pos.z);
+    const mid = a.clone().add(b).multiplyScalar(0.5), len = a.distanceTo(b);
+    webLine.position.copy(mid); webLine.scale.set(1, len, 1);
+    webLine.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), b.clone().sub(a).normalize());
+    webLine.visible = true;
+    webSplat.position.copy(a); webSplat.position.y += 0.05; webSplat.rotation.set(-Math.PI / 2, 0, 0); webSplat.visible = !hero.anchor.sky;
+  } else { webLine.visible = false; webSplat.visible = false; }
+}
+// comic text pops as canvas sprites
+function spawnPop(text, pos, color = '#ffe14d') {
+  const cv = document.createElement('canvas'); cv.width = 256; cv.height = 128; const g = cv.getContext('2d');
+  g.font = 'bold 64px Impact, "Arial Black", sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.lineWidth = 10; g.strokeStyle = '#000'; g.strokeText(text, 128, 64); g.fillStyle = color; g.fillText(text, 128, 64);
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(cv), transparent: true, depthTest: false }));
+  sp.position.set(pos.x, pos.y + 2.5, pos.z); sp.scale.set(0.1, 0.05, 1); sp.userData.t = 0; scene.add(sp); pops.push(sp);
+}
+function updatePops(dt) {
+  for (let i = pops.length - 1; i >= 0; i--) {
+    const s = pops[i]; s.userData.t += dt; const t = s.userData.t;
+    const sc = Math.min(1, t * 6) * 6; s.scale.set(sc, sc / 2, 1); s.position.y += dt * 1.5;
+    s.material.opacity = t < 0.6 ? 1 : Math.max(0, 1 - (t - 0.6) / 0.4);
+    if (t > 1) { scene.remove(s); s.material.map.dispose(); s.material.dispose(); pops.splice(i, 1); }
+  }
+}
+
+// ==== CAMERA ====
+const camPos = new THREE.Vector3(), camTarget = new THREE.Vector3();
+function updateCamera(dt) {
+  const speed = V.len(hero.vel), f = Math.min(speed / CONFIG.fastSpeed, 1);
+  camState.idleT += dt;
+  if (camState.idleT > CONFIG.camIdleRealign && speed > 3) {           // gently realign behind the velocity
+    const want = Math.atan2(-hero.vel.x, -hero.vel.z);
+    let d = want - camState.yaw; d = Math.atan2(Math.sin(d), Math.cos(d));
+    camState.yaw += d * Math.min(1, dt * 1.5);
+  }
+  camState.dist += ((CONFIG.camDist + (CONFIG.camDistFast - CONFIG.camDist) * f) - camState.dist) * Math.min(1, dt * 4);
+  camState.fov += ((CONFIG.camFovMin + (CONFIG.camFovMax - CONFIG.camFovMin) * f) - camState.fov) * Math.min(1, dt * 4);
+  camera.fov = camState.fov; camera.updateProjectionMatrix();
+  const target = { x: hero.pos.x, y: hero.pos.y + CONFIG.camHeight, z: hero.pos.z };
+  const cp = Math.cos(camState.pitch);
+  const back = { x: Math.sin(camState.yaw) * cp, y: -Math.sin(camState.pitch), z: Math.cos(camState.yaw) * cp }; // behind the view dir
+  let dist = camState.dist;
+  const hit = raycastAABBs(target, back, city.grid, dist);
+  if (hit) dist = Math.max(1.5, hit.dist - 0.5);
+  const desired = new THREE.Vector3(target.x + back.x * dist, Math.max(0.5, target.y + back.y * dist), target.z + back.z * dist);
+  camPos.lerp(desired, Math.min(1, dt * 12));
+  camTarget.lerp(new THREE.Vector3(target.x, target.y, target.z), Math.min(1, dt * 20));
+  camera.position.copy(camPos); camera.lookAt(camTarget);
+}
+
+// ==== MAIN LOOP ====
+let last = 0, acc = 0; const STEP = 1 / 60;
+function handleHeroEvents(events) {
+  for (const e of events) {
+    if (e.type === 'swingStart') spawnPop('THWIP!', hero.pos, '#ffffff');
+    if (e.type === 'land' && e.fallSpeed > 15) spawnPop('WHUMP!', hero.pos, '#ffb703');
+    if (e.type === 'zipStart') spawnPop('ZIP!', hero.pos, '#7fb3ff');
+    if (e.type === 'wallJump') spawnPop('HUP!', hero.pos);
+  }
+}
+function frame(now) {
+  requestAnimationFrame(frame);
+  const dt = Math.min(0.1, (now - last) / 1000 || 0); last = now;
+  if (!started || paused) { renderer.render(scene, camera); return; }
+  acc += dt;
+  while (acc >= STEP) {
+    readInput();
+    handleHeroEvents(stepHero(hero, input, STEP, { grid: city.grid }));
+    clearPressed();
+    clockT += STEP; acc -= STEP;
+  }
+  updateCivilians(clockT); poseHero(hero, clockT); updateWebStrand(); updatePops(dt); updateCamera(dt);
+  renderer.render(scene, camera);
+}
+function startGame() {
+  started = true;
+  document.getElementById('title').classList.add('hidden');
+  lockPointer();
+}
 initScene();
 city = generateCity();
 buildCityMeshes(city);
-camera.position.set(city.spawn.x + 30, city.spawn.y + 40, city.spawn.z + 60);
-camera.lookAt(city.spawn.x, city.spawn.y, city.spawn.z);
-document.getElementById('title').classList.add('hidden');
-(function loop() { requestAnimationFrame(loop); clockT += 1 / 60; updateCivilians(clockT); renderer.render(scene, camera); })();
+hero = createHero(city.spawn);
+buildHeroMesh();
+camPos.set(city.spawn.x, city.spawn.y + 4, city.spawn.z + 8);
+document.getElementById('startBtn').addEventListener('click', startGame);
+document.getElementById('resumeBtn').addEventListener('click', () => setPaused(false));
+requestAnimationFrame(frame);
+if (location.hash.includes('autostart')) startGame();
 </script>
 </body>
 </html>
