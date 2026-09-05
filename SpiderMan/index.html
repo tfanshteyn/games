@@ -687,7 +687,7 @@ const SFX = (() => {
 
 // ==== RENDER: SCENE & CITY ====
 const PALETTE = [0xe63946, 0xf4a261, 0x2a9d8f, 0x457b9d, 0x8e5bd6, 0xffb703, 0x3fa7d6, 0xef476f];
-let scene, camera, renderer, city, civMeshes = [], clockT = 0;
+let scene, camera, renderer, city, civData = [], civBodies = null, civHeads = null, clockT = 0;
 
 function initScene() {
   renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('game'), antialias: true });
@@ -721,7 +721,7 @@ function buildCityMeshes(c) {
   for (let ix = 0; ix < CONFIG.gridN; ix++) for (let iz = 0; iz < CONFIG.gridN; iz++) {
     const x0 = c.streetLine(ix) + 5, z0 = c.streetLine(iz) + 5;
     const g = new THREE.BoxGeometry(CONFIG.blockSize + 2, 0.3, CONFIG.blockSize + 2);
-    g.translate(x0 + CONFIG.blockSize / 2, 0.15, z0 + CONFIG.blockSize / 2); sidewalks.push(g);
+    g.translate(x0 + CONFIG.blockSize / 2, -0.15, z0 + CONFIG.blockSize / 2); sidewalks.push(g);   // top at y=0 (the walkable plane)
   }
   for (let i = 0; i <= CONFIG.gridN; i++) {
     const l = c.streetLine(i);
@@ -739,7 +739,8 @@ function buildCityMeshes(c) {
     const g = new THREE.BoxGeometry(w, h, d); g.translate(cx, b.min.y + h / 2, cz);
     byColor[b.color].push(g);
     if (b.kind === 'building' || b.kind === 'spire') {
-      const cap = new THREE.BoxGeometry(w + 0.6, 0.8, d + 0.6); cap.translate(cx, b.max.y + 0.4, cz); caps.push(cap);
+      // cornice: 0.3 m horizontal overhang, top only 0.1 m above the walkable roof plane so the hero's legs stay visible
+      const cap = new THREE.BoxGeometry(w + 0.6, 0.8, d + 0.6); cap.translate(cx, b.max.y - 0.3, cz); caps.push(cap);
       // window strips: one thin emissive slab per 4 m of height on the ±Z faces
       for (let y = 3; y < h - 2; y += 4) {
         const s1 = new THREE.BoxGeometry(w * 0.8, 1.2, 0.1); s1.translate(cx, b.min.y + y, b.max.z + 0.05); windows.push(s1);
@@ -766,16 +767,19 @@ function buildCityMeshes(c) {
   c.props.lamps.forEach((l, i) => { m4.identity(); m4.setPosition(l.x, 0.3, l.z); lampMesh.setMatrixAt(i, m4); });
   scene.add(lampMesh);
 
-  // civilians: two boxes each, animated in updateCivilians
+  // civilians: two InstancedMesh (bodies + heads) instead of ~1,460 scene objects; animated in updateCivilians
   const bodyGeo = new THREE.BoxGeometry(0.5, 1.0, 0.3), headGeo = new THREE.BoxGeometry(0.3, 0.3, 0.3);
-  const civMat = PALETTE.map(h => new THREE.MeshLambertMaterial({ color: h }));
-  const skin = new THREE.MeshLambertMaterial({ color: 0xf1c27d });
-  civMeshes = c.civilians.map((cv, i) => {
-    const grp = new THREE.Group();
-    const body = new THREE.Mesh(bodyGeo, civMat[i % 8]); body.position.y = 0.8; grp.add(body);
-    const head = new THREE.Mesh(headGeo, skin); head.position.y = 1.5; grp.add(head);
-    grp.position.set(cv.x, 0.3, cv.z); grp.userData = cv; scene.add(grp); return grp;
-  });
+  civData = c.civilians;
+  const nCiv = civData.length;
+  civBodies = new THREE.InstancedMesh(bodyGeo, new THREE.MeshLambertMaterial({ color: 0xffffff }), nCiv);
+  civHeads = new THREE.InstancedMesh(headGeo, new THREE.MeshLambertMaterial({ color: 0xf1c27d }), nCiv);
+  for (const m of [civBodies, civHeads]) {
+    m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    m.frustumCulled = false;                                   // instances span the whole city
+    scene.add(m);
+  }
+  for (let i = 0; i < nCiv; i++) civBodies.setColorAt(i, col.setHex(PALETTE[i % 8]));   // same per-civilian palette as before
+  updateCivilians(0);
 }
 function mergeGeos(list) {
   // manual merge (BufferGeometryUtils is not in three.min.js)
@@ -789,14 +793,21 @@ function mergeGeos(list) {
   out.setAttribute('position', new THREE.BufferAttribute(pos, 3)); out.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
   return out;
 }
+const _civA = new THREE.Matrix4(), _civB = new THREE.Matrix4(), _civC = new THREE.Matrix4();
 function updateCivilians(t) {
-  for (const g of civMeshes) {
-    const cv = g.userData;
+  if (!civBodies) return;
+  for (let i = 0; i < civData.length; i++) {
+    const cv = civData[i];
     const off = Math.sin(t * 0.25 + cv.phase) * 6;          // wander back and forth 6 m
-    if (cv.axis === 'z') g.position.z = cv.z + off * cv.dir; else g.position.x = cv.x + off * cv.dir;
-    g.rotation.y = cv.axis === 'z' ? 0 : Math.PI / 2;
-    g.children[0].rotation.z = Math.sin(t * 6 + cv.phase) * 0.08;   // little bob
+    const px = cv.axis === 'z' ? cv.x : cv.x + off * cv.dir;
+    const pz = cv.axis === 'z' ? cv.z + off * cv.dir : cv.z;
+    _civA.makeRotationY(cv.axis === 'z' ? 0 : Math.PI / 2); _civA.setPosition(px, 0.3, pz);
+    _civB.makeRotationZ(Math.sin(t * 6 + cv.phase) * 0.08); _civB.setPosition(0, 0.8, 0);   // little bob
+    civBodies.setMatrixAt(i, _civC.multiplyMatrices(_civA, _civB));
+    _civB.identity(); _civB.setPosition(0, 1.5, 0);
+    civHeads.setMatrixAt(i, _civC.multiplyMatrices(_civA, _civB));
   }
+  civBodies.instanceMatrix.needsUpdate = true; civHeads.instanceMatrix.needsUpdate = true;
 }
 
 // ==== INPUT ====
@@ -825,6 +836,11 @@ document.addEventListener('pointerlockchange', () => {
   pointerLocked = document.pointerLockElement === renderer.domElement;
   if (!pointerLocked && started) setPaused(true);
 });
+// If the browser refuses the lock (Chrome blocks re-locking for ~1.25 s after an Escape exit, or the
+// document lost focus) fall back to the pause menu instead of soft-locking with no mouse look.
+document.addEventListener('pointerlockerror', () => { if (started) setPaused(true); });
+// Click anywhere on the canvas to re-acquire a lock that was lost or refused (attached once the renderer exists).
+function attachRelockHandler() { renderer.domElement.addEventListener('mousedown', () => { if (started && !paused && !pointerLocked) lockPointer(); }); }
 function lockPointer() { try { const p = renderer.domElement.requestPointerLock(); if (p && p.catch) p.catch(() => {}); } catch (e) {} }
 function setPaused(p) { paused = p; document.getElementById('pause').classList.toggle('hidden', !p); if (!p) lockPointer(); }
 
@@ -838,6 +854,21 @@ function readInput() {
   input.camYaw = camState.yaw; input.camPitch = camState.pitch;
 }
 function clearPressed() { for (const k in pressedThisFrame) pressedThisFrame[k] = false; }
+// LMB and E each drive a hero move and a mission action. When the active mission step is in range,
+// the mission action wins: the press still reaches updateMission1, but the hero move is suppressed
+// so webbing a thug does not also start a ground swing and picking up the device does not also zip.
+function arbitrateMissionInput() {
+  if (freeRoam || !mission) return;
+  const s = currentStep(mission); if (!s) return;
+  if (s.type === 'webUp') {
+    for (const id of s.thugIds) {
+      const t = ctxThugs[id];
+      if (t && !t.webbed && V.dist(hero.pos, t.pos) <= 5) { input.swing = false; break; }   // 5 m = webUp radius in updateMission
+    }
+  } else if (s.type === 'interact') {
+    if (V.dist(hero.pos, s.target) <= s.radius) input.zip = false;
+  }
+}
 
 // ==== HERO MESH & WEB ====
 let hero, heroGroup, heroParts, webLine, webSplat, pops = [];
@@ -851,6 +882,7 @@ function part(geo, mat, x, y, z) {
 }
 function buildHeroMesh() {
   heroGroup = new THREE.Group();
+  heroGroup.rotation.order = 'YXZ';               // yaw first, then pitch about the model's own right axis
   const torso = part(new THREE.BoxGeometry(0.5, 0.65, 0.3), RED, 0, 1.15, 0);
   const hips = part(new THREE.BoxGeometry(0.44, 0.3, 0.28), BLUE, 0, 0.72, 0);
   const head = part(new THREE.SphereGeometry(0.19, 12, 10), RED, 0, 1.68, 0);
@@ -898,7 +930,7 @@ function poseHero(h, t) {
   heroGroup.position.set(h.pos.x, h.pos.y, h.pos.z);
   if (h.state === 'crawl') {
     const n = h.wall.normal; heroGroup.rotation.set(0, Math.atan2(n.x, n.z), 0);      // face the wall
-    heroGroup.rotation.x = -Math.PI / 2 * 0.85; heroGroup.position.y += 0.9;             // lie against it
+    heroGroup.rotation.x = -0.25;                                                     // lean into it
   } else {
     heroGroup.rotation.set(0, Math.atan2(h.facing.x, h.facing.z) + Math.PI, 0);
     if (h.state === 'swing' || h.state === 'air') heroGroup.rotation.x = Math.max(-0.9, Math.min(0.9, -h.vel.y * 0.04));
@@ -992,13 +1024,13 @@ function drawMinimap(marker) {
   const cv = document.getElementById('minimap'), g = cv.getContext('2d'), R = 100, scale = R / 150; // 150 m radius view
   g.clearRect(0, 0, 200, 200);
   g.save(); g.beginPath(); g.arc(R, R, R - 2, 0, Math.PI * 2); g.clip();
-  g.translate(R, R); g.rotate(-camState.yaw); g.translate(-hero.pos.x * scale, -hero.pos.z * scale);
+  g.translate(R, R); g.rotate(camState.yaw); g.translate(-hero.pos.x * scale, -hero.pos.z * scale);
   g.fillStyle = '#5a6070';
   for (const b of city.grid.query({ x: hero.pos.x - 160, y: 0, z: hero.pos.z - 160 }, { x: hero.pos.x + 160, y: 500, z: hero.pos.z + 160 }))
     g.fillRect(b.min.x * scale, b.min.z * scale, (b.max.x - b.min.x) * scale, (b.max.z - b.min.z) * scale);
   if (marker) { g.fillStyle = '#ffe14d'; g.beginPath(); g.arc(marker.x * scale, marker.z * scale, 5, 0, Math.PI * 2); g.fill(); }
   g.restore();
-  g.fillStyle = '#e62429'; g.save(); g.translate(R, R); g.rotate(Math.atan2(hero.facing.x, -hero.facing.z) - camState.yaw);
+  g.fillStyle = '#e62429'; g.save(); g.translate(R, R); g.rotate(Math.atan2(hero.facing.x, -hero.facing.z) + camState.yaw);
   g.beginPath(); g.moveTo(0, -8); g.lineTo(6, 6); g.lineTo(-6, 6); g.closePath(); g.fill(); g.restore();
 }
 
@@ -1124,6 +1156,7 @@ function frame(now) {
   acc += dt;
   while (acc >= STEP) {
     readInput();
+    arbitrateMissionInput();
     handleHeroEvents(stepHero(hero, input, STEP, { grid: city.grid }));
     updateMission1(STEP);
     clearPressed();
@@ -1137,11 +1170,14 @@ function frame(now) {
 function startGame() {
   started = true;
   document.getElementById('title').classList.add('hidden');
-  lockPointer();
+  // #autostart has no user gesture behind it, so a lock request would only raise pointerlockerror
+  // (which pauses the game); click the canvas to grab the mouse in that mode.
+  if (!location.hash.includes('autostart')) lockPointer();
   SFX.unlock(); SFX.theme(); HUD.show();
   startMission1();
 }
 initScene();
+attachRelockHandler();
 city = generateCity();
 buildCityMeshes(city);
 hero = createHero(city.spawn);
