@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
 <title>Spider-Man: Brand New Day</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -31,6 +31,24 @@
   @keyframes bob { from { transform: translateY(0); } to { transform: translateY(-8px); } }
   #card { position: absolute; left: 50%; top: 20%; transform: translateX(-50%); background: rgba(6,6,20,0.85); border: 2px solid #e62429; padding: 22px 34px; font-size: 1.2rem; max-width: 640px; text-align: center; line-height: 1.6; }
   #card.hidden { display: none; }
+  /* ---- touch controls (shown only on coarse-pointer devices) ---- */
+  body.touch { touch-action: none; -webkit-user-select: none; user-select: none; }
+  body.touch #objective { top: calc(12px + env(safe-area-inset-top, 0px)); left: calc(12px + env(safe-area-inset-left, 0px)); min-width: 0; max-width: 46vw; padding: 6px 10px; }
+  body.touch #objText { font-size: 0.85rem; }
+  body.touch #speed { display: none; }
+  body.touch #minimap { width: 110px; height: 110px; right: calc(12px + env(safe-area-inset-right, 0px)); bottom: calc(12px + env(safe-area-inset-bottom, 0px)); }
+  #touch { position: absolute; inset: 0; pointer-events: auto; touch-action: none; }
+  #touch.hidden { display: none; }
+  #stickBase { position: absolute; width: 120px; height: 120px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.45); background: rgba(6,6,20,0.35); transform: translate(-50%, -50%); display: none; }
+  #stickKnob { position: absolute; width: 54px; height: 54px; border-radius: 50%; background: rgba(230,36,41,0.85); box-shadow: 0 0 12px #e6242988; transform: translate(-50%, -50%); display: none; }
+  .tbtn { position: absolute; border-radius: 50%; border: 2px solid rgba(255,255,255,0.6); background: rgba(6,6,20,0.5); color: #fff; font-weight: bold; letter-spacing: 1px; display: flex; align-items: center; justify-content: center; font-size: 0.8rem; text-shadow: 1px 1px 0 #000; }
+  .tbtn.down { background: rgba(230,36,41,0.85); }
+  #btnSwing { width: 96px; height: 96px; right: calc(150px + env(safe-area-inset-right, 0px)); bottom: calc(28px + env(safe-area-inset-bottom, 0px)); font-size: 0.95rem; }
+  #btnJump { width: 68px; height: 68px; right: calc(150px + env(safe-area-inset-right, 0px)); bottom: calc(140px + env(safe-area-inset-bottom, 0px)); }
+  #btnZip { width: 68px; height: 68px; right: calc(34px + env(safe-area-inset-right, 0px)); bottom: calc(140px + env(safe-area-inset-bottom, 0px)); }
+  #btnPause { width: 44px; height: 44px; right: calc(12px + env(safe-area-inset-right, 0px)); top: calc(12px + env(safe-area-inset-top, 0px)); font-size: 1rem; }
+  #rotate { position: fixed; inset: 0; z-index: 20; display: flex; align-items: center; justify-content: center; text-align: center; background: #0c0c1a; font-size: 1.3rem; letter-spacing: 2px; padding: 40px; }
+  #rotate.hidden { display: none; }
 </style>
 </head>
 <body>
@@ -40,13 +58,13 @@
   <h1>SPIDER-MAN</h1>
   <h2>BRAND NEW DAY</h2>
   <p>Nobody remembers Peter Parker. Time to remind them about Spider-Man.</p>
-  <p><kbd>W A S D</kbd> move · <kbd>Mouse</kbd> look · <kbd>Space</kbd> jump · hold <kbd>LMB</kbd> swing · <kbd>E</kbd> zip · <kbd>Esc</kbd> pause</p>
+  <p id="titleHint"><kbd>W A S D</kbd> move · <kbd>Mouse</kbd> look · <kbd>Space</kbd> jump · hold <kbd>LMB</kbd> swing · <kbd>E</kbd> zip · <kbd>Esc</kbd> pause</p>
   <button id="startBtn">START PATROL</button>
 </div>
 
 <div id="pause" class="overlay hidden">
   <h1>PAUSED</h1>
-  <p><kbd>W A S D</kbd> move · <kbd>Shift</kbd> sprint · <kbd>Space</kbd> jump (tap again on landing for a high jump) · hold <kbd>LMB</kbd> swing, release on the upswing · <kbd>E</kbd> zip to what you're looking at / interact · <kbd>Esc</kbd> pause</p>
+  <p id="pauseHint"><kbd>W A S D</kbd> move · <kbd>Shift</kbd> sprint · <kbd>Space</kbd> jump (tap again on landing for a high jump) · hold <kbd>LMB</kbd> swing, release on the upswing · <kbd>E</kbd> zip to what you're looking at / interact · <kbd>Esc</kbd> pause</p>
   <button id="resumeBtn">RESUME</button>
   <button id="restartBtn">RESTART MISSION</button>
 </div>
@@ -58,7 +76,15 @@
   <div id="prompt"></div>
   <div id="marker"><div class="arrow">▲</div><div class="dist"></div></div>
   <div id="card" class="hidden"></div>
+  <div id="touch" class="hidden">
+    <div id="stickBase"></div><div id="stickKnob"></div>
+    <div id="btnSwing" class="tbtn">SWING</div>
+    <div id="btnJump" class="tbtn">JUMP</div>
+    <div id="btnZip" class="tbtn">ZIP</div>
+    <div id="btnPause" class="tbtn">II</div>
+  </div>
 </div>
+<div id="rotate" class="hidden">Rotate your phone to landscape to play</div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
@@ -78,7 +104,7 @@ const CONFIG = {
   // crawl / zip
   crawlSpeed: 4, wallJumpOut: 8, wallJumpUp: 9, zipSpeed: 40, zipMaxDist: 60, zipLedgeReach: 3,
   // camera
-  camDist: 7, camDistFast: 10, camFovMin: 60, camFovMax: 75, camHeight: 2, camIdleRealign: 1.5, mouseSens: 0.002,
+  camDist: 7, camDistFast: 10, camFovMin: 60, camFovMax: 75, camHeight: 2, camIdleRealign: 1.5, mouseSens: 0.002, touchSens: 0.006,
   fastSpeed: 25, // speed at which camera/FOV reach their "fast" values
 };
 
@@ -337,11 +363,13 @@ function makeInput() {
   return { forward: 0, strafe: 0, jump: false, jumpHeld: false, sprint: false, swing: false, zip: false, camYaw: 0, camPitch: 0 };
 }
 
-// Desired horizontal move direction from WASD relative to camera yaw (unit or zero)
+// Desired horizontal move direction relative to camera yaw. Length ≤ 1: a keyboard diagonal clamps
+// to 1, a partially deflected analog stick keeps its magnitude so the hero walks slower.
 function moveDir(input) {
   const f = yawDir(input.camYaw), r = { x: -f.z, y: 0, z: f.x };
   const d = { x: f.x * input.forward + r.x * input.strafe, y: 0, z: f.z * input.forward + r.z * input.strafe };
-  return V.norm(d);
+  const l = V.len(d);
+  return l > 1 ? V.scale(d, 1 / l) : l > 0 ? d : { x: 0, y: 0, z: 0 };
 }
 
 function applyGravity(hero, dt) {
@@ -692,7 +720,7 @@ let scene, camera, renderer, city, civData = [], civBodies = null, civHeads = nu
 function initScene() {
   renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('game'), antialias: true });
   renderer.setSize(window.innerWidth, window.innerHeight);
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, TOUCH ? 1.25 : 1.5));   // phones: 3x Retina would render 9x the pixels
   scene = new THREE.Scene();
   scene.background = new THREE.Color(0x8fd3ff);
   scene.fog = new THREE.Fog(0x8fd3ff, 250, 700);
@@ -820,6 +848,68 @@ const camState = { yaw: 0, pitch: -0.25, idleT: 0, dist: CONFIG.camDist, fov: CO
 // been in range on any substep, so a human click (many substeps) doesn't start a swing after the web
 // lands on an earlier substep and the thug leaves range. Cleared when the button is released.
 let webHoldConsumed = false;
+// Touch mode: coarse pointer (phones/tablets) or the #touch hash for desktop testing. No pointer lock;
+// a virtual stick, drag-to-look and on-screen buttons write into the same keys/pressedThisFrame/camState.
+const TOUCH = matchMedia('(pointer: coarse)').matches || location.hash.includes('touch');
+const joy = { id: null, ox: 0, oy: 0, x: 0, y: 0, sprint: false };
+const look = { id: null, lx: 0, ly: 0 };
+const STICK_R = 55, STICK_ZONE = 0.45;                                 // knob travel (px), left fraction of screen that plants the stick
+
+// Mission text is written for keyboard+mouse; swap the key names for the on-screen controls on touch.
+const TOUCH_WORDS = [[/\(WASD\)/g, '(left stick)'], [/hold LMB/g, 'hold SWING'], [/tap LMB/g, 'tap SWING'], [/E to zip/g, 'ZIP to zip'], [/\(E\)/g, '(ZIP)'], [/Press E/g, 'Tap ZIP']];
+function touchWords(text) { return TOUCH ? TOUCH_WORDS.reduce((s, [re, w]) => s.replace(re, w), text) : text; }
+
+function initTouch() {
+  if (!TOUCH) return;
+  document.body.classList.add('touch');
+  document.getElementById('touch').classList.remove('hidden');
+  document.getElementById('titleHint').textContent = 'Left thumb: move · drag right side: look · hold SWING, release on the upswing · JUMP · ZIP / pick up';
+  document.getElementById('pauseHint').textContent = 'Left thumb: move (push to the edge to sprint) · drag: look · hold SWING · JUMP (tap again on landing for a high jump) · ZIP aims where you look';
+  const layer = document.getElementById('touch'), base = document.getElementById('stickBase'), knob = document.getElementById('stickKnob');
+  const btn = (id, down, up) => {
+    const el = document.getElementById(id);
+    el.addEventListener('touchstart', e => { e.preventDefault(); e.stopPropagation(); el.classList.add('down'); down(); }, { passive: false });
+    const rel = e => { e.preventDefault(); e.stopPropagation(); el.classList.remove('down'); if (up) up(); };
+    el.addEventListener('touchend', rel, { passive: false }); el.addEventListener('touchcancel', rel, { passive: false });
+  };
+  btn('btnSwing', () => { keys.LMB = true; pressedThisFrame.web = true; }, () => { keys.LMB = false; });
+  btn('btnJump', () => { pressedThisFrame.jump = true; });
+  btn('btnZip', () => { pressedThisFrame.zip = true; pressedThisFrame.interact = true; });
+  btn('btnPause', () => { if (started && !paused) setPaused(true); });
+  const setKnob = (dx, dy) => { knob.style.left = (joy.ox + dx) + 'px'; knob.style.top = (joy.oy + dy) + 'px'; };
+  layer.addEventListener('touchstart', e => {
+    e.preventDefault();
+    for (const t of e.changedTouches) {
+      if (joy.id === null && t.clientX < innerWidth * STICK_ZONE) {
+        joy.id = t.identifier; joy.ox = t.clientX; joy.oy = t.clientY; joy.x = joy.y = 0; joy.sprint = false;
+        base.style.left = knob.style.left = joy.ox + 'px'; base.style.top = knob.style.top = joy.oy + 'px'; base.style.display = knob.style.display = 'block';
+      } else if (look.id === null) { look.id = t.identifier; look.lx = t.clientX; look.ly = t.clientY; }
+    }
+  }, { passive: false });
+  layer.addEventListener('touchmove', e => {
+    e.preventDefault();
+    for (const t of e.changedTouches) {
+      if (t.identifier === joy.id) {
+        let dx = t.clientX - joy.ox, dy = t.clientY - joy.oy; const l = Math.hypot(dx, dy);
+        if (l > STICK_R) { dx *= STICK_R / l; dy *= STICK_R / l; }
+        joy.x = dx / STICK_R; joy.y = -dy / STICK_R; joy.sprint = l >= STICK_R * 0.85; setKnob(dx, dy);
+      } else if (t.identifier === look.id) {
+        camState.yaw -= (t.clientX - look.lx) * CONFIG.touchSens;
+        camState.pitch = Math.max(-1.2, Math.min(0.9, camState.pitch - (t.clientY - look.ly) * CONFIG.touchSens));
+        camState.idleT = 0; look.lx = t.clientX; look.ly = t.clientY;
+      }
+    }
+  }, { passive: false });
+  const end = e => {
+    for (const t of e.changedTouches) {
+      if (t.identifier === joy.id) { joy.id = null; joy.x = joy.y = 0; joy.sprint = false; base.style.display = knob.style.display = 'none'; }
+      else if (t.identifier === look.id) look.id = null;
+    }
+  };
+  layer.addEventListener('touchend', end); layer.addEventListener('touchcancel', end);
+  const orient = () => document.getElementById('rotate').classList.toggle('hidden', innerWidth >= innerHeight);
+  window.addEventListener('resize', orient); orient();
+}
 
 document.addEventListener('keydown', e => {
   if (e.repeat) return;
@@ -838,20 +928,21 @@ document.addEventListener('mousemove', e => {
 });
 document.addEventListener('pointerlockchange', () => {
   pointerLocked = document.pointerLockElement === renderer.domElement;
-  if (!pointerLocked && started) setPaused(true);
+  if (!pointerLocked && started && !TOUCH) setPaused(true);
 });
 // If the browser refuses the lock (Chrome blocks re-locking for ~1.25 s after an Escape exit, or the
 // document lost focus) fall back to the pause menu instead of soft-locking with no mouse look.
-document.addEventListener('pointerlockerror', () => { if (started) setPaused(true); });
+document.addEventListener('pointerlockerror', () => { if (started && !TOUCH) setPaused(true); });
 // Click anywhere on the canvas to re-acquire a lock that was lost or refused (attached once the renderer exists).
 function attachRelockHandler() { renderer.domElement.addEventListener('mousedown', () => { if (started && !paused && !pointerLocked) lockPointer(); }); }
-function lockPointer() { try { const p = renderer.domElement.requestPointerLock(); if (p && p.catch) p.catch(() => {}); } catch (e) {} }
+function lockPointer() { if (TOUCH) return; try { const p = renderer.domElement.requestPointerLock(); if (p && p.catch) p.catch(() => {}); } catch (e) {} }
 function setPaused(p) { paused = p; document.getElementById('pause').classList.toggle('hidden', !p); if (!p) lockPointer(); }
 
 function readInput() {
   input.forward = (keys.KeyW || keys.ArrowUp ? 1 : 0) - (keys.KeyS || keys.ArrowDown ? 1 : 0);
   input.strafe = (keys.KeyD || keys.ArrowRight ? 1 : 0) - (keys.KeyA || keys.ArrowLeft ? 1 : 0);
   input.sprint = !!(keys.ShiftLeft || keys.ShiftRight);
+  if (joy.id !== null) { input.forward = joy.y; input.strafe = joy.x; input.sprint = joy.sprint; }   // analog stick overrides keys while held
   input.jumpHeld = !!keys.Space;
   input.swing = !!keys.LMB;
   input.jump = pressedThisFrame.jump; input.zip = pressedThisFrame.zip;
@@ -1005,7 +1096,7 @@ const HUD = (() => {
   let promptT = 0, marker = null, cardT = 0;
   return {
     show() { el('hud').classList.remove('hidden'); },
-    setObjective(text, prog = '') { el('objText').textContent = text; el('objProg').textContent = prog; },
+    setObjective(text, prog = '') { el('objText').textContent = touchWords(text); el('objProg').textContent = prog; },
     prompt(text, seconds = 3) { el('prompt').textContent = text; el('prompt').style.opacity = 1; promptT = seconds; },
     card(html, seconds = 5) { el('card').innerHTML = html; el('card').classList.remove('hidden'); cardT = seconds; },
     setMarker(pos) { marker = pos; el('marker').style.display = pos ? 'block' : 'none'; },
@@ -1187,6 +1278,7 @@ function startGame() {
 }
 initScene();
 attachRelockHandler();
+initTouch();
 city = generateCity();
 buildCityMeshes(city);
 hero = createHero(city.spawn);
