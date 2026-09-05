@@ -79,3 +79,46 @@ test('air: contact with a wall mid-air starts crawl; jump on contact wall-jumps 
   assert.equal(ev2[0].type, 'wallJump'); assert.equal(h2.state, 'air');
   assert.ok(Math.abs(h2.vel.z - CONFIG.wallJumpOut) < 1e-6 && Math.abs(h2.vel.y - CONFIG.wallJumpUp) < 1e-6, `wall-jump vel ${JSON.stringify(h2.vel)}`);
 });
+
+test('swing: holding swing from a rooftop attaches a rope and keeps hero within rope length', () => {
+  const start = { min: { x: -5, y: 0, z: -5 }, max: { x: 5, y: 30, z: 5 } };
+  const tall = { min: { x: 5, y: 0, z: -60 }, max: { x: 25, y: 70, z: -40 } };
+  const w = world(start, tall); const h = createHero({ x: 0, y: 30, z: 0 });
+  const inp = makeInput(); inp.forward = 1; inp.sprint = true; run(h, inp, w, 30);
+  inp.swing = true;
+  const ev = run(h, inp, w, 1);
+  assert.equal(h.state, 'swing'); assert.equal(ev[0].type, 'swingStart'); assert.ok(h.anchor && !h.anchor.sky); assert.ok(h.swingAnchor);
+  const L0 = h.ropeLen;
+  for (let i = 0; i < 90; i++) {
+    stepHero(h, inp, DT, w);
+    if (h.state !== 'swing') break;
+    const d = Math.hypot(h.pos.x - h.swingAnchor.x, h.pos.y + CONFIG.heroHeight - h.swingAnchor.y, h.pos.z - h.swingAnchor.z);
+    assert.ok(d <= h.ropeLen + 0.05, `rope stretched ${d} > ${h.ropeLen}`);
+  }
+  assert.ok(h.ropeLen < L0, 'rope shortens over the arc');
+  assert.ok(Math.abs(h.swingAnchor.x) < 1e-6, 'virtual anchor sits on the forward line');
+});
+
+test('swing: release on the upswing gives a velocity bonus and returns to air', () => {
+  const start = { min: { x: -5, y: 0, z: -5 }, max: { x: 5, y: 30, z: 5 } };
+  const tall = { min: { x: 5, y: 0, z: -60 }, max: { x: 25, y: 70, z: -40 } };
+  const w = world(start, tall); const h = createHero({ x: 0, y: 30, z: 0 });
+  const inp = makeInput(); inp.forward = 1; inp.sprint = true; run(h, inp, w, 30);
+  inp.swing = true; run(h, inp, w, 1);
+  // swing until we pass the bottom and start rising
+  let guard = 0; while (h.vel.y <= 0 && guard++ < 600) stepHero(h, inp, DT, w);
+  assert.equal(h.state, 'swing');
+  const speedBefore = Math.hypot(h.vel.x, h.vel.y, h.vel.z);
+  inp.swing = false;
+  const ev = stepHero(h, inp, DT, w);
+  assert.equal(h.state, 'air');
+  assert.equal(ev[0].type, 'swingRelease'); assert.equal(ev[0].bonus, true);
+  const speedAfter = Math.hypot(h.vel.x, h.vel.y, h.vel.z);
+  assert.ok(speedAfter > speedBefore * 1.1, `bonus ${speedBefore} → ${speedAfter}`);
+});
+
+test('swing: from ground with nothing ahead uses the sky anchor', () => {
+  const w = world(); const h = createHero({ x: 0, y: 0, z: 0 });
+  const inp = makeInput(); inp.swing = true; run(h, inp, w, 1);
+  assert.equal(h.state, 'swing'); assert.equal(h.anchor.sky, true);
+});

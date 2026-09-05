@@ -43,7 +43,7 @@ const CONFIG = {
   jumpSpeed: 10, highJumpSpeed: 15, doubleTapWindow: 0.25,
   // swing
   anchorConeDeg: 35, anchorMinDist: 15, anchorMaxDist: 70, anchorMinAbove: 8, skyAnchorHeight: 40,
-  ropePump: 6, ropeShortenRate: 0.1, ropeMinFrac: 0.6, releaseBonus: 1.2, swingLateral: 5, swingAutoReleaseDelay: 0.3,
+  ropePump: 6, ropeShortenRate: 0.1, ropeMinFrac: 0.6, releaseBonus: 1.2, swingLateral: 5, swingAutoReleaseDelay: 0.3, swingHop: 4,
   // crawl / zip
   crawlSpeed: 4, wallJumpOut: 8, wallJumpUp: 9, zipSpeed: 40, zipMaxDist: 60,
   // camera
@@ -375,11 +375,66 @@ function stepAir(hero, input, dt, world, events) {
   }
 }
 
-// placeholders replaced in Tasks 7–8
-function startSwing() { return false; }
+function startSwing(hero, input, world, events) {
+  const hv = V.horiz(hero.vel);
+  const fwd = V.len(hv) > 2 ? V.norm(hv) : yawDir(input.camYaw);
+  const a = findAnchor(hero.pos, fwd, world.grid);
+  if (!a) return false;
+  const fromGround = hero.state === 'ground';
+  hero.anchor = a;
+  const head = { x: hero.pos.x, y: hero.pos.y + CONFIG.heroHeight, z: hero.pos.z };
+  const right = { x: -fwd.z, y: 0, z: fwd.x };
+  const lateral = V.dot(V.sub(a, head), right);
+  hero.swingAnchor = V.sub(a, V.scale(right, lateral));     // physics anchor: no lateral offset
+  hero.ropeLen0 = hero.ropeLen = V.dist(head, hero.swingAnchor);
+  hero.swingTime = 0;
+  hero.state = 'swing';
+  if (fromGround) hero.vel.y = Math.max(hero.vel.y, CONFIG.swingHop);   // small leap so the rope can take over
+  else if (hero.vel.y < 0) hero.vel.y *= 0.5;                            // soften an airborne catch
+  events.push({ type: 'swingStart', anchor: a });
+  return true;
+}
+
+function stepSwing(hero, input, dt, world, events) {
+  hero.swingTime += dt;
+  const head = () => ({ x: hero.pos.x, y: hero.pos.y + CONFIG.heroHeight, z: hero.pos.z });
+  // release?
+  const toAnchorH = V.horiz(V.sub(hero.swingAnchor, hero.pos));
+  const passed = hero.swingTime > CONFIG.swingAutoReleaseDelay && V.dot(V.horiz(hero.vel), toAnchorH) < 0 && hero.vel.y > 0;
+  if (!input.swing || passed) {
+    const bonus = hero.vel.y > 0;
+    if (bonus) hero.vel = V.scale(hero.vel, CONFIG.releaseBonus);
+    hero.anchor = null; hero.swingAnchor = null; hero.state = 'air';
+    events.push({ type: 'swingRelease', bonus, auto: passed });
+    return;
+  }
+  // forces: gravity, pump along velocity (W), lateral (A/D)
+  applyGravity(hero, dt);
+  const f = yawDir(input.camYaw), r = { x: -f.z, y: 0, z: f.x };
+  if (input.forward > 0 && V.len(hero.vel) > 0.1) hero.vel = V.add(hero.vel, V.scale(V.norm(hero.vel), CONFIG.ropePump * dt));
+  hero.vel = V.add(hero.vel, V.scale(r, input.strafe * CONFIG.swingLateral * dt));
+  // rope shortens over the arc
+  hero.ropeLen = Math.max(hero.ropeLen0 * CONFIG.ropeMinFrac, hero.ropeLen - hero.ropeLen0 * CONFIG.ropeShortenRate * dt);
+  integrate(hero, dt);
+  // rope constraint: project head onto sphere, remove outward velocity
+  const d = V.sub(head(), hero.swingAnchor);
+  const L = V.len(d);
+  if (L > hero.ropeLen) {
+    const n = V.scale(d, 1 / L);
+    const corrected = V.add(hero.swingAnchor, V.scale(n, hero.ropeLen));
+    hero.pos.x = corrected.x; hero.pos.y = corrected.y - CONFIG.heroHeight; hero.pos.z = corrected.z;
+    const vn = V.dot(hero.vel, n);
+    if (vn > 0) hero.vel = V.sub(hero.vel, V.scale(n, vn));
+  }
+  const c = resolveCollisions(hero.pos, hero.vel, world.grid);
+  if (c.onGround) { hero.anchor = null; hero.swingAnchor = null; hero.state = 'ground'; events.push({ type: 'swingRelease', bonus: false, auto: true }, { type: 'land', fallSpeed: 0 }); }
+  else if (c.wall && V.dot(V.horiz(hero.vel), c.wall.normal) <= 0) { hero.anchor = null; hero.swingAnchor = null; startCrawl(hero, c.wall, events); }
+}
+
+// placeholder replaced in Task 8
 function startZip() { return false; }
 function startCrawl(hero, wall, events) { hero.state = 'crawl'; hero.wall = wall; hero.vel = { x: 0, y: 0, z: 0 }; events.push({ type: 'crawlStart' }); }
-function stepSwing() {} function stepCrawl() {} function stepZip() {}
+function stepCrawl() {} function stepZip() {}
 
 function stepHero(hero, input, dt, world) {
   const events = [];
