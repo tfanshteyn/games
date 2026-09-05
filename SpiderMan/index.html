@@ -797,7 +797,7 @@ function poseHero(h, t) {
   }
   heroGroup.position.set(h.pos.x, h.pos.y, h.pos.z);
   if (h.state === 'crawl') {
-    const n = h.wall.normal; heroGroup.rotation.set(0, Math.atan2(-n.x, -n.z), 0);      // face the wall
+    const n = h.wall.normal; heroGroup.rotation.set(0, Math.atan2(n.x, n.z), 0);      // face the wall
     heroGroup.rotation.x = -Math.PI / 2 * 0.85; heroGroup.position.y += 0.9;             // lie against it
   } else {
     heroGroup.rotation.set(0, Math.atan2(h.facing.x, h.facing.z) + Math.PI, 0);
