@@ -54,11 +54,28 @@ test('air: gravity applies and falling is capped; walking off a roof → air', (
   assert.ok(h.vel.y === 0 && h.state === 'ground' && h.pos.y === 0);
 });
 
-test('air: hitting a wall while moving into it starts crawl; wall jump from air pushes away', () => {
+test('ground: running into a wall starts crawl', () => {
   const wallB = { min: { x: -50, y: 0, z: -40 }, max: { x: 50, y: 60, z: -20 } };
   const w = world(wallB); const h = createHero({ x: 0, y: 0, z: 0 });
   const inp = makeInput(); inp.forward = 1; inp.sprint = true; inp.jump = true;
   const ev = run(h, inp, w, 240);
   assert.ok(ev.some(e => e.type === 'crawlStart'));
   assert.equal(h.state, 'crawl'); assert.deepEqual(h.wall.normal, { x: 0, y: 0, z: 1 });
+});
+
+test('air: contact with a wall mid-air starts crawl; jump on contact wall-jumps away', () => {
+  const wallB = { min: { x: -50, y: 0, z: -40 }, max: { x: 50, y: 60, z: -20 } };
+  const w = world(wallB);
+  // mid-air, drifting into the wall with W held
+  const h = createHero({ x: 0, y: 15, z: -19 }); h.state = 'air'; h.vel = { x: 0, y: 0, z: -5 };
+  const inp = makeInput(); inp.forward = 1;
+  const ev = run(h, inp, w, 15);
+  assert.ok(ev.some(e => e.type === 'crawlStart'), 'crawlStart emitted');
+  assert.equal(h.state, 'crawl'); assert.deepEqual(h.wall.normal, { x: 0, y: 0, z: 1 }); assert.ok(h.pos.y > 1);
+  // same approach with jump pressed on the contact step → wall jump, still airborne
+  const h2 = createHero({ x: 0, y: 15, z: -19.45 }); h2.state = 'air'; h2.vel = { x: 0, y: 0, z: -5 };
+  const inp2 = makeInput(); inp2.forward = 1; inp2.jump = true;
+  const ev2 = run(h2, inp2, w, 1);
+  assert.equal(ev2[0].type, 'wallJump'); assert.equal(h2.state, 'air');
+  assert.ok(Math.abs(h2.vel.z - CONFIG.wallJumpOut) < 1e-6 && Math.abs(h2.vel.y - CONFIG.wallJumpUp) < 1e-6, `wall-jump vel ${JSON.stringify(h2.vel)}`);
 });
