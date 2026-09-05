@@ -1,0 +1,3 @@
+# Claude Code worktrees and scratch (never commit as gitlinks - breaks GitHub Pages)
+.claude/worktrees/
+.superpowers/
