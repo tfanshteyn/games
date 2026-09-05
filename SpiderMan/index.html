@@ -578,7 +578,128 @@ function updateMission(m, ctx, dt) {
 const PURE = { CONFIG, mulberry32, V, yawDir, SpatialGrid, generateCity, resolveCollisions, raycastAABBs, findAnchor, createHero, makeInput, stepHero, moveDir, createMission, updateMission, currentStep, stepProgress };
 // ==== PURE END ====
 
-// (rendering, input, HUD, audio and main loop are added in later tasks)
+// ==== RENDER: SCENE & CITY ====
+const PALETTE = [0xe63946, 0xf4a261, 0x2a9d8f, 0x457b9d, 0x8e5bd6, 0xffb703, 0x3fa7d6, 0xef476f];
+let scene, camera, renderer, city, civMeshes = [], clockT = 0;
+
+function initScene() {
+  renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('game'), antialias: true });
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+  scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x8fd3ff);
+  scene.fog = new THREE.Fog(0x8fd3ff, 250, 700);
+  camera = new THREE.PerspectiveCamera(CONFIG.camFovMin, window.innerWidth / window.innerHeight, 0.1, 1500);
+  window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  });
+  scene.add(new THREE.HemisphereLight(0xdff4ff, 0x6b7a8f, 0.9));
+  const sun = new THREE.DirectionalLight(0xfff4e0, 0.9); sun.position.set(200, 400, 150); scene.add(sun);
+  // sky dome: big inverted sphere with vertex-colour gradient
+  const skyGeo = new THREE.SphereGeometry(1200, 24, 12);
+  const cols = []; const p = skyGeo.attributes.position;
+  for (let i = 0; i < p.count; i++) { const t = Math.max(0, Math.min(1, p.getY(i) / 1200)); const c = new THREE.Color(0x8fd3ff).lerp(new THREE.Color(0x1e5bb8), t); cols.push(c.r, c.g, c.b); }
+  skyGeo.setAttribute('color', new THREE.Float32BufferAttribute(cols, 3));
+  scene.add(new THREE.Mesh(skyGeo, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, fog: false })));
+}
+
+function buildCityMeshes(c) {
+  // ground + roads
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(c.size + 40, c.size + 40), new THREE.MeshLambertMaterial({ color: 0x3b3f4a }));
+  ground.rotation.x = -Math.PI / 2; ground.position.y = -0.02; scene.add(ground);
+  const sidewalkMat = new THREE.MeshLambertMaterial({ color: 0x9aa0a6 });
+  const laneMat = new THREE.MeshBasicMaterial({ color: 0xf1d302 });
+  const sidewalks = [], lanes = [];
+  for (let ix = 0; ix < CONFIG.gridN; ix++) for (let iz = 0; iz < CONFIG.gridN; iz++) {
+    const x0 = c.streetLine(ix) + 5, z0 = c.streetLine(iz) + 5;
+    const g = new THREE.BoxGeometry(CONFIG.blockSize + 2, 0.3, CONFIG.blockSize + 2);
+    g.translate(x0 + CONFIG.blockSize / 2, 0.15, z0 + CONFIG.blockSize / 2); sidewalks.push(g);
+  }
+  for (let i = 0; i <= CONFIG.gridN; i++) {
+    const l = c.streetLine(i);
+    const gx = new THREE.PlaneGeometry(c.size, 0.3); gx.rotateX(-Math.PI / 2); gx.translate(0, 0.01, l); lanes.push(gx);
+    const gz = new THREE.PlaneGeometry(0.3, c.size); gz.rotateX(-Math.PI / 2); gz.translate(l, 0.01, 0); lanes.push(gz);
+  }
+  scene.add(new THREE.Mesh(mergeGeos(sidewalks), sidewalkMat));
+  scene.add(new THREE.Mesh(mergeGeos(lanes), laneMat));
+
+  // buildings merged by colour (8 draw calls) + one dark cap mesh + one window mesh
+  const byColor = PALETTE.map(() => []), caps = [], windows = [];
+  for (const b of c.buildings) {
+    const w = b.max.x - b.min.x, h = b.max.y - b.min.y, d = b.max.z - b.min.z;
+    const cx = (b.min.x + b.max.x) / 2, cz = (b.min.z + b.max.z) / 2;
+    const g = new THREE.BoxGeometry(w, h, d); g.translate(cx, b.min.y + h / 2, cz);
+    byColor[b.color].push(g);
+    if (b.kind === 'building' || b.kind === 'spire') {
+      const cap = new THREE.BoxGeometry(w + 0.6, 0.8, d + 0.6); cap.translate(cx, b.max.y + 0.4, cz); caps.push(cap);
+      // window strips: one thin emissive slab per 4 m of height on the ±Z faces
+      for (let y = 3; y < h - 2; y += 4) {
+        const s1 = new THREE.BoxGeometry(w * 0.8, 1.2, 0.1); s1.translate(cx, b.min.y + y, b.max.z + 0.05); windows.push(s1);
+        const s2 = new THREE.BoxGeometry(w * 0.8, 1.2, 0.1); s2.translate(cx, b.min.y + y, b.min.z - 0.05); windows.push(s2);
+        const s3 = new THREE.BoxGeometry(0.1, 1.2, d * 0.8); s3.translate(b.max.x + 0.05, b.min.y + y, cz); windows.push(s3);
+        const s4 = new THREE.BoxGeometry(0.1, 1.2, d * 0.8); s4.translate(b.min.x - 0.05, b.min.y + y, cz); windows.push(s4);
+      }
+    }
+  }
+  byColor.forEach((list, i) => { if (list.length) scene.add(new THREE.Mesh(mergeGeos(list), new THREE.MeshLambertMaterial({ color: PALETTE[i] }))); });
+  scene.add(new THREE.Mesh(mergeGeos(caps), new THREE.MeshLambertMaterial({ color: 0x22232b })));
+  scene.add(new THREE.Mesh(mergeGeos(windows), new THREE.MeshLambertMaterial({ color: 0xbfe9ff, emissive: 0x5ec4ff, emissiveIntensity: 0.6 })));
+
+  // props: instanced cars and lamps
+  const carGeo = new THREE.BoxGeometry(4, 1.5, 2); const carMesh = new THREE.InstancedMesh(carGeo, new THREE.MeshLambertMaterial({ color: 0xffffff }), c.props.cars.length);
+  const m4 = new THREE.Matrix4(), col = new THREE.Color();
+  c.props.cars.forEach((car, i) => {
+    m4.makeRotationY(car.dir ? 0 : Math.PI / 2); m4.setPosition(car.x, 0.75, car.z); carMesh.setMatrixAt(i, m4);
+    carMesh.setColorAt(i, col.setHex(PALETTE[car.color]));
+  });
+  scene.add(carMesh);
+  const lampGeo = new THREE.CylinderGeometry(0.12, 0.12, 6, 6); lampGeo.translate(0, 3, 0);
+  const lampMesh = new THREE.InstancedMesh(lampGeo, new THREE.MeshLambertMaterial({ color: 0x1b1b1b }), c.props.lamps.length);
+  c.props.lamps.forEach((l, i) => { m4.identity(); m4.setPosition(l.x, 0.3, l.z); lampMesh.setMatrixAt(i, m4); });
+  scene.add(lampMesh);
+
+  // civilians: two boxes each, animated in updateCivilians
+  const bodyGeo = new THREE.BoxGeometry(0.5, 1.0, 0.3), headGeo = new THREE.BoxGeometry(0.3, 0.3, 0.3);
+  const civMat = PALETTE.map(h => new THREE.MeshLambertMaterial({ color: h }));
+  const skin = new THREE.MeshLambertMaterial({ color: 0xf1c27d });
+  civMeshes = c.civilians.map((cv, i) => {
+    const grp = new THREE.Group();
+    const body = new THREE.Mesh(bodyGeo, civMat[i % 8]); body.position.y = 0.8; grp.add(body);
+    const head = new THREE.Mesh(headGeo, skin); head.position.y = 1.5; grp.add(head);
+    grp.position.set(cv.x, 0.3, cv.z); grp.userData = cv; scene.add(grp); return grp;
+  });
+}
+function mergeGeos(list) {
+  // manual merge (BufferGeometryUtils is not in three.min.js)
+  let total = 0; for (const g of list) total += g.index ? g.index.count : g.attributes.position.count;
+  const pos = new Float32Array(total * 3), nor = new Float32Array(total * 3); let off = 0; const idx = [];
+  for (const g of list) {
+    const ng = g.index ? g.toNonIndexed() : g;
+    pos.set(ng.attributes.position.array, off * 3); nor.set(ng.attributes.normal.array, off * 3); off += ng.attributes.position.count;
+  }
+  const out = new THREE.BufferGeometry();
+  out.setAttribute('position', new THREE.BufferAttribute(pos, 3)); out.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+  return out;
+}
+function updateCivilians(t) {
+  for (const g of civMeshes) {
+    const cv = g.userData, s = 1.2;
+    const off = Math.sin(t * 0.25 + cv.phase) * 6;          // wander back and forth 6 m
+    if (cv.axis === 'z') g.position.z = cv.z + off * cv.dir; else g.position.x = cv.x + off * cv.dir;
+    g.rotation.y = cv.axis === 'z' ? 0 : Math.PI / 2;
+    g.children[0].rotation.z = Math.sin(t * 6 + cv.phase) * 0.08;   // little bob
+  }
+}
+
+// ==== MAIN (temporary — replaced in Task 11) ====
+initScene();
+city = generateCity();
+buildCityMeshes(city);
+camera.position.set(city.spawn.x + 30, city.spawn.y + 40, city.spawn.z + 60);
+camera.lookAt(city.spawn.x, city.spawn.y, city.spawn.z);
+document.getElementById('title').classList.add('hidden');
+(function loop() { requestAnimationFrame(loop); clockT += 1 / 60; updateCivilians(clockT); renderer.render(scene, camera); })();
 </script>
 </body>
 </html>
