@@ -185,7 +185,63 @@ function generateCity(seed = CONFIG.citySeed) {
   return { size, half, buildings, grid, landmarks: { spire, crane }, spawn, props: { cars, lamps }, civilians, streetLine };
 }
 
-const PURE = { CONFIG, mulberry32, V, yawDir, SpatialGrid, generateCity };
+// --- Collision: hero box (feet at pos) vs AABBs, minimum-penetration axis resolve ---
+function resolveCollisions(pos, vel, grid) {
+  const r = CONFIG.heroRadius, h = CONFIG.heroHeight;
+  let onGround = false, wall = null;
+  if (pos.y < 0) { pos.y = 0; if (vel.y < 0) vel.y = 0; onGround = true; }
+  const min = { x: pos.x - r, y: pos.y, z: pos.z - r }, max = { x: pos.x + r, y: pos.y + h, z: pos.z + r };
+  const candidates = grid.query({ x: min.x - 1, y: min.y - 1, z: min.z - 1 }, { x: max.x + 1, y: max.y + 1, z: max.z + 1 });
+  for (const b of candidates) {
+    min.x = pos.x - r; min.y = pos.y; min.z = pos.z - r; max.x = pos.x + r; max.y = pos.y + h; max.z = pos.z + r;
+    const ox = Math.min(max.x - b.min.x, b.max.x - min.x);
+    const oy = Math.min(max.y - b.min.y, b.max.y - min.y);
+    const oz = Math.min(max.z - b.min.z, b.max.z - min.z);
+    if (ox <= 0 || oy <= 0 || oz <= 0) continue;
+    if (oy <= ox && oy <= oz) {
+      if (pos.y + h / 2 > (b.min.y + b.max.y) / 2) { pos.y = b.max.y; if (vel.y < 0) vel.y = 0; onGround = true; }
+      else { pos.y = b.min.y - h; if (vel.y > 0) vel.y = 0; }
+    } else if (ox <= oz) {
+      const side = pos.x > (b.min.x + b.max.x) / 2 ? 1 : -1;
+      pos.x = side > 0 ? b.max.x + r : b.min.x - r;
+      if (vel.x * side < 0) vel.x = 0;
+      wall = { normal: { x: side, y: 0, z: 0 }, building: b };
+    } else {
+      const side = pos.z > (b.min.z + b.max.z) / 2 ? 1 : -1;
+      pos.z = side > 0 ? b.max.z + r : b.min.z - r;
+      if (vel.z * side < 0) vel.z = 0;
+      wall = { normal: { x: 0, y: 0, z: side }, building: b };
+    }
+  }
+  return { onGround, wall };
+}
+
+// --- Ray vs AABBs (slab method); returns nearest hit ---
+function raycastAABBs(origin, dir, grid, maxDist) {
+  const end = { x: origin.x + dir.x * maxDist, y: origin.y + dir.y * maxDist, z: origin.z + dir.z * maxDist };
+  const qmin = { x: Math.min(origin.x, end.x), y: Math.min(origin.y, end.y), z: Math.min(origin.z, end.z) };
+  const qmax = { x: Math.max(origin.x, end.x), y: Math.max(origin.y, end.y), z: Math.max(origin.z, end.z) };
+  let best = null;
+  for (const b of grid.query(qmin, qmax)) {
+    let tmin = 0, tmax = maxDist, axis = -1, sign = 0;
+    for (const k of ['x', 'y', 'z']) {
+      const inv = 1 / dir[k];
+      let t1 = (b.min[k] - origin[k]) * inv, t2 = (b.max[k] - origin[k]) * inv, s = -1;
+      if (t1 > t2) { [t1, t2] = [t2, t1]; s = 1; }
+      if (t1 > tmin) { tmin = t1; axis = k; sign = s; }
+      tmax = Math.min(tmax, t2);
+      if (tmin > tmax) { tmin = Infinity; break; }
+    }
+    if (tmin === Infinity || tmin > maxDist || axis === -1) continue;
+    if (!best || tmin < best.dist) {
+      const normal = { x: 0, y: 0, z: 0 }; normal[axis] = sign;
+      best = { dist: tmin, normal, building: b, point: { x: origin.x + dir.x * tmin, y: origin.y + dir.y * tmin, z: origin.z + dir.z * tmin } };
+    }
+  }
+  return best;
+}
+
+const PURE = { CONFIG, mulberry32, V, yawDir, SpatialGrid, generateCity, resolveCollisions, raycastAABBs };
 // ==== PURE END ====
 
 // (rendering, input, HUD, audio and main loop are added in later tasks)
