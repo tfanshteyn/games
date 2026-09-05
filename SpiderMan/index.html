@@ -82,7 +82,110 @@ const V = {
 // Camera yaw 0 looks down -Z (Three.js convention)
 function yawDir(yaw) { return { x: -Math.sin(yaw), y: 0, z: -Math.cos(yaw) }; }
 
-const PURE = { CONFIG, mulberry32, V, yawDir };
+// --- Spatial grid: buckets AABBs by XZ cell so collision checks ~10 boxes not 400 ---
+class SpatialGrid {
+  constructor(cellSize, halfSize) {
+    this.cell = cellSize; this.half = halfSize;
+    this.n = Math.ceil((halfSize * 2) / cellSize) + 1;
+    this.cells = new Map();
+    this.all = [];
+  }
+  _key(cx, cz) { return cx * 100000 + cz; }
+  _cell(v) { return Math.floor((v + this.half) / this.cell); }
+  insert(box) {
+    this.all.push(box);
+    for (let cx = this._cell(box.min.x); cx <= this._cell(box.max.x); cx++)
+      for (let cz = this._cell(box.min.z); cz <= this._cell(box.max.z); cz++) {
+        const k = this._key(cx, cz);
+        if (!this.cells.has(k)) this.cells.set(k, []);
+        this.cells.get(k).push(box);
+      }
+  }
+  query(min, max) {
+    const out = [], seen = new Set();
+    for (let cx = this._cell(min.x); cx <= this._cell(max.x); cx++)
+      for (let cz = this._cell(min.z); cz <= this._cell(max.z); cz++) {
+        const list = this.cells.get(this._key(cx, cz));
+        if (!list) continue;
+        for (const b of list) {
+          if (seen.has(b)) continue; seen.add(b);
+          if (b.min.x < max.x && b.max.x > min.x && b.min.y < max.y && b.max.y > min.y && b.min.z < max.z && b.max.z > min.z) out.push(b);
+        }
+      }
+    return out;
+  }
+}
+
+// --- City generator ---
+function generateCity(seed = CONFIG.citySeed) {
+  const rng = mulberry32(seed);
+  const N = CONFIG.gridN, pitch = CONFIG.blockSize + CONFIG.streetW; // 50
+  const size = N * pitch;                                             // 600
+  const half = size / 2;
+  const streetLine = (i) => -half + pitch * i;
+  const buildings = [], cars = [], lamps = [], civilians = [];
+  let id = 0;
+  const box = (x0, z0, x1, z1, h, color, kind = 'building', y0 = 0) =>
+    ({ id: id++, min: { x: x0, y: y0, z: z0 }, max: { x: x1, y: y0 + h, z: z1 }, color, kind });
+
+  const pickHeight = (iz) => {
+    if (iz === 0) return 8 + rng() * 8;                 // waterfront low-rise 8–16
+    if (rng() < 0.1) return 60 + rng() * 60;            // towers 60–120
+    return 20 + rng() * 40;                             // 20–60
+  };
+
+  for (let ix = 0; ix < N; ix++) for (let iz = 0; iz < N; iz++) {
+    const bx = streetLine(ix) + CONFIG.streetW / 2, bz = streetLine(iz) + CONFIG.streetW / 2; // block min corner (5..45)
+    const B = CONFIG.blockSize, m = 2;                                                     // 2 m margin from sidewalk
+    if (ix === 6 && iz === 6) {                                                            // landmark: central spire
+      buildings.push(box(bx + 10, bz + 10, bx + B - 10, bz + B - 10, 130, 7, 'spire'));
+      continue;
+    }
+    if (ix === 6 && iz === 0) {                                                            // landmark: waterfront crane
+      buildings.push(box(bx + 18, bz + 18, bx + 22, bz + 22, 50, 6, 'crane'));
+      buildings.push(box(bx + 2, bz + 19, bx + B - 2, bz + 21, 2, 6, 'craneArm', 48));
+      continue;
+    }
+    const count = 1 + Math.floor(rng() * 4);                                               // 1–4 lots
+    let lots;
+    if (count === 1) lots = [[0, 0, B, B]];
+    else if (count === 2) lots = rng() < 0.5 ? [[0, 0, B / 2, B], [B / 2, 0, B, B]] : [[0, 0, B, B / 2], [0, B / 2, B, B]];
+    else {
+      lots = [[0, 0, B / 2, B / 2], [B / 2, 0, B, B / 2], [0, B / 2, B / 2, B], [B / 2, B / 2, B, B]];
+      if (count === 3) lots.splice(Math.floor(rng() * 4), 1);
+    }
+    for (const [lx0, lz0, lx1, lz1] of lots) {
+      const shrink = m + rng() * 3;
+      buildings.push(box(bx + lx0 + shrink, bz + lz0 + shrink, bx + lx1 - shrink, bz + lz1 - shrink, pickHeight(iz), Math.floor(rng() * 8)));
+    }
+  }
+
+  // Street props: cars and lamps along each street line, civilians on sidewalks
+  for (let i = 0; i <= N; i++) {
+    const line = streetLine(i);
+    for (let t = -half + 10; t < half - 10; t += 18) {
+      if (rng() < 0.5) cars.push({ x: line + (rng() < 0.5 ? -2.5 : 2.5), z: t + rng() * 6, dir: 0, color: Math.floor(rng() * 8) });
+      if (rng() < 0.5) cars.push({ x: t + rng() * 6, z: line + (rng() < 0.5 ? -2.5 : 2.5), dir: 1, color: Math.floor(rng() * 8) });
+      lamps.push({ x: line + 4.5, z: t }, { x: t, z: line + 4.5 });
+      if (rng() < 0.6) civilians.push({ x: line + 4.6, z: t + rng() * 10, dir: rng() < 0.5 ? 1 : -1, axis: 'z', phase: rng() * 6.28 });
+      if (rng() < 0.6) civilians.push({ x: t + rng() * 10, z: line + 4.6, dir: rng() < 0.5 ? 1 : -1, axis: 'x', phase: rng() * 6.28 });
+    }
+  }
+
+  const grid = new SpatialGrid(pitch, half);
+  for (const b of buildings) grid.insert(b);
+
+  const spire = buildings.find(b => b.kind === 'spire');
+  const crane = buildings.find(b => b.kind === 'crane');
+  // spawn: roof of the first building in block (5,7)
+  const sbx = streetLine(5) + 5, sbz = streetLine(7) + 5;
+  const spawnB = buildings.find(b => b.kind === 'building' && b.min.x >= sbx && b.max.x <= sbx + 40 && b.min.z >= sbz && b.max.z <= sbz + 40);
+  const spawn = { x: (spawnB.min.x + spawnB.max.x) / 2, y: spawnB.max.y, z: (spawnB.min.z + spawnB.max.z) / 2 };
+
+  return { size, half, buildings, grid, landmarks: { spire, crane }, spawn, props: { cars, lamps }, civilians, streetLine };
+}
+
+const PURE = { CONFIG, mulberry32, V, yawDir, SpatialGrid, generateCity };
 // ==== PURE END ====
 
 // (rendering, input, HUD, audio and main loop are added in later tasks)
