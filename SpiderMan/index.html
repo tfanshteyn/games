@@ -32,15 +32,15 @@
   #card { position: absolute; left: 50%; top: 20%; transform: translateX(-50%); background: rgba(6,6,20,0.85); border: 2px solid #e62429; padding: 22px 34px; font-size: 1.2rem; max-width: 640px; text-align: center; line-height: 1.6; }
   #card.hidden { display: none; }
   /* ---- touch controls (shown only on coarse-pointer devices) ---- */
-  body.touch { touch-action: none; -webkit-user-select: none; user-select: none; }
+  body.touch { touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
   body.touch #objective { top: calc(12px + env(safe-area-inset-top, 0px)); left: calc(12px + env(safe-area-inset-left, 0px)); min-width: 0; max-width: 46vw; padding: 6px 10px; }
   body.touch #objText { font-size: 0.85rem; }
   body.touch #speed { display: none; }
   body.touch #minimap { width: 110px; height: 110px; right: calc(12px + env(safe-area-inset-right, 0px)); bottom: calc(12px + env(safe-area-inset-bottom, 0px)); }
   #touch { position: absolute; inset: 0; pointer-events: auto; touch-action: none; }
   #touch.hidden { display: none; }
-  #stickBase { position: absolute; width: 120px; height: 120px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.45); background: rgba(6,6,20,0.35); transform: translate(-50%, -50%); display: none; }
-  #stickKnob { position: absolute; width: 54px; height: 54px; border-radius: 50%; background: rgba(230,36,41,0.85); box-shadow: 0 0 12px #e6242988; transform: translate(-50%, -50%); display: none; }
+  #stickBase { position: absolute; width: 150px; height: 150px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.45); background: rgba(6,6,20,0.35); transform: translate(-50%, -50%); display: none; }
+  #stickKnob { position: absolute; width: 48px; height: 48px; border-radius: 50%; background: rgba(230,36,41,0.85); box-shadow: 0 0 12px #e6242988; transform: translate(-50%, -50%); display: none; }
   .tbtn { position: absolute; border-radius: 50%; border: 2px solid rgba(255,255,255,0.6); background: rgba(6,6,20,0.5); color: #fff; font-weight: bold; letter-spacing: 1px; display: flex; align-items: center; justify-content: center; font-size: 0.8rem; text-shadow: 1px 1px 0 #000; }
   .tbtn.down { background: rgba(230,36,41,0.85); }
   #btnSwing { width: 96px; height: 96px; right: calc(150px + env(safe-area-inset-right, 0px)); bottom: calc(28px + env(safe-area-inset-bottom, 0px)); font-size: 0.95rem; }
@@ -369,6 +369,7 @@ function moveDir(input) {
   const f = yawDir(input.camYaw), r = { x: -f.z, y: 0, z: f.x };
   const d = { x: f.x * input.forward + r.x * input.strafe, y: 0, z: f.z * input.forward + r.z * input.strafe };
   const l = V.len(d);
+  // l === 0 returns a fresh literal: d holds -0 components from yawDir's sign, which strict deepEqual rejects.
   return l > 1 ? V.scale(d, 1 / l) : l > 0 ? d : { x: 0, y: 0, z: 0 };
 }
 
@@ -853,10 +854,14 @@ let webHoldConsumed = false;
 const TOUCH = matchMedia('(pointer: coarse)').matches || location.hash.includes('touch');
 const joy = { id: null, ox: 0, oy: 0, x: 0, y: 0, sprint: false };
 const look = { id: null, lx: 0, ly: 0 };
-const STICK_R = 55, STICK_ZONE = 0.45;                                 // knob travel (px), left fraction of screen that plants the stick
+const STICK_R = 48, STICK_ZONE = 0.45;                                 // knob travel (px; knob r24 + 48 stays inside the r75 base), left fraction of screen that plants the stick
+// Mouse LMB and the SWING button share these so web/swing input has one definition.
+function pressWeb() { keys.LMB = true; pressedThisFrame.web = true; }
+function releaseWeb() { keys.LMB = false; }
 
-// Mission text is written for keyboard+mouse; swap the key names for the on-screen controls on touch.
-const TOUCH_WORDS = [[/\(WASD\)/g, '(left stick)'], [/hold LMB/g, 'hold SWING'], [/tap LMB/g, 'tap SWING'], [/E to zip/g, 'ZIP to zip'], [/\(E\)/g, '(ZIP)'], [/Press E/g, 'Tap ZIP']];
+// Mission text is written for keyboard+mouse; every HUD text path (objective, prompt, card) swaps the
+// key names for the on-screen control names on touch.
+const TOUCH_WORDS = [[/\(WASD\)/g, '(left stick)'], [/hold LMB/g, 'hold SWING'], [/tap LMB/g, 'tap SWING'], [/E to zip/g, 'ZIP to zip'], [/\(E\)/g, '(ZIP)']];
 function touchWords(text) { return TOUCH ? TOUCH_WORDS.reduce((s, [re, w]) => s.replace(re, w), text) : text; }
 
 function initTouch() {
@@ -872,7 +877,7 @@ function initTouch() {
     const rel = e => { e.preventDefault(); e.stopPropagation(); el.classList.remove('down'); if (up) up(); };
     el.addEventListener('touchend', rel, { passive: false }); el.addEventListener('touchcancel', rel, { passive: false });
   };
-  btn('btnSwing', () => { keys.LMB = true; pressedThisFrame.web = true; }, () => { keys.LMB = false; });
+  btn('btnSwing', pressWeb, releaseWeb);
   btn('btnJump', () => { pressedThisFrame.jump = true; });
   btn('btnZip', () => { pressedThisFrame.zip = true; pressedThisFrame.interact = true; });
   btn('btnPause', () => { if (started && !paused) setPaused(true); });
@@ -907,6 +912,15 @@ function initTouch() {
     }
   };
   layer.addEventListener('touchend', end); layer.addEventListener('touchcancel', end);
+  // Backgrounding (call, app switch, Control Center) may not deliver touchcancel for live touches, which
+  // would strand a held SWING or stick. Desktop gets this for free from pointer-lock loss; mirror it here.
+  const releaseAll = () => {
+    joy.id = null; joy.x = joy.y = 0; joy.sprint = false; base.style.display = knob.style.display = 'none';
+    look.id = null; releaseWeb();
+    if (started && !paused) setPaused(true);
+  };
+  document.addEventListener('visibilitychange', () => { if (document.hidden) releaseAll(); });
+  window.addEventListener('blur', releaseAll);
   const orient = () => document.getElementById('rotate').classList.toggle('hidden', innerWidth >= innerHeight);
   window.addEventListener('resize', orient); orient();
 }
@@ -918,8 +932,8 @@ document.addEventListener('keydown', e => {
   if (e.code === 'KeyE') { pressedThisFrame.zip = true; pressedThisFrame.interact = true; }
 });
 document.addEventListener('keyup', e => { keys[e.code] = false; });
-document.addEventListener('mousedown', e => { if (pointerLocked && e.button === 0) { keys.LMB = true; pressedThisFrame.web = true; } });
-document.addEventListener('mouseup', e => { if (e.button === 0) keys.LMB = false; });
+document.addEventListener('mousedown', e => { if (pointerLocked && e.button === 0) pressWeb(); });
+document.addEventListener('mouseup', e => { if (e.button === 0) releaseWeb(); });
 document.addEventListener('mousemove', e => {
   if (!pointerLocked) return;
   camState.yaw -= e.movementX * CONFIG.mouseSens;
@@ -1097,8 +1111,8 @@ const HUD = (() => {
   return {
     show() { el('hud').classList.remove('hidden'); },
     setObjective(text, prog = '') { el('objText').textContent = touchWords(text); el('objProg').textContent = prog; },
-    prompt(text, seconds = 3) { el('prompt').textContent = text; el('prompt').style.opacity = 1; promptT = seconds; },
-    card(html, seconds = 5) { el('card').innerHTML = html; el('card').classList.remove('hidden'); cardT = seconds; },
+    prompt(text, seconds = 3) { el('prompt').textContent = touchWords(text); el('prompt').style.opacity = 1; promptT = seconds; },
+    card(html, seconds = 5) { el('card').innerHTML = touchWords(html); el('card').classList.remove('hidden'); cardT = seconds; },
     setMarker(pos) { marker = pos; el('marker').style.display = pos ? 'block' : 'none'; },
     update(dt) {
       if (promptT > 0 && (promptT -= dt) <= 0) el('prompt').style.opacity = 0;
