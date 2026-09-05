@@ -45,7 +45,7 @@ const CONFIG = {
   anchorConeDeg: 35, anchorMinDist: 15, anchorMaxDist: 70, anchorMinAbove: 8, skyAnchorHeight: 40,
   ropePump: 6, ropeShortenRate: 0.1, ropeMinFrac: 0.6, releaseBonus: 1.2, swingLateral: 5, swingAutoReleaseDelay: 0.3, swingHop: 4,
   // crawl / zip
-  crawlSpeed: 4, wallJumpOut: 8, wallJumpUp: 9, zipSpeed: 40, zipMaxDist: 60,
+  crawlSpeed: 4, wallJumpOut: 8, wallJumpUp: 9, zipSpeed: 40, zipMaxDist: 60, zipLedgeReach: 3,
   // camera
   camDist: 7, camDistFast: 10, camFovMin: 60, camFovMax: 75, camHeight: 2, camIdleRealign: 1.5, mouseSens: 0.002,
   fastSpeed: 25, // speed at which camera/FOV reach their "fast" values
@@ -298,7 +298,7 @@ function findAnchor(pos, forward, grid) {
 function createHero(spawn) {
   return {
     pos: V.clone(spawn), vel: { x: 0, y: 0, z: 0 }, state: 'ground', facing: { x: 0, y: 0, z: -1 },
-    anchor: null, ropeLen: 0, ropeLen0: 0, swingTime: 0, wall: null, zipTarget: null, zipNormal: null,
+    anchor: null, ropeLen: 0, ropeLen0: 0, swingTime: 0, wall: null, zipTarget: null, zipNormal: null, zipBuilding: null,
     lastJumpTime: -10, lastLandTime: -10, swingAnchor: null, time: 0, landedSpeed: 0,
   };
 }
@@ -344,6 +344,7 @@ function stepGround(hero, input, dt, world, events) {
   hero.vel.x = nv.x; hero.vel.z = nv.z;
   if (tryJump(hero, input, events)) { integrate(hero, dt); resolveCollisions(hero.pos, hero.vel, world.grid); return; }
   if (input.swing && startSwing(hero, input, world, events)) return;
+  if (input.zip && startZip(hero, input, world, events)) return;
   hero.vel.y = -1;                                   // keep contact with the floor
   integrate(hero, dt);
   const c = resolveCollisions(hero.pos, hero.vel, world.grid);
@@ -431,10 +432,78 @@ function stepSwing(hero, input, dt, world, events) {
   else if (c.wall && V.dot(V.horiz(hero.vel), c.wall.normal) <= 0) { hero.anchor = null; hero.swingAnchor = null; startCrawl(hero, c.wall, events); }
 }
 
-// placeholder replaced in Task 8
-function startZip() { return false; }
 function startCrawl(hero, wall, events) { hero.state = 'crawl'; hero.wall = wall; hero.vel = { x: 0, y: 0, z: 0 }; events.push({ type: 'crawlStart' }); }
-function stepCrawl() {} function stepZip() {}
+
+function stepCrawl(hero, input, dt, world, events) {
+  const n = hero.wall.normal, b = hero.wall.building;
+  if (input.swing && startSwing(hero, input, world, events)) return;
+  if (input.jump) {
+    hero.vel = V.add(V.scale(n, CONFIG.wallJumpOut), { x: 0, y: CONFIG.wallJumpUp, z: 0 });
+    hero.state = 'air'; hero.wall = null; events.push({ type: 'wallJump' }); return;
+  }
+  // tangent along the wall (horizontal), signed so that camera-right maps to tangent-right
+  const t = { x: -n.z, y: 0, z: n.x };
+  const camR = (() => { const f = yawDir(input.camYaw); return { x: -f.z, y: 0, z: f.x }; })();
+  const sideSign = V.dot(t, camR) >= 0 ? 1 : -1;
+  hero.vel = V.add(V.scale(t, input.strafe * sideSign * CONFIG.crawlSpeed), { x: 0, y: input.forward * CONFIG.crawlSpeed, z: 0 });
+  integrate(hero, dt);
+  // glue to face
+  const r = CONFIG.heroRadius;
+  if (n.x !== 0) hero.pos.x = (n.x > 0 ? b.max.x : b.min.x) + n.x * r;
+  else hero.pos.z = (n.z > 0 ? b.max.z : b.min.z) + n.z * r;
+  // reached the roof: hop on top
+  if (hero.pos.y + CONFIG.heroHeight * 0.5 >= b.max.y) {
+    hero.pos.y = b.max.y;
+    hero.pos.x -= n.x * (r * 2 + 0.2); hero.pos.z -= n.z * (r * 2 + 0.2);
+    hero.vel = { x: 0, y: 0, z: 0 }; hero.state = 'ground'; hero.wall = null;
+    events.push({ type: 'land', fallSpeed: 0 }); return;
+  }
+  if (hero.pos.y <= 0) { hero.pos.y = 0; hero.state = 'ground'; hero.wall = null; return; }
+  // slid off the side of the face → fall
+  const lo = n.x !== 0 ? b.min.z : b.min.x, hi = n.x !== 0 ? b.max.z : b.max.x, along = n.x !== 0 ? hero.pos.z : hero.pos.x;
+  if (along < lo - r || along > hi + r) { hero.state = 'air'; hero.wall = null; }
+}
+
+function startZip(hero, input, world, events) {
+  const head = { x: hero.pos.x, y: hero.pos.y + CONFIG.heroHeight, z: hero.pos.z };
+  const f = yawDir(input.camYaw), cp = Math.cos(input.camPitch);
+  const dir = { x: f.x * cp, y: Math.sin(input.camPitch), z: f.z * cp };
+  const hit = raycastAABBs(head, dir, world.grid, CONFIG.zipMaxDist);
+  if (!hit) return false;
+  // land on the surface: stand on roofs (including a wall hit just below the roof edge), hang on walls
+  const b = hit.building, n = hit.normal;
+  const ledge = n.y <= 0.5 && hit.point.y >= b.max.y - CONFIG.zipLedgeReach;     // wall hit just below the roof
+  if (n.y > 0.5 || ledge) {
+    hero.zipNormal = { x: 0, y: 1, z: 0 };
+    hero.zipTarget = n.y > 0.5
+      ? { x: hit.point.x, y: hit.point.y, z: hit.point.z }
+      : { x: hit.point.x - n.x * (CONFIG.heroRadius * 2 + 0.2), y: b.max.y, z: hit.point.z - n.z * (CONFIG.heroRadius * 2 + 0.2) };  // step onto the roof
+  } else {
+    hero.zipNormal = n;
+    hero.zipTarget = { x: hit.point.x + n.x * CONFIG.heroRadius, y: hit.point.y - CONFIG.heroHeight * 0.5, z: hit.point.z + n.z * CONFIG.heroRadius };
+  }
+  hero.zipBuilding = b;
+  hero.state = 'zip'; hero.anchor = null;
+  events.push({ type: 'zipStart', target: hero.zipTarget });
+  return true;
+}
+
+function stepZip(hero, input, dt, world, events) {
+  const to = V.sub(hero.zipTarget, hero.pos), d = V.len(to);
+  const stepLen = CONFIG.zipSpeed * dt;
+  if (d <= stepLen) {
+    V.set(hero.pos, hero.zipTarget);
+    const n = hero.zipNormal;
+    hero.vel = { x: 0, y: 0, z: 0 };
+    if (n.y > 0.5) { hero.state = 'ground'; }
+    else { startCrawl(hero, { normal: n, building: hero.zipBuilding }, events); }
+    hero.zipTarget = null;
+    events.push({ type: 'zipEnd' });
+    return;
+  }
+  hero.vel = V.scale(to, CONFIG.zipSpeed / d);
+  integrate(hero, dt);
+}
 
 function stepHero(hero, input, dt, world) {
   const events = [];

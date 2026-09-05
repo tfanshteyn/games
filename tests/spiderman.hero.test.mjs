@@ -122,3 +122,46 @@ test('swing: from ground with nothing ahead uses the sky anchor', () => {
   const inp = makeInput(); inp.swing = true; run(h, inp, w, 1);
   assert.equal(h.state, 'swing'); assert.equal(h.anchor.sky, true);
 });
+
+test('crawl: W climbs the wall, reaching the roof puts hero on top', () => {
+  const wallB = { min: { x: -50, y: 0, z: -40 }, max: { x: 50, y: 12, z: -20 } };
+  const w = world(wallB); const h = createHero({ x: 0, y: 0, z: 0 });
+  const inp = makeInput(); inp.forward = 1;
+  run(h, inp, w, 200);                       // walk into wall → crawl
+  assert.equal(h.state, 'crawl');
+  const y0 = h.pos.y;
+  run(h, inp, w, 60);
+  assert.ok(h.pos.y > y0 + 3, `climbed ${h.pos.y - y0}`);
+  for (let i = 0; i < 400 && h.state !== 'ground'; i++) stepHero(h, inp, DT, w);
+  assert.equal(h.state, 'ground'); assert.equal(h.pos.y, 12); assert.ok(h.pos.z < -20, 'on the roof, not floating at the edge');
+});
+
+test('crawl: A/D moves along the wall; Space jumps away from it', () => {
+  const wallB = { min: { x: -50, y: 0, z: -40 }, max: { x: 50, y: 60, z: -20 } };
+  const w = world(wallB); const h = createHero({ x: 0, y: 0, z: 0 });
+  const inp = makeInput(); inp.forward = 1; run(h, inp, w, 200); assert.equal(h.state, 'crawl');
+  inp.forward = 0; inp.strafe = 1; const x0 = h.pos.x; run(h, inp, w, 60);
+  assert.ok(Math.abs(h.pos.x - x0) > 3, 'moved sideways');
+  assert.ok(Math.abs(h.pos.z - (-20 + CONFIG.heroRadius)) < 1e-6, 'still glued');
+  inp.strafe = 0; inp.jump = true; const ev = run(h, inp, w, 1);
+  assert.equal(h.state, 'air'); assert.equal(ev[0].type, 'wallJump'); assert.ok(h.vel.z > 0 && h.vel.y > 0);
+});
+
+test('zip: E while aiming at a roof dashes there and lands', () => {
+  const target = { min: { x: -10, y: 0, z: -50 }, max: { x: 10, y: 30, z: -30 } };
+  const w = world(target); const h = createHero({ x: 0, y: 0, z: 0 });
+  const inp = makeInput(); inp.jump = true; run(h, inp, w, 2);          // must be airborne to zip
+  inp.camYaw = 0; inp.camPitch = Math.atan2(30 - 1.8 - 1, 30);         // aim at the wall 1m below the roof
+  inp.zip = true; const ev = run(h, inp, w, 1);
+  assert.equal(h.state, 'zip', JSON.stringify(ev)); assert.equal(ev[0].type, 'zipStart');
+  const ev2 = run(h, inp, w, 120);
+  assert.ok(ev2.some(e => e.type === 'zipEnd'));
+  assert.ok(h.state === 'ground' || h.state === 'crawl');
+  assert.ok(h.pos.y >= 29.9, `arrived high ${h.pos.y}`);
+});
+
+test('zip: nothing in range → no state change', () => {
+  const w = world(); const h = createHero({ x: 0, y: 0, z: 0 });
+  const inp = makeInput(); inp.jump = true; run(h, inp, w, 2); inp.zip = true; run(h, inp, w, 1);
+  assert.equal(h.state, 'air');
+});
