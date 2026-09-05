@@ -6,4 +6,4 @@ const begin = html.indexOf('// ==== PURE BEGIN ====');
 const end = html.indexOf('// ==== PURE END ====');
 if (begin < 0 || end < 0) throw new Error('PURE markers not found in SpiderMan/index.html');
 const src = html.slice(begin, end) + '\n;PURE';
-export const PURE = vm.runInNewContext(src, { Math, console }, { filename: 'SpiderMan/pure.js' });
+export const PURE = vm.runInThisContext(src, { filename: 'SpiderMan/pure.js' });

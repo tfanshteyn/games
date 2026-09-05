@@ -1,5 +1,5 @@
 import test from 'node:test';
-import assert from 'node:assert';
+import assert from 'node:assert/strict';
 import { PURE } from './pure.mjs';
 const { mulberry32, V, yawDir } = PURE;
 
