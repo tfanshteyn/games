@@ -294,7 +294,108 @@ function findAnchor(pos, forward, grid) {
   return { x: head.x + forward.x * s, y: head.y + CONFIG.skyAnchorHeight, z: head.z + forward.z * s, sky: true };
 }
 
-const PURE = { CONFIG, mulberry32, V, yawDir, SpatialGrid, generateCity, resolveCollisions, raycastAABBs, findAnchor };
+// --- Hero ---
+function createHero(spawn) {
+  return {
+    pos: V.clone(spawn), vel: { x: 0, y: 0, z: 0 }, state: 'ground', facing: { x: 0, y: 0, z: -1 },
+    anchor: null, ropeLen: 0, ropeLen0: 0, swingTime: 0, wall: null, zipTarget: null, zipNormal: null,
+    lastJumpTime: -10, lastLandTime: -10, swingAnchor: null, time: 0, landedSpeed: 0,
+  };
+}
+function makeInput() {
+  return { forward: 0, strafe: 0, jump: false, jumpHeld: false, sprint: false, swing: false, zip: false, camYaw: 0, camPitch: 0 };
+}
+
+// Desired horizontal move direction from WASD relative to camera yaw (unit or zero)
+function moveDir(input) {
+  const f = yawDir(input.camYaw), r = { x: -f.z, y: 0, z: f.x };
+  const d = { x: f.x * input.forward + r.x * input.strafe, y: 0, z: f.z * input.forward + r.z * input.strafe };
+  return V.norm(d);
+}
+
+function applyGravity(hero, dt) {
+  hero.vel.y = Math.max(hero.vel.y - CONFIG.gravity * dt, -CONFIG.maxFall);
+}
+function integrate(hero, dt) {
+  hero.pos.x += hero.vel.x * dt; hero.pos.y += hero.vel.y * dt; hero.pos.z += hero.vel.z * dt;
+}
+function updateFacing(hero) {
+  const hv = V.horiz(hero.vel);
+  if (V.len(hv) > 0.5) hero.facing = V.norm(hv);
+}
+function tryJump(hero, input, events) {
+  if (!input.jump) return false;
+  const high = hero.time - hero.lastLandTime < CONFIG.doubleTapWindow;   // pressed right on landing
+  hero.vel.y = high ? CONFIG.highJumpSpeed : CONFIG.jumpSpeed;
+  hero.lastJumpTime = hero.time;
+  hero.state = 'air';
+  events.push({ type: 'jump', high });
+  return true;
+}
+
+function stepGround(hero, input, dt, world, events) {
+  const dir = moveDir(input);
+  const target = V.scale(dir, input.sprint ? CONFIG.sprintSpeed : CONFIG.runSpeed);
+  const hv = V.horiz(hero.vel);
+  const diff = V.sub(target, hv);
+  const accel = V.len(dir) > 0 ? CONFIG.groundAccel : CONFIG.groundFriction * Math.max(V.len(hv), 1);
+  const step = Math.min(V.len(diff), accel * dt);
+  const nv = V.add(hv, V.scale(V.norm(diff), step));
+  hero.vel.x = nv.x; hero.vel.z = nv.z;
+  if (tryJump(hero, input, events)) { integrate(hero, dt); resolveCollisions(hero.pos, hero.vel, world.grid); return; }
+  if (input.swing && startSwing(hero, input, world, events)) return;
+  hero.vel.y = -1;                                   // keep contact with the floor
+  integrate(hero, dt);
+  const c = resolveCollisions(hero.pos, hero.vel, world.grid);
+  if (c.wall && V.dot(moveDir(input), c.wall.normal) < -0.3) { startCrawl(hero, c.wall, events); return; }
+  if (!c.onGround) { hero.state = 'air'; hero.vel.y = 0; }
+}
+
+function stepAir(hero, input, dt, world, events) {
+  if (input.swing && startSwing(hero, input, world, events)) return;
+  if (input.zip && startZip(hero, input, world, events)) return;
+  const dir = moveDir(input);
+  hero.vel.x += dir.x * CONFIG.airSteer * dt; hero.vel.z += dir.z * CONFIG.airSteer * dt;
+  applyGravity(hero, dt);
+  const before = hero.vel.y;
+  integrate(hero, dt);
+  const c = resolveCollisions(hero.pos, hero.vel, world.grid);
+  if (c.onGround) {
+    hero.state = 'ground'; hero.landedSpeed = -before; hero.lastLandTime = hero.time;
+    events.push({ type: 'land', fallSpeed: -before });
+    return;
+  }
+  if (c.wall) {
+    if (input.jump) {                                 // wall jump
+      hero.vel = V.add(V.scale(c.wall.normal, CONFIG.wallJumpOut), { x: 0, y: CONFIG.wallJumpUp, z: 0 });
+      events.push({ type: 'wallJump' }); return;
+    }
+    const intoWall = V.dot(V.horiz(moveDir(input)), c.wall.normal) < -0.3 || V.len(V.horiz(hero.vel)) < 0.5;
+    if (hero.pos.y > 1 && intoWall) { startCrawl(hero, c.wall, events); return; }
+  }
+}
+
+// placeholders replaced in Tasks 7–8
+function startSwing() { return false; }
+function startZip() { return false; }
+function startCrawl(hero, wall, events) { hero.state = 'crawl'; hero.wall = wall; hero.vel = { x: 0, y: 0, z: 0 }; events.push({ type: 'crawlStart' }); }
+function stepSwing() {} function stepCrawl() {} function stepZip() {}
+
+function stepHero(hero, input, dt, world) {
+  const events = [];
+  hero.time += dt;
+  switch (hero.state) {
+    case 'ground': stepGround(hero, input, dt, world, events); break;
+    case 'air': stepAir(hero, input, dt, world, events); break;
+    case 'swing': stepSwing(hero, input, dt, world, events); break;
+    case 'crawl': stepCrawl(hero, input, dt, world, events); break;
+    case 'zip': stepZip(hero, input, dt, world, events); break;
+  }
+  updateFacing(hero);
+  return events;
+}
+
+const PURE = { CONFIG, mulberry32, V, yawDir, SpatialGrid, generateCity, resolveCollisions, raycastAABBs, findAnchor, createHero, makeInput, stepHero, moveDir };
 // ==== PURE END ====
 
 // (rendering, input, HUD, audio and main loop are added in later tasks)
