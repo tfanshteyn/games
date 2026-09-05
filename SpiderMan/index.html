@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Spider-Man: Brand New Day</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #0c0c1a; font-family: 'Segoe UI', Tahoma, Verdana, sans-serif; color: #fff; }
+  canvas#game { display: block; }
+  .overlay { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; background: rgba(6,6,20,0.85); z-index: 10; text-align: center; }
+  .overlay.hidden { display: none; }
+  .overlay h1 { font-size: 3rem; letter-spacing: 6px; color: #e62429; text-shadow: 0 0 20px #e6242988, 3px 3px 0 #0b3d91; }
+  .overlay h2 { font-size: 1.2rem; letter-spacing: 3px; color: #7fb3ff; margin-bottom: 30px; }
+  .overlay p { max-width: 520px; line-height: 1.6; color: #ccc; margin-bottom: 20px; }
+  .overlay button { padding: 12px 36px; font-size: 1.1rem; letter-spacing: 2px; background: #e62429; color: #fff; border: none; border-radius: 6px; cursor: pointer; margin: 6px; }
+  .overlay button:hover { background: #ff3b40; }
+  kbd { background: #222; border: 1px solid #555; border-radius: 4px; padding: 1px 6px; font-family: monospace; }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+
+<div id="title" class="overlay">
+  <h1>SPIDER-MAN</h1>
+  <h2>BRAND NEW DAY</h2>
+  <p>Nobody remembers Peter Parker. Time to remind them about Spider-Man.</p>
+  <p><kbd>W A S D</kbd> move · <kbd>Mouse</kbd> look · <kbd>Space</kbd> jump · hold <kbd>LMB</kbd> swing · <kbd>E</kbd> zip · <kbd>Esc</kbd> pause</p>
+  <button id="startBtn">START PATROL</button>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+// ==== PURE BEGIN ====
+// Everything in this block is plain JS math: no THREE, no DOM. Tested by tests/*.test.mjs.
+const CONFIG = {
+  // city
+  citySeed: 20260904, gridN: 12, blockSize: 40, streetW: 10,
+  // hero body
+  heroRadius: 0.5, heroHeight: 1.8,
+  // movement
+  gravity: 22, maxFall: 60, runSpeed: 8, sprintSpeed: 12, groundAccel: 40, groundFriction: 10, airSteer: 6,
+  jumpSpeed: 10, highJumpSpeed: 15, doubleTapWindow: 0.25,
+  // swing
+  anchorConeDeg: 35, anchorMinDist: 15, anchorMaxDist: 70, anchorMinAbove: 8, skyAnchorHeight: 40,
+  ropePump: 6, ropeShortenRate: 0.1, ropeMinFrac: 0.6, releaseBonus: 1.2, swingLateral: 5, swingAutoReleaseDelay: 0.3,
+  // crawl / zip
+  crawlSpeed: 4, wallJumpOut: 8, wallJumpUp: 9, zipSpeed: 40, zipMaxDist: 60,
+  // camera
+  camDist: 7, camDistFast: 10, camFovMin: 60, camFovMax: 75, camHeight: 2, camIdleRealign: 1.5, mouseSens: 0.002,
+  fastSpeed: 25, // speed at which camera/FOV reach their "fast" values
+};
+
+const PURE = { CONFIG };
+// ==== PURE END ====
+
+// (rendering, input, HUD, audio and main loop are added in later tasks)
+</script>
+</body>
+</html>
