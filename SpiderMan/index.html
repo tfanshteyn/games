@@ -606,7 +606,44 @@ function updateMission(m, ctx, dt) {
   return events;
 }
 
-const PURE = { CONFIG, mulberry32, V, yawDir, SpatialGrid, generateCity, resolveCollisions, raycastAABBs, findAnchor, createHero, makeInput, stepHero, moveDir, createMission, updateMission, currentStep, stepProgress };
+// --- Mission 1 definition (pure so it is testable; geometry comes from the city) ---
+function mission1Def(city) {
+  const sl = city.streetLine;
+  const roofAt = (ix, iz) => {                                  // tallest 'building' in block (ix,iz)
+    const x0 = sl(ix) + 5, z0 = sl(iz) + 5;
+    return city.buildings.filter(b => b.kind === 'building' && b.min.x >= x0 && b.max.x <= x0 + 40 && b.min.z >= z0 && b.max.z <= z0 + 40)
+      .sort((a, b) => b.max.y - a.max.y)[0];
+  };
+  const centre = b => ({ x: (b.min.x + b.max.x) / 2, y: b.max.y, z: (b.min.z + b.max.z) / 2 });
+  const first = roofAt(5, 4);                                   // ~150 m north of spawn (5,7)
+  const tokensRoofs = [roofAt(4, 4), roofAt(6, 4), roofAt(4, 5), roofAt(6, 5), roofAt(5, 5)];
+  const tokens = tokensRoofs.map((b, i) => {
+    const c = centre(b);
+    // alternate: roof-edge token vs. wall-face token 6 m below the roof on the -Z face
+    return i % 2 === 0 ? { id: 'tok' + i, pos: { x: c.x, y: b.max.y + 1, z: b.min.z + 1 } }
+                       : { id: 'tok' + i, pos: { x: c.x, y: Math.max(4, b.max.y - 6), z: b.min.z - 1 } };
+  });
+  const vanRoute = [
+    { x: sl(4), y: 0, z: sl(4) }, { x: sl(8), y: 0, z: sl(4) }, { x: sl(8), y: 0, z: sl(8) }, { x: sl(4), y: 0, z: sl(8) },
+  ];
+  const plaza = { x: sl(8), y: 0, z: sl(6) };                   // crash site on the east street
+  const thugs = [0, 1, 2].map(i => ({ id: 'thug' + i, pos: { x: plaza.x + [6, -6, 2][i], y: 0, z: plaza.z + [4, 3, -7][i] } }));
+  const spawnB = city.buildings.find(b => b.kind === 'building' && city.spawn.x >= b.min.x && city.spawn.x <= b.max.x && city.spawn.z >= b.min.z && city.spawn.z <= b.max.z);
+  return {
+    id: 'm1', title: 'Rooftop Reboot',
+    steps: [
+      { type: 'reach', target: { x: city.spawn.x, y: city.spawn.y, z: Math.max(spawnB.min.z + 1.5, city.spawn.z - 6) }, radius: 3, text: 'Walk to the roof edge (WASD)' },
+      { type: 'reach', target: centre(first), radius: 8, text: 'Swing to the marked rooftop — hold LMB, release on the upswing' },
+      { type: 'collect', tokenIds: tokens.map(t => t.id), text: 'Collect 5 web cartridges — crawl walls, E to zip' },
+      { type: 'chase', maxDist: 30, loseDist: 70, duration: 20, text: 'Getaway van! Stay on it' },
+      { type: 'webUp', thugIds: thugs.map(t => t.id), text: 'Web up the thugs — get close and tap LMB' },
+      { type: 'interact', target: plaza, radius: 4, text: 'Pick up the device (E)' },
+    ],
+    tokens, thugs, vanRoute, plaza,
+  };
+}
+
+const PURE = { CONFIG, mulberry32, V, yawDir, SpatialGrid, generateCity, resolveCollisions, raycastAABBs, findAnchor, createHero, makeInput, stepHero, moveDir, createMission, updateMission, currentStep, stepProgress, mission1Def };
 // ==== PURE END ====
 
 // ==== AUDIO (Web Audio synth, no files) ====
@@ -965,6 +1002,109 @@ function drawMinimap(marker) {
   g.beginPath(); g.moveTo(0, -8); g.lineTo(6, 6); g.lineTo(-6, 6); g.closePath(); g.fill(); g.restore();
 }
 
+// ==== MISSION 1 CONTENT ====
+let mission, m1, tokenMeshes = {}, thugMeshes = {}, vanMesh, vanState, deviceMesh, freeRoam = false, score = 0, chaseWarned = false;
+const tokenGeo = new THREE.OctahedronGeometry(0.6), tokenMat = new THREE.MeshLambertMaterial({ color: 0x9dff4a, emissive: 0x39ff14, emissiveIntensity: 0.8 });
+const ctxTokens = {}, ctxThugs = {};
+
+function makeThugMesh(pos) {
+  const g = new THREE.Group();
+  const body = new THREE.Mesh(new THREE.BoxGeometry(0.6, 1.1, 0.35), new THREE.MeshLambertMaterial({ color: 0x333333 }));
+  body.position.y = 0.85; g.add(body);
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.2, 8, 6), new THREE.MeshLambertMaterial({ color: 0xf1c27d }));
+  head.position.y = 1.6; g.add(head);
+  g.position.set(pos.x, pos.y, pos.z); scene.add(g); return g;
+}
+function startMission1() {
+  m1 = mission1Def(city); mission = createMission(m1);
+  // restore progress
+  let restoredComplete = false;
+  try { const s = JSON.parse(localStorage.getItem('spiderman_bnd') || '{}'); if (s.m1Complete) { mission.current = mission.steps.length; mission.state = 'complete'; restoredComplete = true; } } catch (e) {}
+  for (const t of m1.tokens) {
+    ctxTokens[t.id] = { pos: t.pos, collected: restoredComplete };
+    const mesh = new THREE.Mesh(tokenGeo, tokenMat); mesh.position.set(t.pos.x, t.pos.y, t.pos.z); mesh.visible = !restoredComplete; scene.add(mesh); tokenMeshes[t.id] = mesh;
+  }
+  for (const t of m1.thugs) { ctxThugs[t.id] = { pos: V.clone(t.pos), webbed: false }; thugMeshes[t.id] = makeThugMesh(t.pos); thugMeshes[t.id].visible = false; }
+  vanMesh = new THREE.Mesh(new THREE.BoxGeometry(2.4, 2.2, 5.5), new THREE.MeshLambertMaterial({ color: 0x1f1f1f }));
+  vanMesh.visible = false; scene.add(vanMesh);
+  vanState = { pos: V.clone(m1.vanRoute[0]), wp: 1, speed: 14, active: false, crashed: false };
+  deviceMesh = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.8, 0.8), new THREE.MeshLambertMaterial({ color: 0x39ff14, emissive: 0x39ff14, emissiveIntensity: 1 }));
+  deviceMesh.position.set(m1.plaza.x, 0.6, m1.plaza.z); deviceMesh.visible = false; scene.add(deviceMesh);
+  if (mission.state === 'complete') enterFreeRoam(); else { HUD.card('<b>Nobody remembers Peter Parker.</b><br>Time to remind them about Spider-Man.', 5); applyStepUI(); }
+}
+function applyStepUI() {
+  const s = currentStep(mission); if (!s) return;
+  HUD.setObjective(s.text, stepProgress(mission, { tokens: ctxTokens, thugs: ctxThugs }));
+  if (s.type === 'reach' || s.type === 'interact') HUD.setMarker(s.target);
+  else if (s.type === 'collect') HUD.setMarker(nearestUncollected());
+  else if (s.type === 'chase') { vanState.active = true; vanMesh.visible = true; HUD.setMarker(vanState.pos); HUD.prompt('Keep up with the van!', 3); }
+  else if (s.type === 'webUp') { for (const id in thugMeshes) thugMeshes[id].visible = true; HUD.setMarker(m1.plaza); }
+  if (s.type === 'interact') deviceMesh.visible = true;
+}
+function nearestUncollected() {
+  let best = null, bd = Infinity;
+  for (const id in ctxTokens) { const t = ctxTokens[id]; if (t.collected) continue; const d = V.dist(hero.pos, t.pos); if (d < bd) { bd = d; best = t.pos; } }
+  return best;
+}
+function updateVan(dt) {
+  if (!vanState.active || vanState.crashed) return;
+  const s = currentStep(mission);
+  const target = m1.vanRoute[vanState.wp];
+  const to = V.sub(target, vanState.pos), d = V.len(to);
+  if (d < 1) { vanState.wp = (vanState.wp + 1) % m1.vanRoute.length; }
+  else { vanState.pos = V.add(vanState.pos, V.scale(to, Math.min(1, vanState.speed * dt / d))); vanMesh.rotation.y = Math.atan2(to.x, to.z); }
+  vanMesh.position.set(vanState.pos.x, 1.1, vanState.pos.z);
+  if (!s || s.type !== 'chase') {                                   // chase over → crash at plaza
+    vanState.crashed = true; vanMesh.position.set(m1.plaza.x, 1.1, m1.plaza.z); vanMesh.rotation.set(0.15, 0.6, 0.2);
+    spawnPop('CRASH!', m1.plaza, '#ff5533'); SFX.hit();
+  }
+}
+function updateMission1(dt) {
+  if (freeRoam) { updateFreeRoam(); return; }
+  updateVan(dt);
+  const ctx = { heroPos: hero.pos, tokens: ctxTokens, thugs: ctxThugs, vanPos: vanState.pos, webPressed: pressedThisFrame.web, interactPressed: pressedThisFrame.interact };
+  for (const e of updateMission(mission, ctx, dt)) {
+    if (e.type === 'tokenCollected') { scene.remove(tokenMeshes[e.id]); SFX.chime(); spawnPop('+1', hero.pos, '#9dff4a'); HUD.setMarker(nearestUncollected()); }
+    if (e.type === 'thugWebbed') { const m = thugMeshes[e.id]; m.children[0].material = new THREE.MeshLambertMaterial({ color: 0xffffff }); m.rotation.z = 1.4; m.position.y = 0.4; SFX.hit(); spawnPop('THWIP!', m.position, '#ffffff'); }
+    if (e.type === 'chaseLost') { if (!chaseWarned) { HUD.prompt('Lost the van — catch up!', 2); chaseWarned = true; } }
+    if (e.type === 'stepComplete') { chaseWarned = false; SFX.chime(); applyStepUI(); }
+    if (e.type === 'missionComplete') {
+      deviceMesh.visible = false;
+      HUD.card('<b>Mission complete.</b><br>The tech glows a sick green — gamma? Someone is arming the street gangs.<br><i>Next: The Sting</i>', 7);
+      try { localStorage.setItem('spiderman_bnd', JSON.stringify({ m1Complete: true })); } catch (err) {}
+      enterFreeRoam();
+    }
+  }
+  if (currentStep(mission)?.type === 'chase') HUD.setMarker(vanState.pos);
+  const s = currentStep(mission); if (s) HUD.setObjective(s.text, stepProgress(mission, ctx));
+}
+// Free roam: 20 tokens scattered on random roofs, running score
+let roamTokens = [];
+function enterFreeRoam() {
+  freeRoam = true; HUD.setMarker(null);
+  const rng = mulberry32(99);
+  const roofs = city.buildings.filter(b => b.kind === 'building');
+  roamTokens = [];
+  for (let i = 0; i < 20; i++) {
+    const b = roofs[Math.floor(rng() * roofs.length)];
+    const pos = { x: (b.min.x + b.max.x) / 2, y: b.max.y + 1, z: (b.min.z + b.max.z) / 2 };
+    const mesh = new THREE.Mesh(tokenGeo, tokenMat); mesh.position.set(pos.x, pos.y, pos.z); scene.add(mesh);
+    roamTokens.push({ pos, mesh, got: false });
+  }
+  HUD.setObjective('Free roam — collect web cartridges', `Score ${score}`);
+}
+function updateFreeRoam() {
+  for (const t of roamTokens) {
+    if (!t.got && V.dist(hero.pos, t.pos) < 2.5) { t.got = true; scene.remove(t.mesh); score += 100 + Math.round(V.len(hero.vel)) * 5; SFX.chime(); spawnPop('+' + (100 + Math.round(V.len(hero.vel)) * 5), hero.pos, '#9dff4a'); }
+    else if (!t.got) t.mesh.rotation.y += 0.03;
+  }
+  HUD.setObjective('Free roam — collect web cartridges', `Score ${score}  ·  ${roamTokens.filter(t => t.got).length} / 20`);
+}
+function restartMission() {
+  try { localStorage.removeItem('spiderman_bnd'); } catch (e) {}
+  location.reload();
+}
+
 // ==== MAIN LOOP ====
 let last = 0, acc = 0; const STEP = 1 / 60;
 function handleHeroEvents(events) {
@@ -985,10 +1125,12 @@ function frame(now) {
   while (acc >= STEP) {
     readInput();
     handleHeroEvents(stepHero(hero, input, STEP, { grid: city.grid }));
+    updateMission1(STEP);
     clearPressed();
     clockT += STEP; acc -= STEP;
   }
   updateCivilians(clockT); poseHero(hero, clockT); updateWebStrand(); updatePops(dt); updateCamera(dt);
+  for (const id in tokenMeshes) tokenMeshes[id].rotation.y += 0.03;
   SFX.setWind(Math.min(1, V.len(hero.vel) / CONFIG.fastSpeed)); HUD.update(dt);
   renderer.render(scene, camera);
 }
@@ -997,6 +1139,7 @@ function startGame() {
   document.getElementById('title').classList.add('hidden');
   lockPointer();
   SFX.unlock(); SFX.theme(); HUD.show();
+  startMission1();
 }
 initScene();
 city = generateCity();
@@ -1006,6 +1149,7 @@ buildHeroMesh();
 camPos.set(city.spawn.x, city.spawn.y + 4, city.spawn.z + 8);
 document.getElementById('startBtn').addEventListener('click', startGame);
 document.getElementById('resumeBtn').addEventListener('click', () => setPaused(false));
+document.getElementById('restartBtn').addEventListener('click', restartMission);
 requestAnimationFrame(frame);
 if (location.hash.includes('autostart')) startGame();
 </script>
