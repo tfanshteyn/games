@@ -816,6 +816,10 @@ const keys = {};
 let pointerLocked = false, paused = false, started = false;
 const pressedThisFrame = { jump: false, zip: false, web: false, interact: false };
 const camState = { yaw: 0, pitch: -0.25, idleT: 0, dist: CONFIG.camDist, fov: CONFIG.camFovMin };
+// Latches the webUp suppression of input.swing for the rest of an LMB hold once an unwebbed thug has
+// been in range on any substep, so a human click (many substeps) doesn't start a swing after the web
+// lands on an earlier substep and the thug leaves range. Cleared when the button is released.
+let webHoldConsumed = false;
 
 document.addEventListener('keydown', e => {
   if (e.repeat) return;
@@ -860,10 +864,12 @@ function clearPressed() { for (const k in pressedThisFrame) pressedThisFrame[k] 
 function arbitrateMissionInput() {
   if (freeRoam || !mission) return;
   const s = currentStep(mission); if (!s) return;
+  if (!keys.LMB) webHoldConsumed = false;
+  if (webHoldConsumed) input.swing = false;
   if (s.type === 'webUp') {
     for (const id of s.thugIds) {
       const t = ctxThugs[id];
-      if (t && !t.webbed && V.dist(hero.pos, t.pos) <= 5) { input.swing = false; break; }   // 5 m = webUp radius in updateMission
+      if (t && !t.webbed && V.dist(hero.pos, t.pos) <= 5) { input.swing = false; webHoldConsumed = true; break; }   // 5 m = webUp radius in updateMission
     }
   } else if (s.type === 'interact') {
     if (V.dist(hero.pos, s.target) <= s.radius) input.zip = false;
@@ -970,7 +976,10 @@ const camPos = new THREE.Vector3(), camTarget = new THREE.Vector3();
 function updateCamera(dt) {
   const speed = V.len(hero.vel), f = Math.min(speed / CONFIG.fastSpeed, 1);
   camState.idleT += dt;
-  if (camState.idleT > CONFIG.camIdleRealign && speed > 3) {           // gently realign behind the velocity
+  const hspeed = Math.hypot(hero.vel.x, hero.vel.z);
+  // Realign only on horizontal motion (a purely vertical vel makes atan2(-0,-0) point +Z regardless of
+  // facing) and never while wall-crawling (the camera should stay put; strafing along a wall would spin it).
+  if (hero.state !== 'crawl' && camState.idleT > CONFIG.camIdleRealign && hspeed > 3) {
     const want = Math.atan2(-hero.vel.x, -hero.vel.z);
     let d = want - camState.yaw; d = Math.atan2(Math.sin(d), Math.cos(d));
     camState.yaw += d * Math.min(1, dt * 1.5);
