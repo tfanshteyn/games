@@ -135,7 +135,38 @@ function sliceAll(simplices, c) {
   return { points, tris };
 }
 
-const PURE = { CONFIG, mulberry32, V4, chord, CELLS5, sliceTetra, boxSimplices, sliceAll };
+// Has the ball's centre crossed this goal line inside the mouth?
+// The mouth spans the full W extent, so w never disqualifies a goal.
+function inGoalMouth(pos, goal) {
+  if (goal.dir > 0 ? pos.x < goal.x : pos.x > goal.x) return false;
+  return Math.abs(pos.z) <= goal.halfZ && pos.y >= 0 && pos.y <= goal.height;
+}
+
+function createWorld() {
+  const p = CONFIG.pitch;
+  const goal = d => ({ x: d * p.halfX, halfZ: CONFIG.goal.halfZ, height: CONFIG.goal.height, dir: d });
+
+  // Stand blocks beyond each touchline, authored as 4D boxes so the slicer has real
+  // geometry to cut. Each box becomes 24 four-simplices.
+  const stands = [];
+  const addBox = (min, max) => { for (const s of boxSimplices(min, max)) stands.push(s); };
+  for (let i = 0; i < 6; i++) {
+    const x0 = -45 + i * 18;
+    addBox({ x: x0, y: 0, z: p.halfZ + 6, w: -p.halfW - 4 },
+           { x: x0 + 14, y: 9 + (i % 2) * 3, z: p.halfZ + 20, w: p.halfW + 4 });
+    addBox({ x: x0, y: 0, z: -p.halfZ - 20, w: -p.halfW - 4 },
+           { x: x0 + 14, y: 9 + ((i + 1) % 2) * 3, z: -p.halfZ - 6, w: p.halfW + 4 });
+  }
+
+  return {
+    pitch: { halfX: p.halfX, halfZ: p.halfZ, halfW: p.halfW },
+    goals: { home: goal(-1), away: goal(1) },
+    walls: { wMin: -p.halfW, wMax: p.halfW, zMin: -p.halfZ, zMax: p.halfZ },
+    stands,
+  };
+}
+
+const PURE = { CONFIG, mulberry32, V4, chord, CELLS5, sliceTetra, boxSimplices, sliceAll, createWorld, inGoalMouth };
 // ==== PURE END ====
 </script>
 </body>
