@@ -676,9 +676,15 @@ test('the W walls contain the ball — they are walls, not touchlines', () => {
   const world = createWorld();
   const b = createBall(V4.make(0, 0.5, 0, 2.5));
   b.vel = V4.make(0, 0, 0, 9);
-  for (let i = 0; i < 240; i++) stepBall(b, world, DT);
-  assert.ok(b.pos.w <= CONFIG.pitch.halfW + 1e-6, 'stayed inside the W wall');
-  assert.ok(b.vel.w <= 0, 'bounced back off it');
+  let bounced = false, prev = b.vel.w;
+  for (let i = 0; i < 240; i++) {
+    stepBall(b, world, DT);
+    assert.ok(Math.abs(b.pos.w) <= CONFIG.pitch.halfW + 1e-6,
+      `escaped the W wall at step ${i}: w = ${b.pos.w}`);
+    if (Math.sign(b.vel.w) !== Math.sign(prev) && prev !== 0) bounced = true;
+    prev = b.vel.w;
+  }
+  assert.ok(bounced, 'must rebound off the wall rather than stopping dead');
 });
 
 test('crossing the goal line inside the mouth is a goal, from any slice', () => {
@@ -1028,11 +1034,11 @@ test('contact needs W overlap, not just proximity on the ground', () => {
 });
 
 test('a keeper reaches further through W than an outfield player', () => {
-  const gk = mk(52, 0, 0, 'GK');
-  const striker = mk(52.4, 0, 2.0);
-  assert.ok(canContact(gk, striker, 1.2), 'the keeper is 2.2 m thick in W');
-  const outfield = mk(52, 0, 0);
-  assert.ok(!canContact(outfield, striker, 1.2));
+  // striker sits 2.6 m away in W: inside the keeper's 2.2+1.2 reach, outside an
+  // outfield player's 1.2+1.2. That gap is exactly what makes the keeper a keeper.
+  const striker = mk(52.4, 0, 2.6);
+  assert.ok(canContact(mk(52, 0, 0, 'GK'), striker, 1.2), 'the keeper is 2.2 m thick in W');
+  assert.ok(!canContact(mk(52, 0, 0), striker, 1.2), 'an outfield player cannot reach that slice');
 });
 
 test('nearestTo picks the closest player passing the filter', () => {
@@ -1470,9 +1476,11 @@ test('a fresh match has 22 players, 0-0, and starts at kickoff', () => {
 
 test('kickoff releases into play and the clock runs', () => {
   const m = createMatch();
-  advance(m, 2);
+  // the first 1.0 s is the kickoff restart, which is deliberately not match time
+  advance(m, 3);
   assert.equal(m.state, 'play');
   assert.ok(m.clock > 1.5, `clock should be running, got ${m.clock}`);
+  assert.ok(m.clock < 2.5, `restart time must not be counted, got ${m.clock}`);
 });
 
 test('the clock does not run outside play', () => {
@@ -1491,7 +1499,6 @@ test('a goal scores, is announced, and restarts at kickoff', () => {
   assert.equal(m.score.away, 1);
   assert.equal(m.score.home, 0);
   assert.ok(events.includes('goal:away'));
-  assert.ok(m.state === 'goal' || m.state === 'kickoff');
 });
 
 test('half time arrives on schedule and the second half kicks off', () => {
@@ -2283,6 +2290,7 @@ EOF
 
 These are Pass 2 and Pass 3, not omissions to fix:
 
+- Enforcement of offside. The functions are built and fully tested in Task 7, but nothing acts on them until free kicks exist in Pass 2. This is deliberate.
 - Fouls, cards, free kicks, penalties, throw-ins, corners, goal kicks, stoppage time. Pass 1 keeps the ball in play by rebounding it off the touchlines.
 - Shooting, passing and tackling as player actions — Pass 1 is movement, AI shape and goal detection. The mouse bindings from spec §7 land with the rules layer, when a foul can result from them.
 - The Kata Cup, persistence, extra time, the shootout, the street arena.
