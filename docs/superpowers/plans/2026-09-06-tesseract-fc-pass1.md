@@ -67,7 +67,7 @@ Tasks 10–14 add rendering, input and HUD. They have no node tests — their ve
 
 **Interfaces:**
 - Consumes: nothing.
-- Produces: `PURE.CONFIG` (frozen config object), `PURE.V4` (4D vector helpers `make/add/sub/scale/dot/len/dist/norm/lerp/clone/set/ground`), `PURE.chord(dw, t) -> number`, `PURE.mulberry32(seed) -> () => number`.
+- Produces: `PURE.CONFIG` (a plain config object — deliberately not frozen; nothing in Pass 1 mutates it), `PURE.V4` (4D vector helpers `make/add/sub/scale/dot/len/dist/norm/lerp/clone/set/ground`), `PURE.chord(dw, t) -> number`, `PURE.mulberry32(seed) -> () => number`.
 
 - [ ] **Step 1: Create the skeleton game file**
 
@@ -180,6 +180,11 @@ test('mulberry32 is deterministic and in [0,1)', () => {
   const seqA = [a(), a(), a()], seqB = [b(), b(), b()];
   assert.deepEqual(seqA, seqB);
   for (const v of seqA) assert.ok(v >= 0 && v < 1);
+  // a generator that dropped its state update would pass everything above
+  assert.notEqual(seqA[0], seqA[1]);
+  assert.notEqual(seqA[1], seqA[2]);
+  const c = mulberry32(8);
+  assert.notDeepEqual(seqA, [c(), c(), c()]);
 });
 ```
 
@@ -742,12 +747,15 @@ function createBall(pos) {
 
 // F_i = k * sum_j O_ij v_j, with O the antisymmetric spin matrix.
 // In three dimensions this reduces exactly to omega x v.
+// The trailing `+ 0` is not decorative: the w row is all subtractions, so with zero
+// spin it evaluates to IEEE-754 negative zero, and node:assert/strict compares with
+// Object.is, for which -0 !== 0. Adding zero normalises -0 to 0 and changes nothing else.
 function magnusForce(s, vel, k) {
   return {
-    x: k * ( s.xy * vel.y + s.xz * vel.z + s.xw * vel.w),
-    y: k * (-s.xy * vel.x + s.yz * vel.z + s.yw * vel.w),
-    z: k * (-s.xz * vel.x - s.yz * vel.y + s.zw * vel.w),
-    w: k * (-s.xw * vel.x - s.yw * vel.y - s.zw * vel.z),
+    x: k * ( s.xy * vel.y + s.xz * vel.z + s.xw * vel.w) + 0,
+    y: k * (-s.xy * vel.x + s.yz * vel.z + s.yw * vel.w) + 0,
+    z: k * (-s.xz * vel.x - s.yz * vel.y + s.zw * vel.w) + 0,
+    w: k * (-s.xw * vel.x - s.yw * vel.y - s.zw * vel.z) + 0,
   };
 }
 
