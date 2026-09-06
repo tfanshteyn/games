@@ -21,6 +21,15 @@ test('a 1/3 split yields a triangle with hand-computable vertices', () => {
   assert.deepEqual(out, [{ x: 1, y: 0, z: 0 }, { x: 0, y: 1, z: 0 }, { x: 0, y: 0, z: 1 }]);
 });
 
+test('a 1/3 split (three below, one above) yields a triangle with hand-computable vertices', () => {
+  // mirror of the previous case: w signs inverted, so one vertex is above the plane at
+  // w=+1 and three are below at w=-1; slice at w=0 takes the same midpoints by symmetry
+  const out = [];
+  const n = sliceTetra(P(0,0,0,1), P(2,0,0,-1), P(0,2,0,-1), P(0,0,2,-1), 0, out);
+  assert.equal(n, 3);
+  assert.deepEqual(out, [{ x: 1, y: 0, z: 0 }, { x: 0, y: 1, z: 0 }, { x: 0, y: 0, z: 1 }]);
+});
+
 test('a 2/2 split yields a quad wound without a bowtie', () => {
   const out = [];
   const n = sliceTetra(P(0,0,0,-1), P(0,2,0,-1), P(2,0,0,1), P(2,2,0,1), 0, out);
@@ -43,6 +52,11 @@ test('boxSimplices is a Kuhn triangulation: 24 simplices of 5 box corners each',
     }
   }
   assert.equal(CELLS5.length, 5);
+
+  // the 24 simplices must be genuinely distinct, not a repeat-and-drop of fewer orderings
+  const sig = s => s.map(v => `${v.x},${v.y},${v.z},${v.w}`).join('|');
+  const sigs = new Set(sims.map(sig));
+  assert.equal(sigs.size, 24);
 });
 
 test('ANCHOR: slicing the tesseract at w=0 gives exactly the cube of side 2', () => {
