@@ -26,6 +26,36 @@ test('no spin means no Magnus force at all', () => {
   assert.deepEqual(f, { x: 0, y: 0, z: 0, w: 0 });
 });
 
+test('the spin matrix is antisymmetric in all six planes, not just xz and xw', () => {
+  const axisVec = axis => V4.make(axis === 'x' ? 1 : 0, axis === 'y' ? 1 : 0,
+                                   axis === 'z' ? 1 : 0, axis === 'w' ? 1 : 0);
+  const planes = [
+    ['xy', 'x', 'y'], ['xz', 'x', 'z'], ['xw', 'x', 'w'],
+    ['yz', 'y', 'z'], ['yw', 'y', 'w'], ['zw', 'z', 'w'],
+  ];
+  for (const [plane, a, b] of planes) {
+    const s = spin({ [plane]: 1 });
+    const coupledFromA = magnusForce(s, axisVec(a), 1)[b];
+    const coupledFromB = magnusForce(s, axisVec(b), 1)[a];
+    assert.notEqual(coupledFromA, 0, `plane ${plane}: velocity along ${a} produced no force along ${b}`);
+    assert.notEqual(coupledFromB, 0, `plane ${plane}: velocity along ${b} produced no force along ${a}`);
+    assert.equal(coupledFromA, -coupledFromB,
+      `plane ${plane}: antisymmetry violated (${a}->${b} = ${coupledFromA}, ${b}->${a} = ${coupledFromB})`);
+  }
+});
+
+test('the Magnus force never does work — it is always perpendicular to velocity', () => {
+  const cases = [
+    { s: spin({ xy: 3, xz: -2, xw: 5, yz: 1, yw: -4, zw: 2 }), v: V4.make(2, -3, 5, -1) },
+    { s: spin({ xy: -7, xz: 4, xw: -1, yz: 6, yw: 2, zw: -3 }), v: V4.make(-4, 1, 2, 6) },
+  ];
+  for (const { s, v } of cases) {
+    const f = magnusForce(s, v, 1);
+    const work = V4.dot(f, v);
+    assert.ok(Math.abs(work) < 1e-12, `Magnus force did work: dot(F, v) = ${work}`);
+  }
+});
+
 test('a dropped ball falls, lands and stops bouncing', () => {
   const world = createWorld();
   const b = createBall(V4.make(0, 5, 0, 0));
