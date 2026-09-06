@@ -166,7 +166,72 @@ function createWorld() {
   };
 }
 
-const PURE = { CONFIG, mulberry32, V4, chord, CELLS5, sliceTetra, boxSimplices, sliceAll, createWorld, inGoalMouth };
+function createBall(pos) {
+  return {
+    pos: V4.clone(pos),
+    vel: V4.make(),
+    // Spin is a bivector, not a vector: in 4D a rotation lives in a plane, and there
+    // are six independent planes. This is what lets a struck ball bend through W.
+    spin: { xy: 0, xz: 0, xw: 0, yz: 0, yw: 0, zw: 0 },
+  };
+}
+
+// F_i = k * sum_j O_ij v_j, with O the antisymmetric spin matrix.
+// In three dimensions this reduces exactly to omega x v.
+// The "+ 0" on each term only normalizes -0 to 0 (an all-subtraction chain of
+// zero terms, e.g. the w component with no w-plane spin, otherwise yields -0);
+// it changes no physics, since -0 and 0 behave identically everywhere else.
+function magnusForce(s, vel, k) {
+  return {
+    x: k * ( s.xy * vel.y + s.xz * vel.z + s.xw * vel.w) + 0,
+    y: k * (-s.xy * vel.x + s.yz * vel.z + s.yw * vel.w) + 0,
+    z: k * (-s.xz * vel.x - s.yz * vel.y + s.zw * vel.w) + 0,
+    w: k * (-s.xw * vel.x - s.yw * vel.y - s.zw * vel.z) + 0,
+  };
+}
+
+function stepBall(ball, world, dt) {
+  const C = CONFIG.ball;
+  const v = ball.vel, p = ball.pos;
+
+  const speed = V4.len(v);
+  const mag = magnusForce(ball.spin, v, C.magnus);
+  const dragK = C.drag * speed;
+
+  v.x += (mag.x - v.x * dragK) * dt;
+  v.y += (mag.y - v.y * dragK - C.gravity) * dt;
+  v.z += (mag.z - v.z * dragK) * dt;
+  v.w += (mag.w - v.w * dragK) * dt;
+
+  p.x += v.x * dt; p.y += v.y * dt; p.z += v.z * dt; p.w += v.w * dt;
+
+  // spin decays
+  for (const k of ['xy', 'xz', 'xw', 'yz', 'yw', 'zw']) ball.spin[k] *= (1 - 1.1 * dt);
+
+  let goal = null;
+  for (const g of [world.goals.home, world.goals.away]) {
+    if (inGoalMouth(p, g)) goal = g.dir > 0 ? 'away' : 'home';
+  }
+
+  // ground
+  if (p.y < C.radius) {
+    p.y = C.radius;
+    if (v.y < 0) v.y = -v.y * C.restitution;
+    if (Math.abs(v.y) < 0.35) v.y = 0;
+    const roll = Math.max(0, 1 - C.rollFriction * dt);
+    v.x *= roll; v.z *= roll; v.w *= roll;
+  }
+
+  // W walls: the stands enclose the pitch through W, so the ball rebounds
+  const hw = world.pitch.halfW;
+  if (p.w > hw) { p.w = hw; if (v.w > 0) v.w = -v.w * C.restitution; }
+  if (p.w < -hw) { p.w = -hw; if (v.w < 0) v.w = -v.w * C.restitution; }
+
+  const outZ = Math.abs(p.z) > world.pitch.halfZ;
+  return { goal, outZ };
+}
+
+const PURE = { CONFIG, mulberry32, V4, chord, CELLS5, sliceTetra, boxSimplices, sliceAll, createWorld, inGoalMouth, createBall, magnusForce, stepBall };
 // ==== PURE END ====
 </script>
 </body>
