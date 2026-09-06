@@ -50,4 +50,8 @@ test('mulberry32 is deterministic and in [0,1)', () => {
   const seqA = [a(), a(), a()], seqB = [b(), b(), b()];
   assert.deepEqual(seqA, seqB);
   for (const v of seqA) assert.ok(v >= 0 && v < 1);
+  assert.ok(!(seqA[0] === seqA[1] && seqA[1] === seqA[2]), 'single generator should produce varied output, not constant');
+  const c = mulberry32(99);
+  const seqC = [c(), c(), c()];
+  assert.notDeepEqual(seqA, seqC, 'different seeds should produce different sequences');
 });
