@@ -231,7 +231,58 @@ function stepBall(ball, world, dt) {
   return { goal, outZ };
 }
 
-const PURE = { CONFIG, mulberry32, V4, chord, CELLS5, sliceTetra, boxSimplices, sliceAll, createWorld, inGoalMouth, createBall, magnusForce, stepBall };
+function createPlayer(opts) {
+  const isKeeper = opts.role === 'GK';
+  return {
+    pos: V4.clone(opts.pos),
+    vel: V4.make(),
+    team: opts.team,
+    role: opts.role,
+    id: opts.id || (opts.team + ':' + opts.role + ':' + (opts.n || 0)),
+    isKeeper,
+    thickness: isKeeper ? CONFIG.thickness.keeper : CONFIG.thickness.player,
+  };
+}
+
+function makeInput() { return { mx: 0, mz: 0, mw: 0, sprint: false }; }
+
+function stepPlayer(player, input, world, dt) {
+  const S = CONFIG.speed;
+  const v = player.vel, p = player.pos;
+
+  // Ground plane: x/z share one speed budget, W has its own and is never sprintable.
+  const groundCap = input.sprint ? S.sprint : S.jog;
+  let dx = input.mx, dz = input.mz;
+  const dl = Math.hypot(dx, dz);
+  if (dl > 1) { dx /= dl; dz /= dl; }
+
+  const approach = (cur, target, rate) => {
+    const d = target - cur;
+    const step = rate * dt;
+    return Math.abs(d) <= step ? target : cur + Math.sign(d) * step;
+  };
+
+  const wantX = dx * groundCap, wantZ = dz * groundCap;
+  const rateGround = (dl > 0.01) ? S.accel : S.decel;
+  v.x = approach(v.x, wantX, rateGround);
+  v.z = approach(v.z, wantZ, rateGround);
+
+  const mw = Math.max(-1, Math.min(1, input.mw));
+  const wantW = mw * S.wSlide;
+  v.w = approach(v.w, wantW, (Math.abs(mw) > 0.01 ? S.accel : S.decel));
+
+  p.x += v.x * dt; p.z += v.z * dt; p.w += v.w * dt;
+
+  const clampAxis = (axis, half) => {
+    if (p[axis] > half) { p[axis] = half; if (v[axis] > 0) v[axis] = 0; }
+    if (p[axis] < -half) { p[axis] = -half; if (v[axis] < 0) v[axis] = 0; }
+  };
+  clampAxis('x', world.pitch.halfX);
+  clampAxis('z', world.pitch.halfZ);
+  clampAxis('w', world.pitch.halfW);
+}
+
+const PURE = { CONFIG, mulberry32, V4, chord, CELLS5, sliceTetra, boxSimplices, sliceAll, createWorld, inGoalMouth, createBall, magnusForce, stepBall, createPlayer, makeInput, stepPlayer };
 // ==== PURE END ====
 </script>
 </body>
