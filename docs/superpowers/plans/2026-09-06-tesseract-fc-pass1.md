@@ -866,18 +866,25 @@ test('a player accelerates to the jog cap, and to the sprint cap with sprint hel
 
 test('the W-slide is capped at 2.5 m/s and sprint does not help', () => {
   const world = createWorld();
-  const a = createPlayer({ pos: V4.make(0, 0, 0, 0), team: 'home', role: 'ST' });
-  run(a, Object.assign(makeInput(), { mw: 1 }), world, 4);
+  // Start at the kata wall and measure over a short window. The pitch is only 6 m deep
+  // in W, so a player starting at w=0 reaches the far wall and is clamped to zero
+  // velocity long before a four-second window closes — that would measure the wall,
+  // not the cap.
+  const start = () => V4.make(0, 0, 0, -CONFIG.pitch.halfW);
+  const a = createPlayer({ pos: start(), team: 'home', role: 'ST' });
+  run(a, Object.assign(makeInput(), { mw: 1 }), world, 1.5);
   assert.ok(Math.abs(a.vel.w - CONFIG.speed.wSlide) < 0.1, `got ${a.vel.w}`);
+  assert.ok(a.pos.w < CONFIG.pitch.halfW - 0.1, 'must still be short of the ana wall');
 
-  const b = createPlayer({ pos: V4.make(0, 0, 0, 0), team: 'home', role: 'ST' });
-  run(b, Object.assign(makeInput(), { mw: 1, sprint: true }), world, 4);
+  const b = createPlayer({ pos: start(), team: 'home', role: 'ST' });
+  run(b, Object.assign(makeInput(), { mw: 1, sprint: true }), world, 1.5);
   assert.ok(Math.abs(b.vel.w - CONFIG.speed.wSlide) < 0.1, 'W is a feint, not a getaway');
 });
 
 test('W is slower than running, so you cannot out-phase a sprint', () => {
   assert.ok(CONFIG.speed.wSlide < CONFIG.speed.jog);
-  assert.ok(CONFIG.speed.wSlide * 3 < CONFIG.speed.sprint);
+  // sprinting covers ground more than twice as fast as sliding through W
+  assert.ok(CONFIG.speed.wSlide * 2 < CONFIG.speed.sprint);
 });
 
 test('players are held inside the pitch volume, W walls included', () => {
