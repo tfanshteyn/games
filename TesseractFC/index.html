@@ -420,7 +420,104 @@ function decideAI(player, ctx) {
   return { mx, mz, mw, sprint: groundDist > 14 };
 }
 
-const PURE = { CONFIG, mulberry32, V4, chord, CELLS5, sliceTetra, boxSimplices, sliceAll, createWorld, inGoalMouth, createBall, magnusForce, stepBall, createPlayer, makeInput, stepPlayer, SpatialGrid4, canContact, nearestTo, offsideLineX, isOffside, FORMATION_433, buildTeam, homePosition, decideAI };
+function attackDirOf(team) { return team === 'home' ? 1 : -1; }
+
+function createMatch() {
+  const world = createWorld();
+  const players = buildTeam('home', attackDirOf('home')).concat(buildTeam('away', attackDirOf('away')));
+  return {
+    world,
+    ball: createBall(V4.make(0, CONFIG.ball.radius, 0, 0)),
+    players,
+    grid: new SpatialGrid4(CONFIG.grid.cell),
+    score: { home: 0, away: 0 },
+    clock: 0,
+    half: 1,
+    phase: 'transition',
+    state: 'kickoff',
+    restartTimer: 1.0,
+    controlled: players[9],          // the striker, until player-switching lands
+  };
+}
+
+function resetPositions(match) {
+  const fresh = buildTeam('home', attackDirOf('home')).concat(buildTeam('away', attackDirOf('away')));
+  for (let i = 0; i < match.players.length; i++) {
+    V4.set(match.players[i].pos, fresh[i].pos);
+    V4.set(match.players[i].vel, V4.make());
+  }
+  V4.set(match.ball.pos, V4.make(0, CONFIG.ball.radius, 0, 0));
+  V4.set(match.ball.vel, V4.make());
+  for (const k of ['xy','xz','xw','yz','yw','zw']) match.ball.spin[k] = 0;
+}
+
+function stepMatch(match, userInput, dt) {
+  const events = [];
+  if (match.state === 'fulltime') return { events };
+
+  if (match.state === 'kickoff' || match.state === 'goal' || match.state === 'halftime') {
+    match.restartTimer -= dt;
+    if (match.restartTimer <= 0) {
+      resetPositions(match);
+      match.state = 'play';
+    }
+    // restarts are not match time
+    return { events };
+  }
+
+  // ---- possession phase, for the shape ----
+  const ballX = match.ball.pos.x;
+  match.phase = ballX > 12 ? 'attacking' : ballX < -12 ? 'defending' : 'transition';
+
+  // ---- drive every player ----
+  match.grid.rebuild(match.players);
+  for (const p of match.players) {
+    const dir = attackDirOf(p.team);
+    const slot = FORMATION_433[Number(p.id.replace(/^\D+/, '')) % 11];
+    if (p === match.controlled) {
+      stepPlayer(p, userInput, match.world, dt);
+    } else {
+      const phase = p.team === 'home' ? match.phase
+                  : (match.phase === 'attacking' ? 'defending'
+                  : match.phase === 'defending' ? 'attacking' : 'transition');
+      const home = homePosition(slot, match.ball.pos, phase, dir);
+      stepPlayer(p, decideAI(p, { home, ball: match.ball.pos, phase, attackDir: dir }), match.world, dt);
+    }
+  }
+
+  // ---- ball ----
+  const res = stepBall(match.ball, match.world, dt);
+  if (res.goal) {
+    match.score[res.goal] += 1;
+    events.push('goal:' + res.goal);
+    match.state = 'goal';
+    match.restartTimer = 1.5;
+    return { events };
+  }
+  if (res.outZ) {
+    // Pass 1 keeps play flowing; throw-ins arrive with the rules layer in Pass 2.
+    match.ball.pos.z = Math.sign(match.ball.pos.z) * (match.world.pitch.halfZ - 0.5);
+    match.ball.vel.z = -match.ball.vel.z * 0.4;
+  }
+
+  // ---- clock ----
+  match.clock += dt;
+  if (match.clock >= CONFIG.match.halfSeconds) {
+    if (match.half < CONFIG.match.halves) {
+      match.half += 1;
+      match.clock = 0;
+      match.state = 'halftime';
+      match.restartTimer = 1.5;
+      events.push('halftime');
+    } else {
+      match.state = 'fulltime';
+      events.push('fulltime');
+    }
+  }
+  return { events };
+}
+
+const PURE = { CONFIG, mulberry32, V4, chord, CELLS5, sliceTetra, boxSimplices, sliceAll, createWorld, inGoalMouth, createBall, magnusForce, stepBall, createPlayer, makeInput, stepPlayer, SpatialGrid4, canContact, nearestTo, offsideLineX, isOffside, FORMATION_433, buildTeam, homePosition, decideAI, attackDirOf, createMatch, resetPositions, stepMatch };
 // ==== PURE END ====
 </script>
 </body>
