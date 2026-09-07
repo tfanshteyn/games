@@ -282,7 +282,59 @@ function stepPlayer(player, input, world, dt) {
   clampAxis('w', world.pitch.halfW);
 }
 
-const PURE = { CONFIG, mulberry32, V4, chord, CELLS5, sliceTetra, boxSimplices, sliceAll, createWorld, inGoalMouth, createBall, magnusForce, stepBall, createPlayer, makeInput, stepPlayer };
+// Buckets entities by (x, z, w). Height is too shallow on a pitch to be worth bucketing.
+class SpatialGrid4 {
+  constructor(cell) { this.cell = cell; this.map = new Map(); }
+  key(x, z, w) {
+    const c = this.cell;
+    return `${Math.floor(x / c)},${Math.floor(z / c)},${Math.floor(w / c)}`;
+  }
+  rebuild(items) {
+    this.map.clear();
+    for (const it of items) {
+      const k = this.key(it.pos.x, it.pos.z, it.pos.w);
+      let bucket = this.map.get(k);
+      if (!bucket) { bucket = []; this.map.set(k, bucket); }
+      bucket.push(it);
+    }
+  }
+  near(pos, radius) {
+    const c = this.cell, span = Math.ceil(radius / c);
+    const bx = Math.floor(pos.x / c), bz = Math.floor(pos.z / c), bw = Math.floor(pos.w / c);
+    const r2 = radius * radius, out = [];
+    for (let i = -span; i <= span; i++)
+      for (let j = -span; j <= span; j++)
+        for (let k = -span; k <= span; k++) {
+          const bucket = this.map.get(`${bx + i},${bz + j},${bw + k}`);
+          if (!bucket) continue;
+          for (const it of bucket) {
+            const dx = it.pos.x - pos.x, dz = it.pos.z - pos.z, dw = it.pos.w - pos.w;
+            if (dx * dx + dz * dz + dw * dw <= r2) out.push(it);
+          }
+        }
+    return out;
+  }
+}
+
+// Two actors can touch only if they overlap on the ground AND their W capsules meet.
+function canContact(a, b, radius) {
+  const dx = a.pos.x - b.pos.x, dz = a.pos.z - b.pos.z;
+  if (dx * dx + dz * dz > radius * radius) return false;
+  const reach = (a.thickness || CONFIG.thickness.player) + (b.thickness || CONFIG.thickness.player);
+  return Math.abs(a.pos.w - b.pos.w) < reach;
+}
+
+function nearestTo(players, pos, filterFn) {
+  let best = null, bestD = Infinity;
+  for (const p of players) {
+    if (filterFn && !filterFn(p)) continue;
+    const d = V4.dist(V4.ground(p.pos), V4.ground(pos));
+    if (d < bestD) { bestD = d; best = p; }
+  }
+  return best;
+}
+
+const PURE = { CONFIG, mulberry32, V4, chord, CELLS5, sliceTetra, boxSimplices, sliceAll, createWorld, inGoalMouth, createBall, magnusForce, stepBall, createPlayer, makeInput, stepPlayer, SpatialGrid4, canContact, nearestTo };
 // ==== PURE END ====
 </script>
 </body>
