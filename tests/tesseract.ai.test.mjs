@@ -69,3 +69,54 @@ test('AI output is always a legal input', () => {
     assert.equal(typeof cmd.sprint, 'boolean');
   }
 });
+
+test('rotation preserves W: away team x,z negate but w stays equal to home team', () => {
+  const home = buildTeam('home', 1);
+  const away = buildTeam('away', -1);
+  // The striker (slot 9) has asymmetric W (0.4 not 0), making it the canary for
+  // a wrong "fix" that would negate w — if it gets negated, this test catches it.
+  for (let i = 0; i < FORMATION_433.length; i++) {
+    const h = home[i].pos;
+    const a = away[i].pos;
+    assert.equal(a.x, -h.x, `slot ${i} (${FORMATION_433[i].role}): away.x should be -home.x`);
+    assert.equal(a.z, -h.z, `slot ${i} (${FORMATION_433[i].role}): away.z should be -home.z`);
+    assert.equal(a.w, h.w, `slot ${i} (${FORMATION_433[i].role}): away.w should equal home.w (not negated)`);
+    // Explicitly verify the striker whose w is asymmetric.
+    if (i === 9) {
+      assert.equal(a.w, 0.4, 'striker away.w must be 0.4 (would be -0.4 if mistakenly negated)');
+    }
+  }
+});
+
+test('keeper guards their own goal for both attack directions', () => {
+  const slot = FORMATION_433.find(s => s.role === 'GK');
+  // For attackDir: 1, home team's goal is at x = -52.5 (negative side).
+  const homeGoal = homePosition(slot, { x: 0, y: 0, z: 0, w: 0 }, 'defending', 1);
+  assert.ok(homeGoal.x < 0, 'home keeper (attackDir 1) must guard negative goal');
+  assert.ok(homeGoal.x < -CONFIG.pitch.halfX + 2, 'home keeper must be near own goal line');
+
+  // For attackDir: -1, home team's goal is at x = +52.5 (positive side).
+  const awayGoal = homePosition(slot, { x: 0, y: 0, z: 0, w: 0 }, 'defending', -1);
+  assert.ok(awayGoal.x > 0, 'away keeper (attackDir -1) must guard positive goal');
+  assert.ok(awayGoal.x > CONFIG.pitch.halfX - 2, 'away keeper must be near own goal line');
+});
+
+test('homePosition clamps coordinates to pitch even at extreme ball positions', () => {
+  const P = CONFIG.pitch;
+  const extremeCorners = [
+    { x: P.halfX, y: 0, z: P.halfZ, w: P.halfW },   // far corner
+    { x: -P.halfX, y: 0, z: -P.halfZ, w: -P.halfW }, // opposite corner
+    { x: P.halfX, y: 0, z: -P.halfZ, w: P.halfW },  // other far corners
+    { x: -P.halfX, y: 0, z: P.halfZ, w: -P.halfW },
+  ];
+  for (const ball of extremeCorners) {
+    for (const dir of [1, -1]) {
+      for (const slot of FORMATION_433) {
+        const pos = homePosition(slot, ball, 'attacking', dir);
+        assert.ok(Math.abs(pos.x) <= P.halfX, `${slot.role} x out of bounds for extreme ball`);
+        assert.ok(Math.abs(pos.z) <= P.halfZ, `${slot.role} z out of bounds for extreme ball`);
+        assert.ok(Math.abs(pos.w) <= P.halfW, `${slot.role} w out of bounds for extreme ball`);
+      }
+    }
+  }
+});

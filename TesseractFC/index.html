@@ -366,6 +366,10 @@ const FORMATION_433 = [
 ];
 
 function buildTeam(team, attackDir) {
+  // Slots are attack-normalised. Swapping ends is a 180-degree rotation about the
+  // vertical axis in the x-z plane, so (x,y,z,w) maps to (-x,y,-z,w): x and z
+  // negate, and w is deliberately left alone. A reflection would flip w as well,
+  // but that would flip the pitch through the fourth dimension for no reason.
   return FORMATION_433.map((slot, n) => createPlayer({
     pos: V4.make(slot.x * attackDir, 0, slot.z * attackDir, slot.w),
     team, role: slot.role, n, id: `${team}${n}`,
