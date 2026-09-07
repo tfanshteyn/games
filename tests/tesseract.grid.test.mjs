@@ -50,3 +50,15 @@ test('nearestTo picks the closest player passing the filter', () => {
   assert.equal(n.id, '3/0/0');
   assert.equal(nearestTo(ps, V4.make(0,0,0,0), () => false), null);
 });
+
+test('the grid searches across bucket boundaries, not just within its own bucket', () => {
+  // With a cell size of 8, an entity at x=10 sits in a different bucket than x=0.
+  // A broken grid that only searches its own bucket would miss this.
+  const items = [mk(10,0,0), mk(13,0,0)];
+  const g = new SpatialGrid4(CONFIG.grid.cell);
+  g.rebuild(items);
+  // Radius 12 includes the entity at distance 10, but excludes the one at distance 13.
+  const near = g.near(V4.make(0,0,0,0), 12).map(i => i.id);
+  assert.ok(near.includes('10/0/0'), 'entity in different bucket within radius is found');
+  assert.ok(!near.includes('13/0/0'), 'entity outside radius is correctly excluded');
+});
