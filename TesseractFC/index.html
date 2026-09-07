@@ -715,7 +715,11 @@ const camera = new THREE.PerspectiveCamera(62, 1, 0.1, 400);
 
 function resize() {
   const w = innerWidth, h = innerHeight;
-  renderer.setSize(w, h, false);
+  // setSize's third argument is updateStyle; passing false leaves the canvas with no
+  // CSS size, so its layout size becomes innerWidth * devicePixelRatio and a 2x display
+  // shows only the top-left quarter of the frame. Every other Three.js game here uses
+  // the default.
+  renderer.setSize(w, h);
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
 }
@@ -1001,7 +1005,10 @@ function updateCamera() {
 
 function frame(now) {
   requestAnimationFrame(frame);
-  const dt = Math.min(0.25, (now - last) / 1000);
+  // Clamped non-negative as well as capped: `last` is seeded from performance.now()
+  // after the frame-timestamp origin, so the very first rAF timestamp can precede it
+  // and the accumulator would start negative (measured at -14 ms and -25 ms).
+  const dt = Math.max(0, Math.min(0.25, (now - last) / 1000));
   last = now;
   readInput();
   if (!paused) {
