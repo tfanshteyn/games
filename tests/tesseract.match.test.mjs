@@ -153,3 +153,35 @@ test('ANCHOR: a goal is credited to the team that does NOT defend that end', () 
     assert.equal(scored, defender.team === 'home' ? 'away' : 'home');
   }
 });
+
+test('the ball actually moves in a match — a player can reach it and take it away', () => {
+  // The defect this pins: canContact and SpatialGrid4.near had no call sites, so the
+  // ball sat on the centre spot for the whole match and no goal was reachable in play.
+  const m = createMatch();
+  advance(m, 2);                                     // out of the kickoff restart
+  const spot = { x: m.ball.pos.x, z: m.ball.pos.z };
+  m.controlled.pos = V4.make(-3, 0, 0, 0);
+  V4.set(m.controlled.vel, V4.make());
+  advance(m, 4, Object.assign(makeInput(), { mx: 1, sprint: true }));
+  const moved = Math.hypot(m.ball.pos.x - spot.x, m.ball.pos.z - spot.z);
+  assert.ok(moved > 5, `the ball should have been dribbled away, moved only ${moved} m`);
+  assert.ok(m.ball.pos.x > spot.x, 'and driven toward the goal the striker attacks');
+});
+
+test('players in a match obstruct each other only inside their own slice', () => {
+  const m = createMatch();
+  advance(m, 2);
+  const [a, b, ghost] = [m.players[5], m.players[6], m.players[7]];
+  // two team-mates stacked on the same spot in the same slice, and a third stacked on
+  // them but 2.6 m away in W
+  for (const p of [a, b, ghost]) { V4.set(p.vel, V4.make()); }
+  V4.set(a.pos, V4.make(0, 0, 20, 0));
+  V4.set(b.pos, V4.make(0.1, 0, 20, 0));
+  V4.set(ghost.pos, V4.make(0.05, 0, 20, 2.7));
+  const ghostBefore = { x: ghost.pos.x, z: ghost.pos.z };
+  stepMatch(m, makeInput(), DT);
+  const sep = Math.hypot(a.pos.x - b.pos.x, a.pos.z - b.pos.z);
+  assert.ok(sep > 0.5, `same-slice players must be pushed apart, got ${sep}`);
+  const ghostMoved = Math.hypot(ghost.pos.x - ghostBefore.x, ghost.pos.z - ghostBefore.z);
+  assert.ok(ghostMoved < 0.05, `the other-slice player was shoved by ${ghostMoved} m`);
+});

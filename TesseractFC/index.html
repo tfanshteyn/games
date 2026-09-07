@@ -56,6 +56,11 @@ const CONFIG = {
   match:     { halfSeconds: 240, halves: 2 },
   sim:       { dt: 1 / 120 },
   grid:      { cell: 8 },
+  // Ground radii and the touch model. `query` is the grid radius that must cover the
+  // widest contact test: two keepers are 2.2 + 2.2 m apart in W and 0.9 m on the ground,
+  // so hypot(0.9, 4.4) = 4.49 m, and 5 clears it.
+  contact:   { playerRadius: 0.45, query: 5, reachY: 2.0,
+               ballInherit: 1.0, ballCarry: 0.35, ballNudge: 0.4 },
 };
 
 function mulberry32(seed) {
@@ -276,6 +281,9 @@ function createPlayer(opts) {
     id: opts.id || (opts.team + ':' + opts.role + ':' + (opts.n || 0)),
     isKeeper,
     thickness: isKeeper ? CONFIG.thickness.keeper : CONFIG.thickness.player,
+    // Scratch accumulators for the Jacobi separation pass, declared here so the
+    // per-tick contact resolution allocates nothing.
+    pushX: 0, pushZ: 0,
   };
 }
 
@@ -357,6 +365,86 @@ function canContact(a, b, radius) {
   if (dx * dx + dz * dz > radius * radius) return false;
   const reach = (a.thickness ?? CONFIG.thickness.player) + (b.thickness ?? CONFIG.thickness.player);
   return Math.abs(a.pos.w - b.pos.w) < reach;
+}
+
+// ---- contact resolution --------------------------------------------------------
+// Both resolvers are Jacobi, not Gauss-Seidel: every pair is measured against the
+// positions the tick started with and the corrections are applied only afterwards.
+// That is what makes the outcome independent of the order players sit in the array,
+// and what stops a chain of overlaps from jittering.
+
+// Separate players whose bodies overlap on the ground AND whose W capsules meet.
+// Players in different slices are ghosts and must pass straight through each other —
+// that is the whole game, so the canContact gate here is load-bearing, not an
+// optimisation.
+function resolvePlayerPairs(players, grid, world) {
+  const K = CONFIG.contact;
+  const sumR = K.playerRadius * 2;
+  for (const p of players) { p.pushX = 0; p.pushZ = 0; }
+
+  for (const a of players) {
+    for (const b of grid.near(a.pos, K.query)) {
+      if (a.id >= b.id) continue;             // each pair once, in a stable order
+      if (!canContact(a, b, sumR)) continue;
+      let dx = b.pos.x - a.pos.x, dz = b.pos.z - a.pos.z;
+      let d = Math.hypot(dx, dz);
+      if (d < 1e-6) { dx = 1; dz = 0; d = 1; } // exactly coincident: split along +x
+      const overlap = sumR - d;
+      if (overlap <= 0) continue;
+      const half = overlap * 0.5, nx = dx / d, nz = dz / d;
+      a.pushX -= nx * half; a.pushZ -= nz * half;
+      b.pushX += nx * half; b.pushZ += nz * half;
+    }
+  }
+
+  const P = world.pitch;
+  for (const p of players) {
+    if (p.pushX === 0 && p.pushZ === 0) continue;
+    p.pos.x = Math.max(-P.halfX, Math.min(P.halfX, p.pos.x + p.pushX));
+    p.pos.z = Math.max(-P.halfZ, Math.min(P.halfZ, p.pos.z + p.pushZ));
+  }
+}
+
+// A player who runs into the ball pushes it away. Exactly one player takes the touch —
+// the nearest whose W capsule overlaps the ball's, ties broken by id — so the result
+// never depends on iteration order. This is a dribbling nudge; shots and passes are
+// Pass 2. Returns the toucher, or null.
+function resolvePlayerBall(players, ball, grid) {
+  const K = CONFIG.contact;
+  const sumR = K.playerRadius + CONFIG.ball.radius;
+  if (ball.pos.y > K.reachY) return null;      // a lofted ball sails over everyone
+
+  let best = null, bestD2 = Infinity;
+  for (const p of grid.near(ball.pos, K.query)) {
+    if (!canContact(p, ball, sumR)) continue;
+    const dx = ball.pos.x - p.pos.x, dz = ball.pos.z - p.pos.z;
+    const d2 = dx * dx + dz * dz;
+    if (d2 < bestD2 || (d2 === bestD2 && best !== null && p.id < best.id)) {
+      bestD2 = d2; best = p;
+    }
+  }
+  if (best === null) return null;
+
+  let nx = ball.pos.x - best.pos.x, nz = ball.pos.z - best.pos.z;
+  const d = Math.sqrt(bestD2);
+  if (d > 1e-6) { nx /= d; nz /= d; }
+  else {
+    // Dead centre on him: push along his heading, or along +x if he is standing still.
+    const s = Math.hypot(best.vel.x, best.vel.z);
+    if (s > 1e-6) { nx = best.vel.x / s; nz = best.vel.z / s; } else { nx = 1; nz = 0; }
+  }
+
+  // Closing speed along the player-to-ball line, so a faster player moves it faster.
+  const closing = Math.max(0, best.vel.x * nx + best.vel.z * nz);
+  const push = K.ballNudge + K.ballCarry * closing;
+  ball.vel.x = best.vel.x * K.ballInherit + nx * push;
+  ball.vel.z = best.vel.z * K.ballInherit + nz * push;
+  ball.vel.w = best.vel.w * K.ballInherit;     // he drags it through W with him
+
+  // Lift it clear of his body so the touch does not re-fire at zero range every tick.
+  ball.pos.x = best.pos.x + nx * sumR;
+  ball.pos.z = best.pos.z + nz * sumR;
+  return best;
 }
 
 function nearestTo(players, pos, filterFn) {
@@ -470,6 +558,7 @@ function createMatch() {
     phase: 'transition',
     state: 'kickoff',
     restartTimer: 1.0,
+    touchedBy: null,
     controlled: players[9],          // the striker, until player-switching lands
   };
 }
@@ -504,7 +593,6 @@ function stepMatch(match, userInput, dt) {
   match.phase = ballX > 12 ? 'attacking' : ballX < -12 ? 'defending' : 'transition';
 
   // ---- drive every player ----
-  match.grid.rebuild(match.players);
   for (const p of match.players) {
     const dir = attackDirOf(p.team);
     const slot = FORMATION_433[Number(p.id.replace(/^\D+/, '')) % 11];
@@ -518,6 +606,11 @@ function stepMatch(match, userInput, dt) {
       stepPlayer(p, decideAI(p, { home, ball: match.ball.pos, phase, attackDir: dir }), match.world, dt);
     }
   }
+
+  // Bucket the players once they have all moved, so both contact passes below query
+  // the positions they actually hold this tick.
+  match.grid.rebuild(match.players);
+  resolvePlayerPairs(match.players, match.grid, match.world);
 
   // ---- ball ----
   const res = stepBall(match.ball, match.world, dt);
@@ -533,6 +626,9 @@ function stepMatch(match, userInput, dt) {
     match.ball.pos.z = Math.sign(match.ball.pos.z) * (match.world.pitch.halfZ - 0.5);
     match.ball.vel.z = -match.ball.vel.z * 0.4;
   }
+
+  // ---- the touch ----
+  match.touchedBy = resolvePlayerBall(match.players, match.ball, match.grid);
 
   // ---- clock ----
   match.clock += dt;
@@ -551,7 +647,7 @@ function stepMatch(match, userInput, dt) {
   return { events };
 }
 
-const PURE = { CONFIG, mulberry32, V4, chord, CELLS5, sliceTetra, boxSimplices, sliceAll, createWorld, inGoalMouth, createBall, magnusForce, stepBall, createPlayer, makeInput, stepPlayer, SpatialGrid4, canContact, nearestTo, offsideLineX, isOffside, FORMATION_433, buildTeam, homePosition, decideAI, attackDirOf, createMatch, resetPositions, stepMatch };
+const PURE = { CONFIG, mulberry32, V4, chord, CELLS5, sliceTetra, boxSimplices, sliceAll, createWorld, inGoalMouth, createBall, magnusForce, stepBall, createPlayer, makeInput, stepPlayer, SpatialGrid4, canContact, resolvePlayerPairs, resolvePlayerBall, nearestTo, offsideLineX, isOffside, FORMATION_433, buildTeam, homePosition, decideAI, attackDirOf, createMatch, resetPositions, stepMatch };
 // ==== PURE END ====
 
 // ==== RENDER ====
