@@ -689,18 +689,20 @@ class ActorLayer {
     this.group.add(this.ball);
   }
   sync(match, camW) {
+    const GHOST_EDGE = 0.22;
     for (let i = 0; i < match.players.length; i++) {
       const p = match.players[i], m = this.meshes[i];
       const c = PURE.chord(p.pos.w - camW, p.thickness);
+      const dw = p.pos.w - camW;
       m.position.set(p.pos.x, 0.92, p.pos.z);
       if (c > 0) {
         m.scale.set(Math.max(0.3, c), 1, Math.max(0.3, c));
-        m.material.opacity = 0.55 + 0.45 * c;
+        m.material.opacity = GHOST_EDGE + (1 - GHOST_EDGE) * c;
       } else {
-        m.scale.set(0.3, 0.94, 0.3);
-        m.material.opacity = Math.max(0.07, 0.3 - Math.abs(p.pos.w - camW) * 0.07);
+        m.scale.set(0.3, 1, 0.3);
+        m.material.opacity = Math.max(0.07, GHOST_EDGE - (Math.abs(dw) - p.thickness) * 0.07);
       }
-      m.material.emissive = new THREE.Color(p === match.controlled ? 0x1d5a3a : 0x000000);
+      m.material.emissive.setHex(p === match.controlled ? 0x1d5a3a : 0x000000);
     }
     const bc = PURE.chord(match.ball.pos.w - camW, PURE.CONFIG.thickness.ball);
     this.ball.position.set(match.ball.pos.x, match.ball.pos.y, match.ball.pos.z);
