@@ -1057,7 +1057,9 @@ test('a keeper reaches further through W than an outfield player', () => {
 });
 
 test('nearestTo picks the closest player passing the filter', () => {
-  const ps = [mk(0,0,0), mk(3,0,0), mk(1,0,0)];
+  // The closest player of all is on the other team, so the filter has to do real work:
+  // without it the answer would be '1/0/0', which is nearer than either team-mate.
+  const ps = [mk(5,0,0), mk(3,0,0), mk(1,0,0)];
   ps[2].team = 'away';
   const n = nearestTo(ps, V4.make(0.9, 0, 0, 0), p => p.team === 'home');
   assert.equal(n.id, '3/0/0');
