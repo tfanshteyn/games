@@ -668,11 +668,53 @@ class PolytopeSlicer {
   dispose() { this.scene.remove(this.mesh); this.geom.dispose(); }
 }
 
+// Players and the ball are 4D capsules. Their cross-section at your slice is the
+// same mesh scaled by the chord; outside it they become ghosts you run through.
+// Both renderers share this — only static geometry differs between A and B.
+class ActorLayer {
+  constructor(scene, match) {
+    this.group = new THREE.Group();
+    scene.add(this.group);
+    this.body = new THREE.CapsuleGeometry(0.42, 1.0, 4, 10);
+    this.meshes = match.players.map(p => {
+      const m = new THREE.Mesh(this.body, new THREE.MeshLambertMaterial({
+        color: p.team === 'home' ? 0x39d0ff : 0xff5fa2, transparent: true,
+      }));
+      this.group.add(m);
+      return m;
+    });
+    this.ball = new THREE.Mesh(
+      new THREE.SphereGeometry(PURE.CONFIG.ball.radius, 16, 12),
+      new THREE.MeshLambertMaterial({ color: 0xe8f2fb, transparent: true }));
+    this.group.add(this.ball);
+  }
+  sync(match, camW) {
+    for (let i = 0; i < match.players.length; i++) {
+      const p = match.players[i], m = this.meshes[i];
+      const c = PURE.chord(p.pos.w - camW, p.thickness);
+      m.position.set(p.pos.x, 0.92, p.pos.z);
+      if (c > 0) {
+        m.scale.set(Math.max(0.3, c), 1, Math.max(0.3, c));
+        m.material.opacity = 0.55 + 0.45 * c;
+      } else {
+        m.scale.set(0.3, 0.94, 0.3);
+        m.material.opacity = Math.max(0.07, 0.3 - Math.abs(p.pos.w - camW) * 0.07);
+      }
+      m.material.emissive = new THREE.Color(p === match.controlled ? 0x1d5a3a : 0x000000);
+    }
+    const bc = PURE.chord(match.ball.pos.w - camW, PURE.CONFIG.thickness.ball);
+    this.ball.position.set(match.ball.pos.x, match.ball.pos.y, match.ball.pos.z);
+    this.ball.material.opacity = bc > 0 ? 1 : 0.2;
+    this.ball.scale.setScalar(bc > 0 ? Math.max(0.5, bc) : 0.5);
+  }
+}
+
 const match = PURE.createMatch();
 const params = new URLSearchParams(location.search);
 const useSlab = params.get('renderer') === 'a';
 let worldRenderer = useSlab ? new SlabRenderer(scene) : new PolytopeSlicer(scene);
 worldRenderer.build(match.world);
+const actors = new ActorLayer(scene, match);
 
 const input = PURE.makeInput();
 let acc = 0, last = performance.now(), paused = false;
@@ -697,6 +739,7 @@ function frame(now) {
     }
   }
   worldRenderer.setW(match.controlled.pos.w);
+  actors.sync(match, match.controlled.pos.w);
   updateCamera();
   // The simulation is fixed-timestep and never degraded; the slicer gives way first.
   perf.push(dt);
