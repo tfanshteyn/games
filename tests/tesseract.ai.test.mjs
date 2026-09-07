@@ -120,3 +120,26 @@ test('homePosition clamps coordinates to pitch even at extreme ball positions', 
     }
   }
 });
+
+test('the chaser steers at the ball, not at its formation position', () => {
+  // The defect this pins: decideAI read only ctx.home and ignored ctx.ball entirely, so
+  // all 21 AI players walked to a formation slot and stopped. With the ball finally
+  // movable, nobody would have followed it.
+  const p = PURE.createPlayer({ pos: V4.make(0, 0, 0, 0), team: 'home', role: 'CM' });
+  const ctx = { home: { x: -20, y: 0, z: 0, w: 0 }, ball: V4.make(20, 0, 10, 2),
+                phase: 'attacking', attackDir: 1 };
+  const holding = decideAI(p, Object.assign({}, ctx, { chase: false }));
+  const chasing = decideAI(p, Object.assign({}, ctx, { chase: true }));
+  assert.ok(holding.mx < 0, 'holding the shape means walking back to the slot');
+  assert.ok(chasing.mx > 0 && chasing.mz > 0 && chasing.mw > 0, 'chasing means going to the ball');
+  for (const k of ['mx', 'mz', 'mw']) {
+    assert.ok(chasing[k] >= -1 && chasing[k] <= 1, `${k} out of range`);
+  }
+  assert.equal(typeof chasing.sprint, 'boolean');
+
+  // and a chaser must close right onto the ball, not stop at the shape's dead zone —
+  // the contact radius is well inside it
+  const onIt = PURE.createPlayer({ pos: V4.make(0, 0, 0, 0), team: 'home', role: 'CM' });
+  const close = decideAI(onIt, Object.assign({}, ctx, { ball: V4.make(0.5, 0, 0, 0), chase: true }));
+  assert.ok(Math.hypot(close.mx, close.mz) > 0, 'a chaser 0.5 m short must keep going');
+});

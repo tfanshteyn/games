@@ -221,3 +221,57 @@ test('the goal mouth is still not rebounded — a real shot scores', () => {
   assert.ok(events.includes('goal:home'));
   assert.equal(m.score.home, 1);
 });
+
+test('one player per team chases the ball while the rest hold the shape', () => {
+  const m = createMatch();
+  advance(m, 2);
+  m.ball.pos = V4.make(-20, CONFIG.ball.radius, 24, 0);   // deep on one flank
+  m.ball.vel = V4.make();
+  const distFrom = p => Math.hypot(p.pos.x - m.ball.pos.x, p.pos.z - m.ball.pos.z);
+  const chaserOf = team => m.players
+    .filter(p => p.team === team && !p.isKeeper && p !== m.controlled)
+    .sort((a, b) => distFrom(a) - distFrom(b))[0];
+  const [homeChaser, awayChaser] = [chaserOf('home'), chaserOf('away')];
+  const far = m.players.find(p => p.team === 'home' && !p.isKeeper &&
+    p !== homeChaser && p !== m.controlled && distFrom(p) > 30);
+  const before = { home: distFrom(homeChaser), away: distFrom(awayChaser), far: distFrom(far) };
+
+  advance(m, 3);
+  assert.ok(distFrom(homeChaser) < before.home - 3,
+    `the nearest home player must close on the ball (${before.home} -> ${distFrom(homeChaser)})`);
+  assert.ok(distFrom(awayChaser) < before.away - 3,
+    `and so must the nearest away player (${before.away} -> ${distFrom(awayChaser)})`);
+  assert.ok(distFrom(far) > before.far - 12,
+    'a player right across the pitch keeps his formation position rather than swarming');
+});
+
+test('a goal is reachable in play: dribble it over the line and it counts to home', () => {
+  // The whole chain end to end — contact makes the ball movable, the touch drives it
+  // forward, the goal registers, and it is credited to the team the human plays for.
+  const m = createMatch();
+  advance(m, 2);
+  m.controlled.pos = V4.make(40, 0, 2, 0);
+  V4.set(m.controlled.vel, V4.make());
+  m.ball.pos = V4.make(41, CONFIG.ball.radius, 2, 0);
+  m.ball.vel = V4.make();
+  const events = advance(m, 12, Object.assign(makeInput(), { mx: 1, sprint: true }));
+  assert.ok(events.includes('goal:home'), `expected a goal, got ${JSON.stringify(events)}`);
+  assert.deepEqual(m.score, { home: 1, away: 0 });
+});
+
+test('stepMatch is deterministic: the same inputs give the same match twice', () => {
+  // Unlike the ball's determinism test this one has teeth: stepMatch now resolves
+  // contacts against a hash grid and picks chasers by nearest-distance search, both of
+  // which could pick up an order dependency and drift.
+  const snapshot = () => {
+    const m = createMatch();
+    const drive = Object.assign(makeInput(), { mx: 1, mw: 1, sprint: true });
+    advance(m, 20, drive);
+    return {
+      ball: { x: m.ball.pos.x, y: m.ball.pos.y, z: m.ball.pos.z, w: m.ball.pos.w },
+      players: m.players.map(p => [p.id, p.pos.x, p.pos.z, p.pos.w]),
+      score: m.score,
+    };
+  };
+  assert.deepEqual(snapshot(), snapshot());
+});
