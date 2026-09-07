@@ -268,7 +268,8 @@ function stepBall(ball, world, dt) {
   if (p.w < -hw) { p.w = -hw; if (v.w < 0) v.w = -v.w * C.restitution; }
 
   const outZ = Math.abs(p.z) > world.pitch.halfZ;
-  return { goal, outZ };
+  const outX = Math.abs(p.x) > world.pitch.halfX;
+  return { goal, outZ, outX };
 }
 
 function createPlayer(opts) {
@@ -625,6 +626,20 @@ function stepMatch(match, userInput, dt) {
     // Pass 1 keeps play flowing; throw-ins arrive with the rules layer in Pass 2.
     match.ball.pos.z = Math.sign(match.ball.pos.z) * (match.world.pitch.halfZ - 0.5);
     match.ball.vel.z = -match.ball.vel.z * 0.4;
+  }
+  if (res.outX) {
+    // The mirror of the z rebound. Without it a wide or long ball leaves the pitch on a
+    // ballistic arc and the match is dead until half time. A ball inside the goal mouth
+    // is never rebounded — that is a goal, and the branch above has already returned —
+    // but the guard is explicit here because a ball that clears the bar would otherwise
+    // drop back through the mouth on its way down and score from behind the net.
+    // Corners and goal kicks arrive with the rules layer in Pass 2.
+    const inMouth = inGoalMouth(match.ball.pos, match.world.goals.home) ||
+                    inGoalMouth(match.ball.pos, match.world.goals.away);
+    if (!inMouth) {
+      match.ball.pos.x = Math.sign(match.ball.pos.x) * (match.world.pitch.halfX - 0.5);
+      match.ball.vel.x = -match.ball.vel.x * 0.4;
+    }
   }
 
   // ---- the touch ----

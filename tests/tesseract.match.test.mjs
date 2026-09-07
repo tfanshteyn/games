@@ -185,3 +185,39 @@ test('players in a match obstruct each other only inside their own slice', () =>
   const ghostMoved = Math.hypot(ghost.pos.x - ghostBefore.x, ghost.pos.z - ghostBefore.z);
   assert.ok(ghostMoved < 0.05, `the other-slice player was shoved by ${ghostMoved} m`);
 });
+
+test('a ball hit long and wide rebounds back into play instead of leaving the pitch', () => {
+  // The defect this pins: stepMatch rebounded at |z| > 34 but had no mirror for
+  // |x| > 52.5, so once the ball could be kicked at all a long ball left on a ballistic
+  // arc and the match was dead until half time.
+  const m = createMatch();
+  advance(m, 2);
+  m.ball.pos = V4.make(40, 1.5, 20, 0);      // wide of the post, so not a goal
+  m.ball.vel = V4.make(40, 4, 0, 0);
+  advance(m, 4);
+  assert.equal(m.state, 'play', 'nothing should have been scored');
+  assert.ok(Math.abs(m.ball.pos.x) <= CONFIG.pitch.halfX + 1e-6,
+    `the ball escaped on x: ${m.ball.pos.x}`);
+  assert.ok(Math.abs(m.ball.pos.z) <= CONFIG.pitch.halfZ + 1e-6);
+});
+
+test('a ball driven over the bar does not score on the way down behind the goal', () => {
+  const m = createMatch();
+  advance(m, 2);
+  m.ball.pos = V4.make(48, 3.4, 0, 0);       // already above the 2.44 m bar, dead centre
+  m.ball.vel = V4.make(26, 3, 0, 0);
+  const events = advance(m, 4);
+  assert.ok(!events.some(e => e.startsWith('goal:')),
+    'a ball over the bar must not drop in behind the net and score');
+  assert.deepEqual(m.score, { home: 0, away: 0 });
+});
+
+test('the goal mouth is still not rebounded — a real shot scores', () => {
+  const m = createMatch();
+  advance(m, 2);
+  m.ball.pos = V4.make(50, 1, 0, 0);
+  m.ball.vel = V4.make(24, 0, 0, 0);
+  const events = advance(m, 1.5);
+  assert.ok(events.includes('goal:home'));
+  assert.equal(m.score.home, 1);
+});
