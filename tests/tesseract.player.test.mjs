@@ -66,3 +66,39 @@ test('a keeper is thicker through W than an outfield player', () => {
   assert.equal(gk.thickness, CONFIG.thickness.keeper);
   assert.equal(st.thickness, CONFIG.thickness.player);
 });
+
+test('a player pinned against a wall can move away from it on the next frame', () => {
+  // Held only by inspection until now. A player stuck on the ana wall — the one axis
+  // with no real-world intuition to fall back on — would be a Critical gameplay defect,
+  // and clampAxis zeroing velocity into the wall is exactly the kind of code that
+  // becomes a trap if someone later zeroes the whole velocity vector instead.
+  const world = createWorld();
+  const walls = [
+    { axis: 'x', key: 'mx', half: world.pitch.halfX },
+    { axis: 'z', key: 'mz', half: world.pitch.halfZ },
+    { axis: 'w', key: 'mw', half: world.pitch.halfW },   // the ana/kata walls
+  ];
+  for (const wall of walls) {
+    for (const sign of [1, -1]) {
+      const p = createPlayer({ pos: V4.make(0, 0, 0, 0), team: 'home', role: 'ST' });
+      const into = Object.assign(makeInput(), { [wall.key]: sign });
+      run(p, into, world, 20);
+      assert.ok(Math.abs(p.pos[wall.axis] - sign * wall.half) < 1e-6,
+        `should be pinned on ${wall.axis}=${sign * wall.half}, got ${p.pos[wall.axis]}`);
+      assert.equal(p.vel[wall.axis], 0, `velocity into the ${wall.axis} wall must be killed`);
+
+      // one single frame of reversed input has to break the pin
+      const pinned = p.pos[wall.axis];
+      const away = Object.assign(makeInput(), { [wall.key]: -sign });
+      stepPlayer(p, away, world, DT);
+      assert.ok(Math.abs(p.pos[wall.axis]) < Math.abs(pinned),
+        `stuck on the ${wall.axis} wall at ${sign * wall.half}`);
+
+      // and a second of it takes them clearly off the wall, not a numerical twitch
+      run(p, away, world, 1);
+      assert.ok(Math.abs(pinned - p.pos[wall.axis]) > 0.5,
+        `barely left the ${wall.axis} wall: moved ${Math.abs(pinned - p.pos[wall.axis])} m`);
+      assert.equal(Math.sign(p.pos[wall.axis] - pinned), -sign, 'and moved inward');
+    }
+  }
+});
