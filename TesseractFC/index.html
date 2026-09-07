@@ -335,7 +335,20 @@ function nearestTo(players, pos, filterFn) {
   return best;
 }
 
-const PURE = { CONFIG, mulberry32, V4, chord, CELLS5, sliceTetra, boxSimplices, sliceAll, createWorld, inGoalMouth, createBall, magnusForce, stepBall, createPlayer, makeInput, stepPlayer, SpatialGrid4, canContact, nearestTo };
+// The offside line is a hyperplane at constant x: the deepest of the second-last
+// defender, the ball, and the halfway line. W is deliberately not part of this —
+// a player level in x is onside whatever slice they are standing in.
+function offsideLineX(defenders, ballX, attackDir) {
+  const xs = defenders.map(d => d.pos.x * attackDir).sort((a, b) => b - a);
+  const secondLast = xs.length >= 2 ? xs[1] : (xs[0] !== undefined ? xs[0] : 0);
+  return Math.max(secondLast, ballX * attackDir, 0) * attackDir;
+}
+
+function isOffside(attackerPos, lineX, attackDir) {
+  return attackerPos.x * attackDir > lineX * attackDir + 1e-9;
+}
+
+const PURE = { CONFIG, mulberry32, V4, chord, CELLS5, sliceTetra, boxSimplices, sliceAll, createWorld, inGoalMouth, createBall, magnusForce, stepBall, createPlayer, makeInput, stepPlayer, SpatialGrid4, canContact, nearestTo, offsideLineX, isOffside };
 // ==== PURE END ====
 </script>
 </body>
