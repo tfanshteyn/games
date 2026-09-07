@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - Single self-contained file: `TesseractFC/index.html`. Embedded CSS and JS only. No build step, no bundler, no `package.json`.
-- Three.js loads from `https://cdnjs.cloudflare.com/ajax/libs/three.js/r160/three.min.js`. It is the only external dependency.
+- Three.js loads from `https://cdnjs.cloudflare.com/ajax/libs/three.js/0.160.0/three.min.js`. It is the only external dependency.
 - Everything between `// ==== PURE BEGIN ====` and `// ==== PURE END ====` must not reference `THREE`, `window`, `document` or `performance`. The harness shadows those four names and any use throws a `TypeError`.
 - The pure block ends with `const PURE = { ... };` naming every export. Tests import it via `import { PURE } from './pure-tesseract.mjs'`.
 - Pitch is 105 m × 68 m × **6 m through W**: `halfX 52.5`, `halfZ 34`, `halfW 3`.
@@ -88,7 +88,7 @@ Create `TesseractFC/index.html`:
 </head>
 <body>
 <canvas id="game"></canvas>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r160/three.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/0.160.0/three.min.js"></script>
 <script>
 // ==== PURE BEGIN ====
 
