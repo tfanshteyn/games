@@ -8,10 +8,23 @@
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body { width: 100%; height: 100%; overflow: hidden; background: #05080a; font-family: 'Segoe UI', Tahoma, Verdana, sans-serif; color: #e6efe9; }
   canvas#game { display: block; }
+  #hud { position: fixed; inset: 0; pointer-events: none; z-index: 5; font-family: ui-monospace, Menlo, Consolas, monospace; }
+  #score { position: absolute; top: 18px; left: 50%; transform: translateX(-50%); background: rgba(5,10,8,.66); border: 1px solid #243029; padding: 8px 20px; font-size: 1.3rem; letter-spacing: 3px; }
+  #clock { display: block; text-align: center; font-size: .8rem; color: #7d9187; letter-spacing: 2px; margin-top: 2px; }
+  #wribbon { position: absolute; right: 26px; top: 50%; transform: translateY(-50%); }
+  #radar { position: absolute; left: 22px; bottom: 22px; border: 1px solid #243029; background: rgba(5,10,8,.6); }
+  #banner { position: absolute; left: 50%; top: 34%; transform: translateX(-50%); font-size: 2.6rem; letter-spacing: 8px; color: #7dfcb4; text-shadow: 0 0 26px #7dfcb466; opacity: 0; transition: opacity .25s; }
+  #banner.show { opacity: 1; }
 </style>
 </head>
 <body>
 <canvas id="game"></canvas>
+<div id="hud">
+  <div id="score">HOME <span id="sh">0</span> &ndash; <span id="sa">0</span> AWAY<span id="clock">1st &middot; 00:00</span></div>
+  <canvas id="wribbon" width="66" height="300"></canvas>
+  <canvas id="radar" width="200" height="130"></canvas>
+  <div id="banner"></div>
+</div>
 <div id="loadfail" hidden style="position:fixed;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;padding:40px;background:#05080a;z-index:20;">
   <div>
     <h1 style="font-size:1.6rem;letter-spacing:3px;margin-bottom:14px;">Tesseract FC could not start</h1>
@@ -752,6 +765,67 @@ function switchPlayer() {
   if (next) match.controlled = next;
 }
 
+// ==== HUD ====
+const rib = document.getElementById('wribbon').getContext('2d');
+const rad = document.getElementById('radar').getContext('2d');
+const banner = document.getElementById('banner');
+let bannerUntil = 0;
+
+function drawHud(match) {
+  const P = PURE.CONFIG.pitch;
+  document.getElementById('sh').textContent = match.score.home;
+  document.getElementById('sa').textContent = match.score.away;
+  const secs = Math.floor(match.clock);
+  document.getElementById('clock').textContent =
+    `${match.half === 1 ? '1st' : '2nd'} · ${String(Math.floor(secs / 60)).padStart(2,'0')}:${String(secs % 60).padStart(2,'0')}`;
+
+  // ---- W-ribbon: who is in which slice ----
+  const H = 300, W = 66, camW = match.controlled.pos.w;
+  const yOf = w => H / 2 - (w / P.halfW) * (H / 2 - 16);
+  rib.clearRect(0, 0, W, H);
+  rib.fillStyle = 'rgba(5,10,8,.62)'; rib.fillRect(0, 0, W, H);
+  rib.strokeStyle = '#243029'; rib.strokeRect(0.5, 0.5, W - 1, H - 1);
+  rib.font = '9px ui-monospace, monospace';
+  for (let w = -3; w <= 3; w++) {
+    rib.strokeStyle = 'rgba(125,145,135,.22)';
+    rib.beginPath(); rib.moveTo(10, yOf(w)); rib.lineTo(W - 10, yOf(w)); rib.stroke();
+  }
+  rib.fillStyle = '#7d9187';
+  rib.fillText('ANA', 6, 12); rib.fillText('KATA', 4, H - 5);
+  for (const p of match.players) {
+    rib.fillStyle = p === match.controlled ? '#7dfcb4' : (p.team === 'home' ? '#39d0ff' : '#ff5fa2');
+    rib.globalAlpha = p === match.controlled ? 1 : (PURE.chord(p.pos.w - camW, p.thickness) > 0 ? 0.95 : 0.35);
+    rib.beginPath(); rib.arc(W / 2 + (p.team === 'home' ? -11 : 11), yOf(p.pos.w), 3.2, 0, 6.283); rib.fill();
+  }
+  rib.globalAlpha = 1;
+  rib.fillStyle = '#e8f2fb';
+  rib.beginPath(); rib.arc(W / 2, yOf(match.ball.pos.w), 2.6, 0, 6.283); rib.fill();
+  rib.strokeStyle = '#7dfcb4'; rib.setLineDash([4, 3]);
+  rib.beginPath(); rib.moveTo(4, yOf(camW)); rib.lineTo(W - 4, yOf(camW)); rib.stroke();
+  rib.setLineDash([]);
+
+  // ---- radar: the familiar (x, z) view ----
+  rad.clearRect(0, 0, 200, 130);
+  rad.fillStyle = 'rgba(5,10,8,.6)'; rad.fillRect(0, 0, 200, 130);
+  rad.strokeStyle = 'rgba(230,239,233,.2)';
+  rad.strokeRect(6.5, 6.5, 187, 117);
+  rad.beginPath(); rad.moveTo(100, 7); rad.lineTo(100, 123); rad.stroke();
+  const rx = x => 100 + (x / P.halfX) * 93;
+  const rz = z => 65 + (z / P.halfZ) * 58;
+  for (const p of match.players) {
+    rad.fillStyle = p === match.controlled ? '#7dfcb4' : (p.team === 'home' ? '#39d0ff' : '#ff5fa2');
+    rad.fillRect(rx(p.pos.x) - 1.6, rz(p.pos.z) - 1.6, 3.2, 3.2);
+  }
+  rad.fillStyle = '#e8f2fb';
+  rad.fillRect(rx(match.ball.pos.x) - 1.4, rz(match.ball.pos.z) - 1.4, 2.8, 2.8);
+}
+
+function showBanner(text, secs) {
+  banner.textContent = text;
+  banner.classList.add('show');
+  bannerUntil = performance.now() + secs * 1000;
+}
+
 const input = PURE.makeInput();
 let acc = 0, last = performance.now(), paused = false;
 const perf = [];
@@ -771,7 +845,12 @@ function frame(now) {
   if (!paused) {
     acc += dt;
     while (acc >= PURE.CONFIG.sim.dt) {
-      PURE.stepMatch(match, input, PURE.CONFIG.sim.dt);
+      const { events } = PURE.stepMatch(match, input, PURE.CONFIG.sim.dt);
+      for (const ev of events) {
+        if (ev.startsWith('goal:')) showBanner('GOAL', 2);
+        else if (ev === 'halftime') showBanner('HALF TIME', 2);
+        else if (ev === 'fulltime') showBanner('FULL TIME', 6);
+      }
       acc -= PURE.CONFIG.sim.dt;
     }
   }
@@ -785,6 +864,8 @@ function frame(now) {
     const avg = perf.reduce((a, b) => a + b, 0) / perf.length;
     if (avg > 1 / 45 && worldRenderer.degrade) { worldRenderer.degrade(); perf.length = 0; }
   }
+  drawHud(match);
+  if (bannerUntil && performance.now() > bannerUntil) { banner.classList.remove('show'); bannerUntil = 0; }
   renderer.render(scene, camera);
 }
 requestAnimationFrame(frame);
