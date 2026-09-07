@@ -15,6 +15,13 @@
   #radar { position: absolute; left: 22px; bottom: 22px; border: 1px solid #243029; background: rgba(5,10,8,.6); }
   #banner { position: absolute; left: 50%; top: 34%; transform: translateX(-50%); font-size: 2.6rem; letter-spacing: 8px; color: #7dfcb4; text-shadow: 0 0 26px #7dfcb466; opacity: 0; transition: opacity .25s; }
   #banner.show { opacity: 1; }
+  /* The [hidden] attribute only works if nothing outranks the user-agent
+     [hidden]{display:none} rule — an inline style="display:flex" would, so the
+     panel's presentation lives here and the attribute rule is restated after it. */
+  #loadfail { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; text-align: center; padding: 40px; background: #05080a; z-index: 20; }
+  #loadfail[hidden] { display: none; }
+  #loadfail h1 { font-size: 1.6rem; letter-spacing: 3px; margin-bottom: 14px; }
+  #loadfail p { color: #9fb3aa; line-height: 1.6; max-width: 460px; }
 </style>
 </head>
 <body>
@@ -25,13 +32,13 @@
   <canvas id="radar" width="200" height="130"></canvas>
   <div id="banner"></div>
 </div>
-<div id="loadfail" hidden style="position:fixed;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;padding:40px;background:#05080a;z-index:20;">
+<div id="loadfail" hidden>
   <div>
-    <h1 style="font-size:1.6rem;letter-spacing:3px;margin-bottom:14px;">Tesseract FC could not start</h1>
-    <p style="color:#9fb3aa;line-height:1.6;max-width:460px;">The 3D library failed to load. Check your connection and reload — the game needs Three.js from the CDN.</p>
+    <h1>Tesseract FC could not start</h1>
+    <p>The 3D library failed to load. Check your connection and reload — the game needs Three.js from the CDN.</p>
   </div>
 </div>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r160/three.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/0.160.0/three.min.js"></script>
 <script>
 if (typeof THREE === 'undefined') {
   document.getElementById('loadfail').hidden = false;
