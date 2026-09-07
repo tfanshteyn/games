@@ -739,6 +739,9 @@ function createBall(pos) {
   return {
     pos: V4.clone(pos),
     vel: V4.make(),
+    // Thin in W: you have to match the ball's slice to touch it. Contact code reads
+    // this field, so it must be present or the ball inherits a player's reach.
+    thickness: CONFIG.thickness.ball,
     // Spin is a bivector, not a vector: in 4D a rotation lives in a plane, and there
     // are six independent planes. This is what lets a struck ball bend through W.
     spin: { xy: 0, xz: 0, xw: 0, yz: 0, yw: 0, zw: 0 },
@@ -1115,7 +1118,8 @@ class SpatialGrid4 {
 function canContact(a, b, radius) {
   const dx = a.pos.x - b.pos.x, dz = a.pos.z - b.pos.z;
   if (dx * dx + dz * dz > radius * radius) return false;
-  const reach = (a.thickness || CONFIG.thickness.player) + (b.thickness || CONFIG.thickness.player);
+  // `??` not `||`: a legitimate thickness of 0 must not be promoted to a player's 1.2.
+  const reach = (a.thickness ?? CONFIG.thickness.player) + (b.thickness ?? CONFIG.thickness.player);
   return Math.abs(a.pos.w - b.pos.w) < reach;
 }
 
