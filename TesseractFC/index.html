@@ -608,13 +608,54 @@ class SlabRenderer {
   dispose() { this.scene.remove(this.group); }
 }
 
+// Renderer B: slice the 4-simplex soup by the hyperplane w = cameraW, every frame.
+// This is where the stadium visibly morphs and re-forms as you slide through W.
+class PolytopeSlicer {
+  constructor(scene, cap = 60000) {
+    this.scene = scene;
+    this.cap = cap;
+    this.geom = new THREE.BufferGeometry();
+    this.positions = new Float32Array(cap * 3);
+    this.geom.setAttribute('position', new THREE.BufferAttribute(this.positions, 3));
+    this.mesh = new THREE.Mesh(this.geom, new THREE.MeshLambertMaterial({
+      color: 0x8f7ff0, transparent: true, opacity: 0.55, side: THREE.DoubleSide, flatShading: true,
+    }));
+    this.mesh.frustumCulled = false;
+    scene.add(this.mesh);
+    this.simplices = [];
+    this.stride = 1;             // raised when frame time slips
+    this.lastW = null;
+  }
+  build(world) { this.simplices = world.stands; }
+  setW(w) {
+    if (this.lastW !== null && Math.abs(w - this.lastW) < 0.002) return;
+    this.lastW = w;
+    const { points, tris } = PURE.sliceAll(this.simplices, w);
+    let n = 0;
+    for (let i = 0; i < tris.length; i += this.stride) {
+      if (n + 9 > this.positions.length) break;
+      for (const idx of tris[i]) {
+        const p = points[idx];
+        this.positions[n++] = p.x; this.positions[n++] = p.y; this.positions[n++] = p.z;
+      }
+    }
+    this.geom.setDrawRange(0, n / 3);
+    this.geom.attributes.position.needsUpdate = true;
+    this.geom.computeVertexNormals();
+  }
+  degrade() { this.stride = Math.min(4, this.stride + 1); }
+  dispose() { this.scene.remove(this.mesh); this.geom.dispose(); }
+}
+
 const match = PURE.createMatch();
 const params = new URLSearchParams(location.search);
-let worldRenderer = new SlabRenderer(scene);      // Task 11 makes B the default
+const useSlab = params.get('renderer') === 'a';
+let worldRenderer = useSlab ? new SlabRenderer(scene) : new PolytopeSlicer(scene);
 worldRenderer.build(match.world);
 
 const input = PURE.makeInput();
 let acc = 0, last = performance.now(), paused = false;
+const perf = [];
 
 function updateCamera() {
   const c = match.controlled.pos;
@@ -636,6 +677,13 @@ function frame(now) {
   }
   worldRenderer.setW(match.controlled.pos.w);
   updateCamera();
+  // The simulation is fixed-timestep and never degraded; the slicer gives way first.
+  perf.push(dt);
+  if (perf.length > 90) {
+    perf.shift();
+    const avg = perf.reduce((a, b) => a + b, 0) / perf.length;
+    if (avg > 1 / 45 && worldRenderer.degrade) { worldRenderer.degrade(); perf.length = 0; }
+  }
   renderer.render(scene, camera);
 }
 requestAnimationFrame(frame);
