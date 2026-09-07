@@ -718,6 +718,40 @@ let worldRenderer = useSlab ? new SlabRenderer(scene) : new PolytopeSlicer(scene
 worldRenderer.build(match.world);
 const actors = new ActorLayer(scene, match);
 
+// WASD move, Q/E slide kata/ana through W, Shift sprint, C switch, Esc pause.
+const held = new Set();
+const CODE_MAP = {
+  KeyW: 'up', ArrowUp: 'up', KeyS: 'down', ArrowDown: 'down',
+  KeyA: 'left', ArrowLeft: 'left', KeyD: 'right', ArrowRight: 'right',
+  KeyQ: 'kata', KeyE: 'ana', ShiftLeft: 'sprint', ShiftRight: 'sprint',
+};
+addEventListener('keydown', e => {
+  if (e.code === 'KeyC') switchPlayer();
+  if (e.code === 'Escape') paused = !paused;
+  const a = CODE_MAP[e.code];
+  if (a) { held.add(a); e.preventDefault(); }
+});
+addEventListener('keyup', e => {
+  const a = CODE_MAP[e.code];
+  if (a) { held.delete(a); e.preventDefault(); }
+});
+addEventListener('blur', () => held.clear());
+
+function readInput() {
+  const dir = PURE.attackDirOf(match.controlled.team);
+  input.mx = ((held.has('up') ? 1 : 0) - (held.has('down') ? 1 : 0)) * dir;
+  input.mz = ((held.has('right') ? 1 : 0) - (held.has('left') ? 1 : 0)) * dir;
+  input.mw = (held.has('ana') ? 1 : 0) - (held.has('kata') ? 1 : 0);
+  input.sprint = held.has('sprint');
+}
+
+function switchPlayer() {
+  const team = match.controlled.team;
+  const next = PURE.nearestTo(match.players, match.ball.pos,
+    p => p.team === team && !p.isKeeper && p !== match.controlled);
+  if (next) match.controlled = next;
+}
+
 const input = PURE.makeInput();
 let acc = 0, last = performance.now(), paused = false;
 const perf = [];
@@ -733,6 +767,7 @@ function frame(now) {
   requestAnimationFrame(frame);
   const dt = Math.min(0.25, (now - last) / 1000);
   last = now;
+  readInput();
   if (!paused) {
     acc += dt;
     while (acc >= PURE.CONFIG.sim.dt) {
@@ -756,7 +791,7 @@ requestAnimationFrame(frame);
 
 addEventListener('visibilitychange', () => {
   paused = document.hidden;
-  if (document.hidden) { input.mx = 0; input.mz = 0; input.mw = 0; input.sprint = false; }
+  if (document.hidden) { input.mx = 0; input.mz = 0; input.mw = 0; input.sprint = false; held.clear(); }
   last = performance.now();
 });
 </script>
