@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { PURE } from './pure-tesseract.mjs';
-const { createMatch, stepMatch, makeInput, CONFIG, V4 } = PURE;
+const { createMatch, stepMatch, makeInput, CONFIG, V4, buildTeam, attackDirOf, FORMATION_433 } = PURE;
 
 const DT = CONFIG.sim.dt;
 const advance = (m, secs, input = makeInput()) => {
@@ -67,11 +67,47 @@ test('full time ends the match and freezes it', () => {
   assert.equal(m.clock, frozen, 'nothing moves after full time');
 });
 
-test('teams attack opposite ways and swap ends at half time', () => {
+test('teams attack opposite ways', () => {
+  // Swapping ends at half time is not implemented in Pass 1 — attackDirOf(team) takes
+  // no half argument, and this test does not cover end-swapping.
   const m = createMatch();
   const firstHalf = PURE.attackDirOf('home');
   assert.equal(PURE.attackDirOf('away'), -firstHalf);
   assert.equal(typeof firstHalf, 'number');
+});
+
+test('the formation-slot lookup recovers the right slot from a player id', () => {
+  // stepMatch recovers a player's formation slot with
+  // Number(p.id.replace(/^\D+/, '')) % 11 — an off-by-one here would silently hand a
+  // player another role's home position while staying within the pitch bounds that
+  // every other test checks. Pin the id -> index -> role mapping directly instead.
+  for (const team of ['home', 'away']) {
+    const players = buildTeam(team, attackDirOf(team));
+    players.forEach((p, index) => {
+      const recoveredIndex = Number(p.id.replace(/^\D+/, ''));
+      assert.equal(recoveredIndex, index, `${p.id} should recover index ${index}`);
+      assert.equal(FORMATION_433[recoveredIndex].role, p.role, `${p.id} role mismatch`);
+    });
+  }
+  const home = buildTeam('home', attackDirOf('home'));
+  const away = buildTeam('away', attackDirOf('away'));
+  assert.equal(home[10].id, 'home10');
+  assert.equal(Number(home[10].id.replace(/^\D+/, '')), 10);
+  assert.equal(away[10].id, 'away10');
+  assert.equal(Number(away[10].id.replace(/^\D+/, '')), 10);
+});
+
+test('match.controlled survives a restart as the same object, still in match.players', () => {
+  const m = createMatch();
+  const controlledBefore = m.controlled;
+  advance(m, 3); // enough to pass through the kickoff restart into play
+  // Strict reference check, not deep equality: resetPositions copies coordinate values
+  // onto the existing player objects in place. If a future refactor made it replace
+  // array elements instead, match.controlled would become a detached ghost object that
+  // deep-equals a player in match.players without actually being one — deep equality
+  // would pass against exactly the bug this test exists to catch.
+  assert.strictEqual(m.controlled, controlledBefore);
+  assert.ok(m.players.includes(m.controlled));
 });
 
 test('a full match runs without a player leaving the pitch volume', () => {
