@@ -154,8 +154,20 @@ function boxSimplices(min, max) {
 }
 
 // Slice a whole simplex soup, fan-triangulating each cell's cross-section polygon.
+//
+// A tetrahedral cell shared by two adjacent simplices is an INTERIOR face of the solid.
+// It gets sliced from both sides, producing two coincident polygons stacked on each
+// other — invisible detail that on the stands was two thirds of every triangle drawn,
+// double-sided and translucent. Only cells on the surface are sliced exactly once, so
+// any cross-section emitted twice is dropped and only the silhouette survives.
+//
+// The two copies are bit-identical, not merely close: for a given tetrahedron and plane
+// the split into below/above is fixed by geometry, and every emitted vertex is
+// cut(loneOrBelow, other) with the same argument order either way. Only the order of
+// the polygon's own vertices differs, which sorting the key normalises away.
 function sliceAll(simplices, c) {
   const points = [], tris = [], poly = [];
+  const faces = [], seen = new Map();
   for (let s = 0; s < simplices.length; s++) {
     const v = simplices[s];
     for (let ci = 0; ci < 5; ci++) {
@@ -163,10 +175,17 @@ function sliceAll(simplices, c) {
       poly.length = 0;
       const n = sliceTetra(v[cell[0]], v[cell[1]], v[cell[2]], v[cell[3]], c, poly);
       if (n < 3) continue;
-      const base = points.length;
-      for (let i = 0; i < n; i++) points.push(poly[i]);
-      for (let i = 1; i < n - 1; i++) tris.push([base, base + i, base + i + 1]);
+      const key = poly.map(q => `${q.x},${q.y},${q.z}`).sort().join('|');
+      const prev = seen.get(key);
+      if (prev === undefined) { seen.set(key, faces.length); faces.push(poly.slice()); }
+      else if (prev >= 0) { faces[prev] = null; seen.set(key, -1); }   // interior: drop both
     }
+  }
+  for (const face of faces) {
+    if (face === null) continue;
+    const base = points.length;
+    for (let i = 0; i < face.length; i++) points.push(face[i]);
+    for (let i = 1; i < face.length - 1; i++) tris.push([base, base + i, base + i + 1]);
   }
   return { points, tris };
 }
@@ -184,14 +203,34 @@ function createWorld() {
 
   // Stand blocks beyond each touchline, authored as 4D boxes so the slicer has real
   // geometry to cut. Each box becomes 24 four-simplices.
+  //
+  // Their W-intervals are deliberately NARROWER than the reachable range of w and
+  // staggered across it, so blocks enter and leave the cross-section as the camera
+  // slides through W and the silhouette genuinely re-forms. Authoring every block
+  // over [-7, +7] — an interval strictly containing the whole reachable ±3 — sliced
+  // to the identical 3D box at every reachable w, which is the single thing the
+  // polytope slicer was chosen to deliver, and it also pinned the slab renderer's
+  // fade permanently on (`w >= wLo && w <= wHi` was always true).
   const stands = [];
   const addBox = (min, max) => { for (const s of boxSimplices(min, max)) stands.push(s); };
-  for (let i = 0; i < 6; i++) {
-    const x0 = -45 + i * 18;
-    addBox({ x: x0, y: 0, z: p.halfZ + 6, w: -p.halfW - 4 },
-           { x: x0 + 14, y: 9 + (i % 2) * 3, z: p.halfZ + 20, w: p.halfW + 4 });
-    addBox({ x: x0, y: 0, z: -p.halfZ - 20, w: -p.halfW - 4 },
-           { x: x0 + 14, y: 9 + ((i + 1) % 2) * 3, z: -p.halfZ - 6, w: p.halfW + 4 });
+  const HALF_SPAN = 1.6;                 // each block is 3.2 m deep, half the reachable range
+  // W-slot per block along the touchline, riffle-shuffled rather than in order. The
+  // slots themselves march evenly across [-2.6, +2.6]; assigning them in order would
+  // correlate w with x and drag the whole stadium off down the pitch as you slide,
+  // leaving nothing in frame. Interleaved, the blocks present at any w are scattered
+  // along the full length instead, and the silhouette still re-forms completely.
+  const W_ORDER = [0, 4, 1, 5, 2, 6, 3, 7];
+  const STEP = 5.2 / (W_ORDER.length - 1);
+  for (let i = 0; i < W_ORDER.length; i++) {
+    const x0 = -48 + i * 13;
+    // The far touchline is half a slot out of phase with the near one, so the two
+    // sides of the stadium never appear and vanish together.
+    const cNear = -2.6 + W_ORDER[i] * STEP;
+    const cFar = cNear + STEP / 2;
+    addBox({ x: x0, y: 0, z: p.halfZ + 6, w: cNear - HALF_SPAN },
+           { x: x0 + 10, y: 9 + (i % 2) * 3, z: p.halfZ + 20, w: cNear + HALF_SPAN });
+    addBox({ x: x0, y: 0, z: -p.halfZ - 20, w: cFar - HALF_SPAN },
+           { x: x0 + 10, y: 9 + ((i + 1) % 2) * 3, z: -p.halfZ - 6, w: cFar + HALF_SPAN });
   }
 
   return {
@@ -745,7 +784,9 @@ class SlabRenderer {
 // Renderer B: slice the 4-simplex soup by the hyperplane w = cameraW, every frame.
 // This is where the stadium visibly morphs and re-forms as you slide through W.
 class PolytopeSlicer {
-  // 288 simplices x 5 cells x 2 triangles = 2880 triangles = 8640 vertices, so 12000 leaves comfortable headroom.
+  // 288 simplices x 5 cells x 2 triangles = 2880 triangles = 8640 vertices before
+  // sliceAll drops interior faces, so 12000 leaves comfortable headroom. In practice the
+  // culled soup emits 144-336 triangles across the reachable range of w.
   constructor(scene, cap = 12000) {
     this.scene = scene;
     this.cap = cap;

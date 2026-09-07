@@ -103,3 +103,20 @@ test('a hypercube cross-section is the same cube at every w, and empty outside',
   assert.equal(sliceAll(sims, 1.5).points.length, 0);
   assert.equal(sliceAll(sims, -1.5).tris.length, 0);
 });
+
+test('interior faces are culled: no cross-section face is emitted twice', () => {
+  // A tetrahedral cell shared by two adjacent simplices is inside the solid. It is
+  // sliced from both sides and used to be drawn twice — on the stands that was 1152 of
+  // 1728 triangles, stacked coincident, double-sided and translucent, for nothing.
+  const sims = boxSimplices(P(-1,-1,-1,-1), P(1,1,1,1));
+  for (const c of [-0.5, 0, 0.25, 0.9]) {
+    const { points, tris } = sliceAll(sims, c);
+    const seen = new Set();
+    for (const t of tris) {
+      const key = t.map(i => `${points[i].x},${points[i].y},${points[i].z}`).sort().join('|');
+      assert.ok(!seen.has(key), `face emitted twice at w=${c}: ${key}`);
+      seen.add(key);
+    }
+    assert.ok(tris.length >= 12, `w=${c}: a closed cube needs at least 12 triangles, got ${tris.length}`);
+  }
+});

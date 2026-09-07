@@ -48,3 +48,56 @@ test('the stands are a sliceable simplex soup', () => {
     for (const v of s) for (const k of ['x','y','z','w']) assert.equal(typeof v[k], 'number');
   }
 });
+
+test('THE RENDERER BET: the stands genuinely morph as the camera slides through W', () => {
+  // The defect this pins: every stand box was authored over w in [-7, +7], an interval
+  // strictly containing the whole reachable range of +/-3, so an axis-aligned 4D box
+  // sliced to the identical 3D box at every reachable w — same point count, same
+  // triangle count, same bounding box, measured. The stadium never changed shape, which
+  // is the single thing renderer B was chosen to deliver (spec 4.2). The same root cause
+  // pinned SlabRenderer's `inside = w >= wLo && w <= wHi` permanently true, so renderer
+  // A's fade never fired either. Both are covered here.
+  const { sliceAll, CONFIG } = PURE;
+  const world = createWorld();
+  const REACH = CONFIG.pitch.halfW * 2;          // the camera's w spans [-3, +3]
+
+  // Each block's W-interval, recovered the way SlabRenderer recovers it.
+  const blocks = [];
+  for (let i = 0; i < world.stands.length; i += 24) {
+    let wLo = Infinity, wHi = -Infinity;
+    for (const s of world.stands.slice(i, i + 24)) for (const v of s) {
+      if (v.w < wLo) wLo = v.w;
+      if (v.w > wHi) wHi = v.w;
+    }
+    blocks.push({ wLo, wHi });
+  }
+  assert.ok(blocks.length >= 6, 'there must be several blocks to stagger');
+  for (const b of blocks) {
+    assert.ok(b.wHi - b.wLo < REACH,
+      `a block spanning ${b.wHi - b.wLo} m in W covers the whole reachable range and can never change`);
+  }
+
+  const ws = [-3, -1.5, 0, 1.5, 3];
+  const lit = ws.map(c => blocks.filter(b => c >= b.wLo && c <= b.wHi).length);
+  assert.ok(new Set(lit).size > 1, `renderer A's fade never fires: ${lit.join(',')} lit at ${ws.join(',')}`);
+  assert.ok(Math.min(...lit) > 0, 'the stadium must never vanish entirely');
+  assert.ok(Math.min(...lit) < blocks.length, 'some block must be out of the slice somewhere');
+
+  const shots = ws.map(c => {
+    const { points, tris } = sliceAll(world.stands, c);
+    const lo = { x: Infinity, y: Infinity, z: Infinity };
+    const hi = { x: -Infinity, y: -Infinity, z: -Infinity };
+    for (const p of points) for (const k of ['x', 'y', 'z']) {
+      if (p[k] < lo[k]) lo[k] = p[k];
+      if (p[k] > hi[k]) hi[k] = p[k];
+    }
+    return { tris: tris.length, lo, hi };
+  });
+  for (const s of shots) assert.ok(s.tris > 0, 'every reachable slice must show some stadium');
+  assert.ok(new Set(shots.map(s => s.tris)).size > 1,
+    `the triangle count is identical at every w: ${shots.map(s => s.tris).join(',')}`);
+  // and the silhouette itself moves, not just the triangle budget
+  const spans = shots.map(s => `${s.lo.x},${s.hi.x}`);
+  assert.ok(new Set(spans).size >= ws.length - 1,
+    `the outer silhouette barely changes on x: ${spans.join(' / ')}`);
+});
