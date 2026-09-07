@@ -111,3 +111,42 @@ test('the simulation is deterministic', () => {
   };
   assert.deepEqual(run(), run());
 });
+
+test('GOLDEN: a ball struck with known spin lands where it landed before', () => {
+  // The determinism test above cannot fail: with no RNG and no global state,
+  // deepEqual(run(), run()) holds for any implementation, correct or not. This is the
+  // trajectory test the spec asks for — "a ball struck with known spin lands within
+  // tolerance of a precomputed position" (spec 5).
+  //
+  // The expected numbers are a REGRESSION PIN, not a hand-derivation: they were
+  // produced by running this exact setup once against the implementation as reviewed
+  // and pasted back as literals. They are not independently correct, they are
+  // independently STABLE — any change to gravity, drag, the Magnus coefficient or the
+  // integration order moves them. Verified by flipping the sign of each of gravity,
+  // drag and magnus in turn and watching this test fail.
+  //
+  // The shot bounces twice, bends 6.1 m in z and 0.64 m in w, and never reaches the W
+  // wall, so the Magnus terms are measured rather than clamped away.
+  const world = createWorld();
+  const b = createBall(V4.make(-20, 0.5, 0, 0));
+  b.vel = V4.make(22, 8, 3, 0);
+  b.spin = spin({ xw: 55, xz: 30, yz: -12 });
+  for (let i = 0; i < 300; i++) stepBall(b, world, DT);
+
+  const expected = {
+    x: 27.266580279213308,
+    y: 0.1462043132343172,
+    z: 6.112090481596587,
+    w: -0.6369927085465356,
+  };
+  const TOL = 1e-6;
+  for (const k of ['x', 'y', 'z', 'w']) {
+    assert.ok(Math.abs(b.pos[k] - expected[k]) < TOL,
+      `${k}: expected ${expected[k]}, got ${b.pos[k]} (delta ${b.pos[k] - expected[k]})`);
+  }
+  // and the signature of the shot, stated independently of the pinned numbers
+  assert.ok(b.pos.x > 0, 'gravity must not have stopped it travelling');
+  assert.ok(b.pos.z > 1, 'the xz spin must have bent it sideways');
+  assert.ok(b.pos.w < -0.1, 'the xw spin must have bent it through W');
+  assert.ok(Math.abs(b.pos.w) < CONFIG.pitch.halfW, 'and not simply been clamped by the wall');
+});

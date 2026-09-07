@@ -81,6 +81,21 @@ test('ANCHOR: slicing the tesseract at w=0 gives exactly the cube of side 2', ()
   }
   // every triangle indexes a real point
   for (const t of tris) for (const i of t) assert.ok(i >= 0 && i < points.length);
+
+  // Bounds alone are far too weak to anchor a slicer: emitting the two points
+  // (-1,-1,-1) and (1,1,1) and one triangle between them satisfies every assertion
+  // above. Pin the actual cross-section instead — all eight cube corners must be among
+  // the DISTINCT emitted points, and there must be enough triangles to close a cube.
+  const distinct = new Set(points.map(p => `${p.x},${p.y},${p.z}`));
+  for (const x of [-1, 1]) for (const y of [-1, 1]) for (const z of [-1, 1]) {
+    assert.ok(distinct.has(`${x},${y},${z}`),
+      `the cross-section is missing the cube corner (${x},${y},${z})`);
+  }
+  assert.ok(distinct.size >= 8, `only ${distinct.size} distinct points in the cross-section`);
+  // A closed cube of side 2 needs at least 12 triangles (two per square face); the
+  // Kuhn triangulation's cross-section currently emits 48. A near-empty slice cannot
+  // reach 12 however it is wound.
+  assert.ok(tris.length >= 12, `a cube needs at least 12 triangles, got ${tris.length}`);
 });
 
 test('a hypercube cross-section is the same cube at every w, and empty outside', () => {
