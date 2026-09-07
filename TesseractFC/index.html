@@ -611,12 +611,15 @@ class SlabRenderer {
 // Renderer B: slice the 4-simplex soup by the hyperplane w = cameraW, every frame.
 // This is where the stadium visibly morphs and re-forms as you slide through W.
 class PolytopeSlicer {
-  constructor(scene, cap = 60000) {
+  // 288 simplices x 5 cells x 2 triangles = 2880 triangles = 8640 vertices, so 12000 leaves comfortable headroom.
+  constructor(scene, cap = 12000) {
     this.scene = scene;
     this.cap = cap;
     this.geom = new THREE.BufferGeometry();
     this.positions = new Float32Array(cap * 3);
+    this.normals = new Float32Array(cap * 3);
     this.geom.setAttribute('position', new THREE.BufferAttribute(this.positions, 3));
+    this.geom.setAttribute('normal', new THREE.BufferAttribute(this.normals, 3));
     this.mesh = new THREE.Mesh(this.geom, new THREE.MeshLambertMaterial({
       color: 0x8f7ff0, transparent: true, opacity: 0.55, side: THREE.DoubleSide, flatShading: true,
     }));
@@ -641,7 +644,25 @@ class PolytopeSlicer {
     }
     this.geom.setDrawRange(0, n / 3);
     this.geom.attributes.position.needsUpdate = true;
-    this.geom.computeVertexNormals();
+    // Manual flat-normal pass bounded by the written range only — computeVertexNormals()
+    // ignores drawRange on non-indexed geometry and would rescan the full 12000-vertex
+    // buffer every frame, defeating degrade()'s whole purpose.
+    for (let base = 0; base < n; base += 9) {
+      const ax = this.positions[base], ay = this.positions[base + 1], az = this.positions[base + 2];
+      const bx = this.positions[base + 3], by = this.positions[base + 4], bz = this.positions[base + 5];
+      const cx = this.positions[base + 6], cy = this.positions[base + 7], cz = this.positions[base + 8];
+      const e1x = bx - ax, e1y = by - ay, e1z = bz - az;
+      const e2x = cx - ax, e2y = cy - ay, e2z = cz - az;
+      let nx = e1y * e2z - e1z * e2y;
+      let ny = e1z * e2x - e1x * e2z;
+      let nz = e1x * e2y - e1y * e2x;
+      const len = Math.sqrt(nx * nx + ny * ny + nz * nz);
+      if (len > 0) { nx /= len; ny /= len; nz /= len; } else { nx = 0; ny = 0; nz = 0; }
+      this.normals[base] = nx; this.normals[base + 1] = ny; this.normals[base + 2] = nz;
+      this.normals[base + 3] = nx; this.normals[base + 4] = ny; this.normals[base + 5] = nz;
+      this.normals[base + 6] = nx; this.normals[base + 7] = ny; this.normals[base + 8] = nz;
+    }
+    this.geom.attributes.normal.needsUpdate = true;
   }
   degrade() { this.stride = Math.min(4, this.stride + 1); }
   dispose() { this.scene.remove(this.mesh); this.geom.dispose(); }
