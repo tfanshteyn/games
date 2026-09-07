@@ -43,9 +43,9 @@ test('a goal scores, is announced, and restarts at kickoff', () => {
   m.ball.pos = V4.make(52.3, 1, 0, 2.4);        // in the mouth, off in W
   m.ball.vel = V4.make(14, 0, 0, 0);
   const events = advance(m, 1.5);
-  assert.equal(m.score.away, 1);
-  assert.equal(m.score.home, 0);
-  assert.ok(events.includes('goal:away'));
+  assert.equal(m.score.home, 1);
+  assert.equal(m.score.away, 0);
+  assert.ok(events.includes('goal:home'));
 });
 
 test('half time arrives on schedule and the second half kicks off', () => {
@@ -120,4 +120,36 @@ test('a full match runs without a player leaving the pitch volume', () => {
     assert.ok(Number.isFinite(p.pos.x) && Number.isFinite(p.pos.w));
   }
   assert.ok(Number.isFinite(m.ball.pos.x));
+});
+
+test('ANCHOR: a goal is credited to the team that does NOT defend that end', () => {
+  // The defect this pins: stepBall credited `g.dir > 0 ? 'away' : 'home'`, which awarded
+  // every goal the human striker scored to the opponent. No previous assertion connected
+  // a goal's credit to which team actually defends that end, so fourteen reviews missed
+  // it. Derive the expected team from the keeper standing in front of the goal instead of
+  // restating a literal, so the two halves of the convention can never drift apart again.
+  const { createWorld, createBall, stepBall } = PURE;
+  const world = createWorld();
+  const keepers = createMatch().players.filter(p => p.isKeeper);
+  assert.equal(keepers.length, 2);
+
+  for (const g of [world.goals.home, world.goals.away]) {
+    const defender = keepers
+      .slice()
+      .sort((a, b) => Math.abs(a.pos.x - g.x) - Math.abs(b.pos.x - g.x))[0];
+    assert.ok(Math.abs(defender.pos.x - g.x) < 12,
+      `no keeper stands in front of the goal at x=${g.x}`);
+    // and unambiguously so: the other keeper must be at the far end
+    const other = keepers.find(k => k !== defender);
+    assert.ok(Math.abs(other.pos.x - g.x) > 60, 'the two keepers must be at opposite ends');
+
+    const b = createBall(V4.make(g.x - g.dir * 2, 1, 0, 0));
+    b.vel = V4.make(g.dir * 20, 0, 0, 0);
+    let scored = null;
+    for (let i = 0; i < 240 && !scored; i++) scored = stepBall(b, world, DT).goal;
+    assert.ok(scored, `a shot into the goal at x=${g.x} must be a goal`);
+    assert.notEqual(scored, defender.team,
+      `the ${defender.team} keeper defends x=${g.x}, so ${defender.team} cannot be credited`);
+    assert.equal(scored, defender.team === 'home' ? 'away' : 'home');
+  }
 });

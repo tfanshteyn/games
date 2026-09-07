@@ -87,7 +87,7 @@ test('crossing the goal line inside the mouth is a goal, from any slice', () => 
     b.vel = V4.make(20, 0, 0, 0);
     let scored = null;
     for (let i = 0; i < 240 && !scored; i++) scored = stepBall(b, world, DT).goal;
-    assert.equal(scored, 'away', `a shot at w=${w} must score`);
+    assert.equal(scored, 'home', `a shot at w=${w} must score`);
   }
 });
 

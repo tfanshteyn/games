@@ -240,9 +240,12 @@ function stepBall(ball, world, dt) {
   // spin decays
   for (const k of ['xy', 'xz', 'xw', 'yz', 'yw', 'zw']) ball.spin[k] *= (1 - 1.1 * dt);
 
+  // Credit goes to the team that does NOT defend this end. attackDirOf('home') is +1,
+  // so buildTeam('home', 1) puts the home keeper at x = -49 defending x = -52.5, which
+  // means home attacks +x and scores in the goal with dir = +1.
   let goal = null;
   for (const g of [world.goals.home, world.goals.away]) {
-    if (inGoalMouth(p, g)) goal = g.dir > 0 ? 'away' : 'home';
+    if (inGoalMouth(p, g)) goal = g.dir > 0 ? 'home' : 'away';
   }
 
   // ground
