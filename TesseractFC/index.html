@@ -12,8 +12,19 @@
 </head>
 <body>
 <canvas id="game"></canvas>
+<div id="loadfail" hidden style="position:fixed;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;padding:40px;background:#05080a;z-index:20;">
+  <div>
+    <h1 style="font-size:1.6rem;letter-spacing:3px;margin-bottom:14px;">Tesseract FC could not start</h1>
+    <p style="color:#9fb3aa;line-height:1.6;max-width:460px;">The 3D library failed to load. Check your connection and reload — the game needs Three.js from the CDN.</p>
+  </div>
+</div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r160/three.min.js"></script>
 <script>
+if (typeof THREE === 'undefined') {
+  document.getElementById('loadfail').hidden = false;
+  document.getElementById('game').style.display = 'none';
+  throw new Error('Three.js failed to load');
+}
 // ==== PURE BEGIN ====
 const CONFIG = {
   pitch:     { halfX: 52.5, halfZ: 34, halfW: 3 },
@@ -519,6 +530,121 @@ function stepMatch(match, userInput, dt) {
 
 const PURE = { CONFIG, mulberry32, V4, chord, CELLS5, sliceTetra, boxSimplices, sliceAll, createWorld, inGoalMouth, createBall, magnusForce, stepBall, createPlayer, makeInput, stepPlayer, SpatialGrid4, canContact, nearestTo, offsideLineX, isOffside, FORMATION_433, buildTeam, homePosition, decideAI, attackDirOf, createMatch, resetPositions, stepMatch };
 // ==== PURE END ====
+
+// ==== RENDER ====
+const canvas = document.getElementById('game');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x05080a);
+scene.fog = new THREE.Fog(0x05080a, 60, 190);
+const camera = new THREE.PerspectiveCamera(62, 1, 0.1, 400);
+
+function resize() {
+  const w = innerWidth, h = innerHeight;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+}
+addEventListener('resize', resize);
+resize();
+
+scene.add(new THREE.HemisphereLight(0xbfe3ff, 0x0b2318, 1.1));
+const key = new THREE.DirectionalLight(0xffffff, 1.5);
+key.position.set(40, 80, 20);
+scene.add(key);
+
+// The pitch surface. In 4D the ground is a volume, but its cross-section at any w
+// is the same 105x68 rectangle, so one mesh serves every slice.
+const pitchMat = new THREE.MeshLambertMaterial({ color: 0x123f2a });
+const pitch = new THREE.Mesh(new THREE.PlaneGeometry(105, 68), pitchMat);
+pitch.rotation.x = -Math.PI / 2;
+scene.add(pitch);
+
+function addGoal(dirX) {
+  const g = new THREE.Group();
+  const mat = new THREE.MeshLambertMaterial({ color: 0xdbe9f7 });
+  const post = new THREE.CylinderGeometry(0.06, 0.06, PURE.CONFIG.goal.height, 8);
+  for (const s of [-1, 1]) {
+    const m = new THREE.Mesh(post, mat);
+    m.position.set(dirX * PURE.CONFIG.pitch.halfX, PURE.CONFIG.goal.height / 2, s * PURE.CONFIG.goal.halfZ);
+    g.add(m);
+  }
+  const bar = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.12, PURE.CONFIG.goal.halfZ * 2), mat);
+  bar.position.set(dirX * PURE.CONFIG.pitch.halfX, PURE.CONFIG.goal.height, 0);
+  g.add(bar);
+  scene.add(g);
+}
+addGoal(1); addGoal(-1);
+
+// Both renderers implement this. Switching is one line plus ?renderer=a.
+// SlabRenderer (A) pre-bakes static meshes and fades those outside your slice.
+class SlabRenderer {
+  constructor(scene) { this.scene = scene; this.group = new THREE.Group(); scene.add(this.group); this.slabs = []; }
+  build(world) {
+    const mat = () => new THREE.MeshLambertMaterial({ color: 0x5b46c4, transparent: true, opacity: 0.5 });
+    // one box per stand block, reconstructed from the simplex soup's bounds
+    for (let i = 0; i < world.stands.length; i += 24) {
+      const verts = world.stands.slice(i, i + 24).flat();
+      const lo = { x: Infinity, y: Infinity, z: Infinity, w: Infinity };
+      const hi = { x: -Infinity, y: -Infinity, z: -Infinity, w: -Infinity };
+      for (const v of verts) for (const k of ['x','y','z','w']) {
+        if (v[k] < lo[k]) lo[k] = v[k];
+        if (v[k] > hi[k]) hi[k] = v[k];
+      }
+      const mesh = new THREE.Mesh(
+        new THREE.BoxGeometry(hi.x - lo.x, hi.y - lo.y, hi.z - lo.z), mat());
+      mesh.position.set((lo.x + hi.x) / 2, (lo.y + hi.y) / 2, (lo.z + hi.z) / 2);
+      this.group.add(mesh);
+      this.slabs.push({ mesh, wLo: lo.w, wHi: hi.w });
+    }
+  }
+  setW(w) {
+    for (const s of this.slabs) {
+      const inside = w >= s.wLo && w <= s.wHi;
+      s.mesh.material.opacity = inside ? 0.55 : 0.12;
+    }
+  }
+  dispose() { this.scene.remove(this.group); }
+}
+
+const match = PURE.createMatch();
+const params = new URLSearchParams(location.search);
+let worldRenderer = new SlabRenderer(scene);      // Task 11 makes B the default
+worldRenderer.build(match.world);
+
+const input = PURE.makeInput();
+let acc = 0, last = performance.now(), paused = false;
+
+function updateCamera() {
+  const c = match.controlled.pos;
+  const dir = PURE.attackDirOf(match.controlled.team);
+  camera.position.set(c.x - 14 * dir, 7, c.z);
+  camera.lookAt(c.x + 6 * dir, 1.4, c.z);
+}
+
+function frame(now) {
+  requestAnimationFrame(frame);
+  const dt = Math.min(0.25, (now - last) / 1000);
+  last = now;
+  if (!paused) {
+    acc += dt;
+    while (acc >= PURE.CONFIG.sim.dt) {
+      PURE.stepMatch(match, input, PURE.CONFIG.sim.dt);
+      acc -= PURE.CONFIG.sim.dt;
+    }
+  }
+  worldRenderer.setW(match.controlled.pos.w);
+  updateCamera();
+  renderer.render(scene, camera);
+}
+requestAnimationFrame(frame);
+
+addEventListener('visibilitychange', () => {
+  paused = document.hidden;
+  if (document.hidden) { input.mx = 0; input.mz = 0; input.mw = 0; input.sprint = false; }
+  last = performance.now();
+});
 </script>
 </body>
 </html>
