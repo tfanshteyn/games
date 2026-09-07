@@ -348,7 +348,75 @@ function isOffside(attackerPos, lineX, attackDir) {
   return attackerPos.x * attackDir > lineX * attackDir + 1e-9;
 }
 
-const PURE = { CONFIG, mulberry32, V4, chord, CELLS5, sliceTetra, boxSimplices, sliceAll, createWorld, inGoalMouth, createBall, magnusForce, stepBall, createPlayer, makeInput, stepPlayer, SpatialGrid4, canContact, nearestTo, offsideLineX, isOffside };
+// Slots are written attack-normalised: the team attacks +x, and buildTeam mirrors
+// them for the side attacking -x. The back four deliberately occupy four distinct
+// slices, because a defence stacked on one w gets walked straight through.
+const FORMATION_433 = [
+  { role: 'GK', x: -49, z:   0, w:  0.0 },
+  { role: 'FB', x: -34, z: -22, w: -2.2 },
+  { role: 'CB', x: -37, z:  -8, w: -0.8 },
+  { role: 'CB', x: -37, z:   8, w:  0.8 },
+  { role: 'FB', x: -34, z:  22, w:  2.2 },
+  { role: 'CM', x: -14, z: -16, w: -1.6 },
+  { role: 'CM', x: -18, z:   0, w:  0.0 },
+  { role: 'CM', x: -14, z:  16, w:  1.6 },
+  { role: 'W',  x:   8, z: -24, w: -1.2 },
+  { role: 'ST', x:  14, z:   0, w:  0.4 },
+  { role: 'W',  x:   8, z:  24, w:  1.2 },
+];
+
+function buildTeam(team, attackDir) {
+  return FORMATION_433.map((slot, n) => createPlayer({
+    pos: V4.make(slot.x * attackDir, 0, slot.z * attackDir, slot.w),
+    team, role: slot.role, n, id: `${team}${n}`,
+  }));
+}
+
+function homePosition(slot, ball, phase, attackDir) {
+  const P = CONFIG.pitch;
+  const clamp = (v, h) => Math.max(-h, Math.min(h, v));
+
+  if (slot.role === 'GK') {
+    // On his line, sliding through W to cover the ball's slice — but he is 2.2 m
+    // thick against a 6 m mouth, so he can never cover all of it.
+    return {
+      x: -(P.halfX - 1.4) * attackDir,
+      y: 0,
+      z: clamp(ball.z * 0.28, 3.2),
+      w: clamp(ball.w * 0.85, P.halfW),
+    };
+  }
+
+  // The whole shape slides up and down the pitch with the ball.
+  const push = phase === 'attacking' ? 16 : phase === 'defending' ? -12 : 0;
+  const ballPull = clamp(ball.x * 0.3 * attackDir, 22);
+
+  return {
+    x: clamp((slot.x + push + ballPull) * attackDir, P.halfX - 1),
+    y: 0,
+    z: clamp(slot.z * attackDir + ball.z * 0.18, P.halfZ - 1),
+    w: clamp(slot.w + ball.w * 0.25, P.halfW),
+  };
+}
+
+function decideAI(player, ctx) {
+  const dx = ctx.home.x - player.pos.x;
+  const dz = ctx.home.z - player.pos.z;
+  const dw = ctx.home.w - player.pos.w;
+
+  const groundDist = Math.hypot(dx, dz);
+  const DEAD = 0.8;                        // stops the shape jittering in position
+  let mx = 0, mz = 0;
+  if (groundDist > DEAD) {
+    const s = Math.min(1, groundDist / 6) / groundDist;
+    mx = dx * s; mz = dz * s;
+  }
+  const mw = Math.abs(dw) < 0.25 ? 0 : Math.max(-1, Math.min(1, dw / 1.5));
+
+  return { mx, mz, mw, sprint: groundDist > 14 };
+}
+
+const PURE = { CONFIG, mulberry32, V4, chord, CELLS5, sliceTetra, boxSimplices, sliceAll, createWorld, inGoalMouth, createBall, magnusForce, stepBall, createPlayer, makeInput, stepPlayer, SpatialGrid4, canContact, nearestTo, offsideLineX, isOffside, FORMATION_433, buildTeam, homePosition, decideAI };
 // ==== PURE END ====
 </script>
 </body>
