@@ -843,6 +843,9 @@ function updateCivilians(t) {
 const input = makeInput();
 const keys = {};
 let pointerLocked = false, paused = false, started = false;
+// Set once the browser refuses pointer lock (embedded views, some iframes): the game then plays with a free
+// cursor — moving the mouse over the canvas looks around, LMB swings, Esc pauses — instead of pausing forever.
+let noLock = false;
 const pressedThisFrame = { jump: false, zip: false, web: false, interact: false };
 const camState = { yaw: 0, pitch: -0.25, idleT: 0, dist: CONFIG.camDist, fov: CONFIG.camFovMin };
 // Latches the webUp suppression of input.swing for the rest of an LMB hold once an unwebbed thug has
@@ -930,23 +933,26 @@ document.addEventListener('keydown', e => {
   keys[e.code] = true;
   if (e.code === 'Space') { pressedThisFrame.jump = true; e.preventDefault(); }
   if (e.code === 'KeyE') { pressedThisFrame.zip = true; pressedThisFrame.interact = true; }
+  if (e.code === 'Escape' && noLock && started && !pointerLocked) setPaused(!paused);
 });
 document.addEventListener('keyup', e => { keys[e.code] = false; });
-document.addEventListener('mousedown', e => { if (pointerLocked && e.button === 0) pressWeb(); });
+const freeLook = () => noLock && started && !paused && !pointerLocked && !TOUCH;
+document.addEventListener('mousedown', e => { if (e.button === 0 && (pointerLocked || (freeLook() && e.target === renderer.domElement))) pressWeb(); });
 document.addEventListener('mouseup', e => { if (e.button === 0) releaseWeb(); });
 document.addEventListener('mousemove', e => {
-  if (!pointerLocked) return;
+  if (!pointerLocked && !freeLook()) return;
   camState.yaw -= e.movementX * CONFIG.mouseSens;
   camState.pitch = Math.max(-1.2, Math.min(0.9, camState.pitch - e.movementY * CONFIG.mouseSens));
   camState.idleT = 0;
 });
 document.addEventListener('pointerlockchange', () => {
   pointerLocked = document.pointerLockElement === renderer.domElement;
-  if (!pointerLocked && started && !TOUCH) setPaused(true);
+  if (pointerLocked) noLock = false;
+  else if (started && !TOUCH) setPaused(true);
 });
-// If the browser refuses the lock (Chrome blocks re-locking for ~1.25 s after an Escape exit, or the
-// document lost focus) fall back to the pause menu instead of soft-locking with no mouse look.
-document.addEventListener('pointerlockerror', () => { if (started && !TOUCH) setPaused(true); });
+// If the browser refuses the lock (embedded view, Chrome's ~1.25 s re-lock block after an Escape exit, or the
+// document lost focus) keep playing with a free cursor; pausing here would loop, since Resume asks for the lock again.
+document.addEventListener('pointerlockerror', () => { noLock = true; });
 // Click anywhere on the canvas to re-acquire a lock that was lost or refused (attached once the renderer exists).
 function attachRelockHandler() { renderer.domElement.addEventListener('mousedown', () => { if (started && !paused && !pointerLocked) lockPointer(); }); }
 function lockPointer() { if (TOUCH) return; try { const p = renderer.domElement.requestPointerLock(); if (p && p.catch) p.catch(() => {}); } catch (e) {} }
