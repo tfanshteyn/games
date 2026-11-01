@@ -132,6 +132,7 @@ const CONFIG = {
   rollDecel: 0.65,      // carpet rolling resistance, m/s²
   sandDecel: 3.2,       // sand drags the ball to a stop
   plankWidth: 0.28,     // a ship's plank is narrower than a cell; roll off it and you're in the sea
+  trampoline: 0.9,      // a trampoline pad sends a falling ball back up with this much of its speed
   maxSpeed: 5.5,        // full-power putt
   stopSpeed: 0.02,
   captureSpeed: 1.4,    // crosses the cup slower than this → holed
@@ -156,7 +157,7 @@ function parseHole(def) {
   const cols = Math.max(...def.map.map(r => r.length));
   const hole = {
     name: def.name, par: def.par, rows, cols, cells: [], tee: null, cup: null,
-    hills: [], windmills: [], tunnels: [], lifts: [], loops: [], cannons: [], ship: null, sliders: [], pendulums: [], posts: [],
+    hills: [], windmills: [], tunnels: [], lifts: [], loops: [], cannons: [], ship: null, volcano: null, sliders: [], pendulums: [], posts: [],
     extraSegs: [], segments: [], cellSegs: [],
   };
   for (let r = 0; r < rows; r++) {
@@ -198,6 +199,7 @@ function parseHole(def) {
     else if (e.type === 'post') hole.posts.push({ x: e.c * C, z: e.r * C, rad: e.rad || 0.06 });
     else if (e.type === 'cannon') hole.cannons.push({ a: mouth(e.in), target: { c: e.target.c, r: e.target.r, x: (e.target.c + 0.5) * C, z: (e.target.r + 0.5) * C }, apex: e.apex || 1, landSpeed: e.landSpeed || 1 });
     else if (e.type === 'ship') hole.ship = { bow: e.bow };
+    else if (e.type === 'volcano') hole.volcano = { x: e.c * C, z: e.r * C, height: e.height, radius: e.radius };
     else throw new Error(`${def.name}: unknown extra ${e.type}`);
   }
 
@@ -248,7 +250,7 @@ function baseHeight(cell, x, z) {
     const s = dx === 1 ? fx : dx === -1 ? 1 - fx : dz === 1 ? fz : 1 - fz;
     return lowH + (highH - lowH) * (idx + s) / n;
   }
-  if (cell.ch === 'w') return cell.level * CONFIG.levelStep - CONFIG.waterDepth;
+  if (cell.ch === 'w' || cell.ch === 'L') return cell.level * CONFIG.levelStep - CONFIG.waterDepth;
   if (offPlank(cell, x, z)) return -CONFIG.waterDepth; // the sea under a plank is at ground level
   return cell.level * CONFIG.levelStep;
 }
@@ -260,7 +262,9 @@ function offPlank(cell, x, z) {
   return Math.abs(across) > CONFIG.plankWidth / 2;
 }
 
-function isWet(cell, x, z) { return cell.ch === 'w' || offPlank(cell, x, z); }
+// Water and lava are both hazards the ball sinks into.
+function isWet(cell, x, z) { return cell.ch === 'w' || cell.ch === 'L' || offPlank(cell, x, z); }
+const isHazardChar = ch => ch === 'w' || ch === 'L';
 
 function surfaceDecel(cell) { return cell && cell.ch === 's' ? CONFIG.sandDecel : CONFIG.rollDecel; }
 
@@ -317,7 +321,7 @@ function buildWalls(hole) {
         return;
       }
       if (i >= 2) return; // course–course edges are handled once, from the left/top cell
-      if ((a.ch === '=' && b.ch === 'w') || (a.ch === 'w' && b.ch === '=')) {
+      if ((a.ch === '=' && isHazardChar(b.ch)) || (isHazardChar(a.ch) && b.ch === '=')) {
         const bridge = a.ch === '=' ? a : b;
         add(seg(ax, az, bx, bz, bridge.level * CONFIG.levelStep + CONFIG.wallHeight, 'rail'), a, b);
         return;
@@ -584,6 +588,7 @@ function collideWalls(hole, ball, t) {
 // | 'tunnel' | 'lift' | 'loop' (entering a machine) | 'arrive' (leaving one).
 function substep(hole, ball, t, h) {
   const K = CONFIG.rollK, G = CONFIG.gravity;
+  let bounced = false;
   const tr = ball.transport;
   if (tr) {
     tr.t += h;
@@ -632,8 +637,15 @@ function substep(hole, ball, t, h) {
     ball.z += ball.vz * h;
     const gh = groundHeight(hole, ball.x, ball.z);
     if (gh !== null && ball.y <= gh) {
-      ball.y = gh; ball.vy = 0; ball.air = false;
-      ball.vx *= CONFIG.landing; ball.vz *= CONFIG.landing;
+      const under = cellAt(hole, ball.x, ball.z);
+      if (under.ch === 'j' && ball.vy < -0.5) {
+        // a trampoline throws it back up
+        ball.y = gh; ball.vy = -ball.vy * CONFIG.trampoline;
+        bounced = true;
+      } else {
+        ball.y = gh; ball.vy = 0; ball.air = false;
+        ball.vx *= CONFIG.landing; ball.vz *= CONFIG.landing;
+      }
     }
   }
 
@@ -641,7 +653,7 @@ function substep(hole, ball, t, h) {
 
   const cell = cellAt(hole, ball.x, ball.z);
   if (!cell || !isCourseChar(cell.ch)) return 'out';
-  if (isWet(cell, ball.x, ball.z) && ball.y <= baseHeight(cell, ball.x, ball.z) + 0.02) return 'water';
+  if (isWet(cell, ball.x, ball.z) && ball.y <= baseHeight(cell, ball.x, ball.z) + 0.02) return cell.ch === 'L' ? 'lava' : 'water';
 
   if (!ball.air) {
     const sp = Math.hypot(ball.vx, ball.vz);
@@ -682,7 +694,7 @@ function substep(hole, ball, t, h) {
       return 'lip';
     }
   }
-  return hitWall;
+  return hitWall || (bounced ? 'bounce' : null);
 }
 
 // Advance dt seconds, sub-stepping so the ball never moves more than half its radius per step.
@@ -695,13 +707,13 @@ function stepBall(hole, ball, t, dt) {
     const ev = substep(hole, ball, t + i * h, h);
     if (ev) {
       events.push(ev);
-      if (ev === 'holed' || ev === 'water' || ev === 'out' || ev === 'stopped') break;
+      if (FINAL_EVENTS.includes(ev)) break;
     }
   }
   return events;
 }
 
-const FINAL_EVENTS = ['holed', 'water', 'out', 'stopped'];
+const FINAL_EVENTS = ['holed', 'water', 'lava', 'out', 'stopped'];
 
 // Play one putt to completion. Returns the final event and where the ball ended up.
 function simulateShot(hole, start, angle, power, maxTime = 25) {
@@ -731,7 +743,7 @@ function distanceField(hole) {
     const next = [[0, 1], [1, 0], [0, -1], [-1, 0]].map(([dr, dc]) => cellOf(hole, cell.r + dr, cell.c + dc));
     for (const [m, other] of links) if (m.r === cell.r && m.c === cell.c) next.push(cellOf(hole, other.r, other.c));
     for (const n of next) {
-      if (!n || !isCourseChar(n.ch) || n.ch === 'w') continue;
+      if (!n || !isCourseChar(n.ch) || isHazardChar(n.ch)) continue;
       const i = n.r * hole.cols + n.c;
       if (dist[i] > d0 + CONFIG.cell) { dist[i] = d0 + CONFIG.cell; q.push(n); }
     }
@@ -947,17 +959,101 @@ const PIRATE_COVE = {
   ],
 };
 
+// Volcano Island adds: L lava (a hazard like water), j trampoline pad. Extras: volcano (decoration).
+const VOLCANO_ISLAND = {
+  id: 'volcano', name: 'Volcano Island', style: 'jungle',
+  shortRound: [0, 2, 4, 5, 6, 7, 9, 11, 13, 14],
+  holes: [
+    { name: 'Jungle Path', par: 2,
+      map: ['ggggg', 'ggogg', ...rep(4, 'ggggg'), 'LgggL', 'LgggL', ...rep(7, 'ggggg'), 'gg@gg', 'ggggg'] },
+
+    { name: 'Lava Flow', par: 3,
+      map: ['ggggg', 'ggogg', ...rep(3, 'ggggg'), 'L=LLL', 'L=LLL', ...rep(8, 'ggggg'), 'gg@gg', 'ggggg'] },
+
+    { name: 'Trampoline Terrace', par: 3,
+      map: ['ggg', 'gog', 'ggg', 'LLL', 'jjj', 'jjj', 'LLL', ...rep(6, 'ggg'), 'g@g', 'ggg'],
+      levels: [...rep(3, '111'), ...rep(4, '000'), ...rep(8, '333')] },
+
+    { name: 'Tiki Alley', par: 3,
+      map: ['ggggggg', 'gggoggg', ...rep(4, 'ggggggg'), 'LgggggL', 'LgggggL', ...rep(3, 'ggggggg'), 'LgggggL', 'LgggggL', ...rep(3, 'ggggggg'), 'ggg@ggg', 'ggggggg'],
+      extras: [
+        { type: 'post', c: 2, r: 4.5, rad: 0.09 }, { type: 'post', c: 5, r: 4.5, rad: 0.09 },
+        { type: 'post', c: 3.5, r: 9.5, rad: 0.09 },
+        { type: 'post', c: 2, r: 14.5, rad: 0.09 }, { type: 'post', c: 5, r: 14.5, rad: 0.09 },
+      ] },
+
+    { name: 'The Volcano', par: 3,
+      map: ['ggg..gtg', 'gog..ggg', ...rep(8, 'ggg..^^^'), 'ggg..ggg', 'ggg..ggg', 'ggg..g@g', 'gtg..ggg'],
+      levels: [...rep(2, '000..333'), ...rep(12, '000..000')],
+      extras: [
+        { type: 'tunnel', a: { c: 6, r: 0, out: 's' }, b: { c: 1, r: 13, out: 'n' }, length: 6 },
+        { type: 'volcano', c: 6.5, r: -3.2, height: 1.9, radius: 3 },
+      ] },
+
+    { name: 'Rope Bridge', par: 3,
+      map: ['ggggggg', 'gggoggg', 'ggggggg', ...rep(4, 'LLL=LLL'), ...rep(6, 'ggggggg'), 'ggg@ggg', 'ggggggg'] },
+
+    { name: 'Lava Tube', par: 3,
+      map: ['gtg.ggg', 'ggg.gog', ...rep(4, 'ggg.ggg'), 'ggg.LgL', 'ggg.LgL', ...rep(4, 'ggg.ggg'), 'g@g.ggg', 'ggg.gtg'],
+      extras: [{ type: 'tunnel', a: { c: 1, r: 0, out: 's' }, b: { c: 5, r: 13, out: 'n' }, length: 6 }] },
+
+    { name: 'Bounce House', par: 3,
+      map: ['ggggg', 'ggogg', 'ggggg', 'LLLLL', 'jjjjj', 'jjjjj', 'LLLLL', ...rep(6, 'ggggg'), 'gg@gg', 'ggggg'],
+      levels: [...rep(3, '22222'), ...rep(4, '00000'), ...rep(8, '44444')] },
+
+    { name: 'Torch Turn', par: 3,
+      map: ['LLgggggggg', 'Lgggggggog', 'gggggggggg', ...rep(10, 'ggg.......'), 'g@g.......', 'ggg.......'],
+      extras: [{ type: 'post', c: 5, r: 1.5, rad: 0.09 }, { type: 'post', c: 1.5, r: 7, rad: 0.09 }] },
+
+    { name: 'Basalt Steps', par: 3,
+      map: ['ggggg', 'ggogg', 'ggggg', 'ggggg', ...rep(4, 'LgggL'), ...rep(4, 'ggggg'), ...rep(4, 'ggggg'), 'gg@gg', 'ggggg'],
+      levels: [...rep(4, '00000'), ...rep(4, '11111'), ...rep(4, '22222'), ...rep(6, '33333')] },
+
+    { name: 'Log Swing', par: 3,
+      map: ['ggg', 'gog', ...rep(16, 'ggg'), 'g@g', 'ggg'],
+      extras: [
+        { type: 'pendulum', c: 1.5, r: 10, axis: 'z', halfWidth: 0.75, period: 2.4 },
+        { type: 'post', c: 0.8, r: 5, rad: 0.09 }, { type: 'post', c: 2.2, r: 15, rad: 0.09 },
+      ] },
+
+    { name: 'Crater Rim', par: 3,
+      map: ['LLLLL', 'LgggL', 'LgogL', 'LgggL', 'LgggL', ...rep(6, 'L^^^L'), ...rep(5, 'ggggg'), 'gg@gg', 'ggggg'],
+      levels: [...rep(5, '03330'), ...rep(13, '00000')],
+      extras: [{ type: 'volcano', c: 2.5, r: -3.5, height: 2.4, radius: 3.4 }] },
+
+    { name: 'Fern Gully', par: 3,
+      map: ['....ggggg', '....gggog', '....ggggg', '......ggg', '......ggg', 'ggggggggg', 'ggggLgggg', 'ggggggggg', ...rep(4, 'ggg......'), 'g@g......', 'ggg......'],
+      extras: [
+        { type: 'bumper', a: [0, 6.5], b: [1.5, 5] },
+        { type: 'bumper', a: [7.5, 8], b: [9, 6.5] },
+        { type: 'bumper', a: [7.5, 0], b: [9, 1.5] },
+      ] },
+
+    { name: 'Bamboo Gate', par: 3,
+      map: ['ggggg', 'ggogg', ...rep(3, 'ggggg'), 'gLgLg', ...rep(12, 'ggggg'), 'gg@gg', 'ggggg'],
+      extras: [{ type: 'slider', c: 2.5, r: 11, axis: 'z', halfWidth: 1.25, gap: 0.45, period: 3.2 }] },
+
+    { name: 'Eruption', par: 4,
+      map: ['ggg..gtg', 'gog..ggg', ...rep(4, 'ggg..^^^'), ...rep(4, 'ggg..ggg'), 'ggg..LLL', 'ggg..jjj', 'ggg..jjj', 'ggg..LLL', ...rep(4, 'ggg..ggg'), 'ggg..g@g', 'gtg..ggg'],
+      levels: [...rep(2, '000..333'), ...rep(4, '000..000'), ...rep(4, '000..111'), ...rep(4, '000..000'), ...rep(6, '000..333')],
+      extras: [
+        { type: 'tunnel', a: { c: 6, r: 0, out: 's' }, b: { c: 1, r: 19, out: 'n' }, length: 7 },
+        { type: 'volcano', c: 6.5, r: -3.2, height: 1.9, radius: 3 },
+      ] },
+  ],
+};
+
 const THEMES = [
   { id: 'sunny', name: 'Sunny Park', blurb: 'Windmill, ball lift, loop-the-loop and ponds', course: SUNNY_PARK, colour: '#5cc46a' },
   { id: 'pirate', name: 'Pirate Cove', blurb: 'Shipwrecks, sand, a plank and a ball cannon', course: PIRATE_COVE, colour: '#e0b45a' },
-  { id: 'volcano', name: 'Volcano Island', blurb: 'Putt up into a smoking volcano', course: null, colour: '#e0573a' },
+  { id: 'volcano', name: 'Volcano Island', blurb: 'Lava, trampolines and a smoking volcano', course: VOLCANO_ISLAND, colour: '#e0573a' },
   { id: 'castle', name: 'Castle Kingdom', blurb: 'Drawbridge, moat and swinging gates', course: null, colour: '#9aa0b5' },
   { id: 'frozen', name: 'Frozen Peaks', blurb: 'Ice, snow and marble-run chutes', course: null, colour: '#8fd3f0' },
   { id: 'robot', name: 'Robot Factory', blurb: 'Ball lift, conveyors and a loop', course: null, colour: '#c0c4cc' },
 ];
 
 const PURE = {
-  SUNNY_PARK, PIRATE_COVE, THEMES,
+  SUNNY_PARK, PIRATE_COVE, VOLCANO_ISLAND, THEMES,
   CONFIG, parseHole, cellAt, cellOf, baseHeight, groundHeight, gradient, createBall, shoot, stepBall, simulateShot,
   windmillBlocked, windmillAngle, distanceField, botPlay, cappedScore, isCourseChar,
   sliderPieces, pendulumState, transportPos, loopSpeedNeeded, laneXZ, offPlank, isWet, cannonMuzzle,
@@ -1143,6 +1239,46 @@ const TEX = {
   }),
 };
 TEX.sea = TEX.lagoon.clone(); TEX.sea.needsUpdate = true; TEX.sea.repeat.set(60, 60);
+
+// Volcano Island
+Object.assign(TEX, {
+  jungle: canvasTex(256, 256, (g, w, h) => {
+    g.fillStyle = '#3d5a2a'; g.fillRect(0, 0, w, h);
+    speckle(g, w, h, 5000, ['#4a6b30', '#2f4720', '#55783a', '#3a3a24', '#5a4a30'], 2.2);
+    for (let i = 0; i < 40; i++) { // fallen leaves
+      g.fillStyle = ['#6b8a3a', '#8a7a3a', '#4a6a2a'][i % 3];
+      g.beginPath(); g.ellipse(Math.random() * w, Math.random() * h, 5, 2, Math.random() * 3, 0, Math.PI * 2); g.fill();
+    }
+  }),
+  basalt: canvasTex(128, 128, (g, w, h) => {
+    g.fillStyle = '#2b2a2c'; g.fillRect(0, 0, w, h);
+    speckle(g, w, h, 2200, ['#3a3839', '#1f1e20', '#454244', '#2f3a2a'], 2.5);
+    g.fillStyle = 'rgba(80,120,50,.35)'; // moss along the top
+    for (let x = 0; x < w; x += 3) g.fillRect(x, 0, 3, 4 + Math.random() * 10);
+  }),
+  lava: canvasTex(256, 256, (g, w, h) => {
+    g.fillStyle = '#ff5a00'; g.fillRect(0, 0, w, h);
+    for (let i = 0; i < 90; i++) { // cooling crust floating on the flow
+      g.fillStyle = `rgba(${40 + Math.random() * 40},${10 + Math.random() * 15},5,${0.7 + Math.random() * 0.3})`;
+      g.beginPath();
+      const x = Math.random() * w, y = Math.random() * h, r = 6 + Math.random() * 22;
+      for (let k = 0; k < 7; k++) { const a = (k / 7) * Math.PI * 2, rr = r * (0.6 + Math.random() * 0.5); g.lineTo(x + Math.cos(a) * rr, y + Math.sin(a) * rr); }
+      g.fill();
+    }
+    speckle(g, w, h, 600, ['#ffd23a', '#ffb000', '#fff1a0'], 2);
+  }),
+  tramp: canvasTex(128, 128, (g, w, h) => {
+    g.fillStyle = '#1a1a22'; g.fillRect(0, 0, w, h);
+    g.strokeStyle = '#2b2b38'; g.lineWidth = 1;
+    for (let i = 0; i < w; i += 6) { g.beginPath(); g.moveTo(i, 0); g.lineTo(i, h); g.moveTo(0, i); g.lineTo(w, i); g.stroke(); }
+  }),
+  bamboo: canvasTex(64, 256, (g, w, h) => {
+    g.fillStyle = '#b7a24a'; g.fillRect(0, 0, w, h);
+    g.fillStyle = 'rgba(255,255,220,.25)'; g.fillRect(w * 0.2, 0, w * 0.15, h);
+    for (let y = 0; y < h; y += 64) { g.fillStyle = '#6e6024'; g.fillRect(0, y, w, 5); }
+  }),
+});
+TEX.jungle.repeat.set(0.35, 0.35);
 TEX.grass.repeat.set(1, 1);
 
 const MAT = {
@@ -1185,7 +1321,21 @@ const MAT = {
   frond: new THREE.MeshStandardMaterial({ color: '#3d9a3a', roughness: 0.8, side: THREE.DoubleSide, flatShading: true }),
   dune: new THREE.MeshStandardMaterial({ color: '#9ab65a', roughness: 1, flatShading: true }),
   smoke: new THREE.MeshStandardMaterial({ color: '#cfcfcf', roughness: 1, transparent: true, opacity: 0.8, depthWrite: false }),
+  // Volcano Island
+  jungle: new THREE.MeshStandardMaterial({ map: TEX.jungle, roughness: 1 }),
+  basalt: new THREE.MeshStandardMaterial({ map: TEX.basalt, roughness: 0.95, side: THREE.DoubleSide }),
+  basaltRock: new THREE.MeshStandardMaterial({ color: '#2e2c2f', roughness: 0.95, flatShading: true }),
+  lava: new THREE.MeshStandardMaterial({ map: TEX.lava, emissive: '#ffffff', emissiveMap: TEX.lava, emissiveIntensity: 0.9, roughness: 0.8 }),
+  tramp: new THREE.MeshStandardMaterial({ map: TEX.tramp, roughness: 0.6 }),
+  bamboo: new THREE.MeshStandardMaterial({ map: TEX.bamboo, roughness: 0.6 }),
+  tiki: new THREE.MeshStandardMaterial({ color: '#7a4a28', roughness: 0.9, flatShading: true }),
+  tikiPaint: new THREE.MeshStandardMaterial({ color: '#e8b23a', roughness: 0.7 }),
+  flame: new THREE.MeshBasicMaterial({ color: '#ffb02e' }),
+  leafBig: new THREE.MeshStandardMaterial({ color: '#2e7d32', roughness: 0.8, side: THREE.DoubleSide, flatShading: true }),
+  fern: new THREE.MeshStandardMaterial({ color: '#2f6b24', roughness: 0.9, side: THREE.DoubleSide, flatShading: true }),
+  ash: new THREE.MeshStandardMaterial({ color: '#6b6560', roughness: 1, transparent: true, opacity: 0.75, depthWrite: false }),
 };
+TEX.lava.repeat.set(0.8, 0.8);
 TEX.sand.repeat.set(0.4, 0.4);
 
 // Colour codes are sRGB but r128 treats them as linear; convert so they don't render washed out.
@@ -1202,20 +1352,21 @@ function buildGround(hole) {
   const W = hole.cols * C, D = hole.rows * C;
   const shape = new THREE.Shape();
   // the park lawn runs to the horizon; the beach is a sandy island in the sea
-  const m = STYLE === 'beach' ? 11 : 200;
-  const x0 = STYLE === 'beach' ? -m : -200, x1 = STYLE === 'beach' ? W + m : 200;
-  const y0 = STYLE === 'beach' ? -D - m : -200, y1 = STYLE === 'beach' ? m : 200;
+  const island = STYLE !== 'park';
+  const m = island ? 11 : 200;
+  const x0 = island ? -m : -200, x1 = island ? W + m : 200;
+  const y0 = island ? -D - m : -200, y1 = island ? m : 200;
   shape.moveTo(x0, y0); shape.lineTo(x1, y0); shape.lineTo(x1, y1); shape.lineTo(x0, y1); shape.lineTo(x0, y0);
   // shape y maps to world −z after the rotation below
   const cut = new THREE.Path();
   cut.moveTo(0, 0); cut.lineTo(0, -D); cut.lineTo(W, -D); cut.lineTo(W, 0); cut.lineTo(0, 0);
   shape.holes.push(cut);
-  ground = new THREE.Mesh(new THREE.ShapeGeometry(shape), STYLE === 'beach' ? MAT.sand : MAT.grass);
+  ground = new THREE.Mesh(new THREE.ShapeGeometry(shape), { beach: MAT.sand, jungle: MAT.jungle }[STYLE] || MAT.grass);
   ground.rotation.x = -Math.PI / 2;
   ground.position.y = -0.02;
   ground.receiveShadow = true;
   scene.add(ground);
-  if (STYLE === 'beach') {
+  if (island) {
     sea = new THREE.Mesh(new THREE.PlaneGeometry(400, 400), MAT.sea);
     sea.rotation.x = -Math.PI / 2; sea.position.set(W / 2, -0.1, D / 2);
     sea.receiveShadow = true;
@@ -1283,7 +1434,7 @@ function box(w, h, d, mat, x, y, z) {
 // ============================================================
 const C = CONFIG.cell;
 let holeGroup = null;
-const anim = { windmills: [], flag: null, water: [], sliders: [], pendulums: [] };
+const anim = { windmills: [], flag: null, water: [], sliders: [], pendulums: [], flags: [], ship: null, volcanoes: [], flames: [] };
 
 const stripeTex = canvasTex(128, 32, (g, w, h) => {
   for (let x = -h; x < w + h; x += 32) {
@@ -1373,7 +1524,7 @@ function addSliderModel(hole, s) {
   const [cx, cz] = laneXZ(s, 0, 0);
   const beam = box(s.axis === 'z' ? 2 * hw + 0.18 : 0.06, 0.06, s.axis === 'z' ? 0.06 : 2 * hw + 0.18, MAT.wood, cx, s.y + 0.32, cz);
   holeGroup.add(beam);
-  const pieces = [0, 1].map(() => { const m = box(1, 0.09, 0.035, STYLE === 'beach' ? MAT.deck : MACH.stripes, 0, 0, 0); holeGroup.add(m); return m; });
+  const pieces = [0, 1].map(() => { const m = box(1, 0.09, 0.035, { beach: MAT.deck, jungle: MAT.bamboo }[STYLE] || MACH.stripes, 0, 0, 0); holeGroup.add(m); return m; });
   anim.sliders.push({ s, pieces });
 }
 
@@ -1390,7 +1541,7 @@ function addPendulumModel(hole, p) {
   const rod = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, p.length, 8), MACH.steel);
   rod.position.y = -p.length / 2; rod.castShadow = true;
   // in Pirate Cove the pendulum swings a cannonball on a chain
-  const bob = new THREE.Mesh(new THREE.SphereGeometry(p.bobR, 24, 16), STYLE === 'beach' ? MAT.iron : MACH.stripes);
+  const bob = new THREE.Mesh(new THREE.SphereGeometry(p.bobR, 24, 16), { beach: MAT.iron, jungle: MAT.basaltRock }[STYLE] || MACH.stripes);
   bob.position.y = -p.length; bob.castShadow = true;
   arm.add(rod, bob);
   holeGroup.add(arm);
@@ -1399,6 +1550,7 @@ function addPendulumModel(hole, p) {
 
 function addPostModel(hole, p) {
   const y = groundHeight(hole, p.x, p.z) ?? 0;
+  if (STYLE === 'jungle') { addTiki(p.x, y, p.z, p.rad, 0.32); return; }
   if (STYLE === 'beach') {
     // a rum barrel: staves with iron hoops
     const barrel = new THREE.Mesh(new THREE.CylinderGeometry(p.rad * 0.92, p.rad * 0.92, 0.22, 16), MAT.wood);
@@ -1444,24 +1596,39 @@ function disposeGroup(g) {
 
 let STYLE = 'park';
 
+const SKIES = {
+  park: { top: '#3f87d6', bottom: '#d9ecff' },
+  beach: { top: '#2f8fe0', bottom: '#dff3ff' },
+  jungle: { top: '#4a78b8', bottom: '#f3d2ad' }, // hazy, warmed by the volcano
+};
+
 function buildHole(hole, style = 'park') {
   STYLE = style;
-  const beach = style === 'beach';
+  const beach = style === 'beach', jungle = style === 'jungle';
+  const sk = SKIES[style] || SKIES.park;
+  sky.material.uniforms.top.value.set(sk.top);
+  sky.material.uniforms.bottom.value.set(sk.bottom);
+  scene.fog.color.set(sk.bottom);
   if (holeGroup) disposeGroup(holeGroup);
   holeGroup = new THREE.Group();
-  anim.windmills = []; anim.water = []; anim.sliders = []; anim.pendulums = []; anim.flags = []; anim.ship = null;
+  anim.windmills = []; anim.water = []; anim.sliders = []; anim.pendulums = []; anim.flags = []; anim.ship = null; anim.volcanoes = []; anim.flames = [];
   seed = 1 + hole.rows * 131 + hole.cols * 17;
 
   const carpet = new GeoBuilder(), bridge = new GeoBuilder(), water = new GeoBuilder(), basin = new GeoBuilder();
   const brick = new GeoBuilder(), wood = new GeoBuilder(), stone = new GeoBuilder(), soil = new GeoBuilder();
   const bunker = new GeoBuilder(), deck = new GeoBuilder(), hull = new GeoBuilder();
+  const lava = new GeoBuilder(), tramp = new GeoBuilder(), basalt = new GeoBuilder();
   const N = 4;
 
   for (const cell of hole.cells) {
     if (!isCourseChar(cell.ch)) continue;
     const x0 = cell.c * C, z0 = cell.r * C;
-    if (cell.ch === 'w' || cell.ch === 'p') {
-      const y = cell.ch === 'w' ? baseHeight(cell, x0 + C / 2, z0 + C / 2) : -CONFIG.waterDepth;
+    if (cell.ch === 'w' || cell.ch === 'p' || cell.ch === 'L') {
+      const y = cell.ch !== 'p' ? baseHeight(cell, x0 + C / 2, z0 + C / 2) : -CONFIG.waterDepth;
+      if (cell.ch === 'L') {
+        lava.quad([x0, y, z0 + C], [x0 + C, y, z0 + C], [x0 + C, y, z0], [x0, y, z0], [x0, z0 + C], [x0 + C, z0 + C], [x0 + C, z0], [x0, z0]);
+        continue;
+      }
       if (cell.ch === 'p') {
         // the plank itself: a narrow board over the water
         const top = cell.level * CONFIG.levelStep, hw = CONFIG.plankWidth / 2, cx = x0 + C / 2, cz = z0 + C / 2;
@@ -1473,7 +1640,7 @@ function buildHole(hole, style = 'park') {
       basin.quad([x0, by, z0 + C], [x0 + C, by, z0 + C], [x0 + C, by, z0], [x0, by, z0], [0, 1], [1, 1], [1, 0], [0, 0]);
       continue;
     }
-    const gb = cell.ch === '=' ? bridge : cell.ch === 's' ? bunker : cell.ch === 'd' ? deck : carpet;
+    const gb = cell.ch === '=' ? bridge : cell.ch === 's' ? bunker : cell.ch === 'd' ? deck : cell.ch === 'j' ? tramp : carpet;
     // sample just inside the cell so neighbouring levels don't bleed in
     const P = (i, j) => {
       const x = x0 + Math.min(Math.max(i / N, 1e-4), 1 - 1e-4) * C;
@@ -1497,8 +1664,8 @@ function buildHole(hole, style = 'park') {
       const cell = s.cell;
       const ha = baseHeight(cell, s.ax - s.nx * 1e-4, s.az - s.nz * 1e-4);
       const hb = baseHeight(cell, s.bx - s.nx * 1e-4, s.bz - s.nz * 1e-4);
-      const low = cell.ch === 'w' ? ha - 0.12 : -0.05;
-      const edge = cell.ch === 'w' ? stone : cell.ch === 'd' ? hull : beach ? wood : brick;
+      const low = isHazardChar(cell.ch) ? ha - 0.12 : -0.05;
+      const edge = jungle ? basalt : cell.ch === 'w' ? stone : cell.ch === 'd' ? hull : beach ? wood : brick;
       prism(edge, s.ax, s.az, s.bx, s.bz, s.nx, s.nz, 0.07, Math.min(low, -0.05), ha + CONFIG.wallHeight, hb + CONFIG.wallHeight);
     } else if (s.kind === 'step') {
       const a = s.cellA, b = s.cellB;
@@ -1506,9 +1673,16 @@ function buildHole(hole, style = 'park') {
       const nx = b.c - a.c, nz = b.r - a.r;
       const hA = baseHeight(a, mx - nx * 1e-4, mz - nz * 1e-4), hB = baseHeight(b, mx + nx * 1e-4, mz + nz * 1e-4);
       const lowCell = hA < hB ? a : b;
-      const bottom = lowCell.ch === 'w' ? Math.min(hA, hB) - 0.12 : Math.min(hA, hB);
+      const bottom = isHazardChar(lowCell.ch) ? Math.min(hA, hB) - 0.12 : Math.min(hA, hB);
       const highCell = lowCell === a ? b : a;
-      prism(highCell.ch === 'd' ? hull : lowCell.ch === 'w' ? stone : wood, s.ax, s.az, s.bx, s.bz, 0, 0, 0, bottom, s.top, s.top);
+      prism(highCell.ch === 'd' ? hull : jungle ? basalt : lowCell.ch === 'w' ? stone : wood, s.ax, s.az, s.bx, s.bz, 0, 0, 0, bottom, s.top, s.top);
+    } else if (s.kind === 'rail' && jungle) {
+      // a rope bridge: posts and a sagging hand-rope instead of a timber rail
+      const y = s.top - CONFIG.wallHeight;
+      holeGroup.add(box(0.035, 0.28, 0.035, MAT.wood, s.ax, y + 0.12, s.az), box(0.035, 0.28, 0.035, MAT.wood, s.bx, y + 0.12, s.bz));
+      const pts = [];
+      for (let j = 0; j <= 6; j++) { const t = j / 6; pts.push(new THREE.Vector3(s.ax + (s.bx - s.ax) * t, y + 0.2 - Math.sin(t * Math.PI) * 0.04, s.az + (s.bz - s.az) * t)); }
+      holeGroup.add(new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 6, 0.01, 4, false), MAT.rope));
     } else if (s.kind === 'rail') {
       const y = s.top - CONFIG.wallHeight;
       prism(wood, s.ax, s.az, s.bx, s.bz, 0, 0, 0, y - 0.15, s.top, s.top);
@@ -1520,7 +1694,7 @@ function buildHole(hole, style = 'park') {
     const dx = s.bx - s.ax, dz = s.bz - s.az, l = Math.hypot(dx, dz);
     const cell = cellAt(hole, (s.ax + s.bx) / 2 + 0.01, (s.az + s.bz) / 2 + 0.01);
     const base = cell ? baseHeight(cell, (s.ax + s.bx) / 2, (s.az + s.bz) / 2) : 0;
-    prism(beach ? wood : brick, s.ax, s.az, s.bx, s.bz, dz / l, -dx / l, 0.06, base - 0.05, base + CONFIG.wallHeight, base + CONFIG.wallHeight);
+    prism(jungle ? basalt : beach ? wood : brick, s.ax, s.az, s.bx, s.bz, dz / l, -dx / l, 0.06, base - 0.05, base + CONFIG.wallHeight, base + CONFIG.wallHeight);
   }
 
   // scenery cells inside the plot: flower beds hugging the course, lawn elsewhere
@@ -1533,9 +1707,9 @@ function buildHole(hole, style = 'park') {
       if (n && isCourseChar(n.ch)) near = true;
     }
     const x0 = cell.c * C, z0 = cell.r * C;
-    if (!near || beach) {
+    if (!near || beach || jungle) {
       const y = -0.02, u = v => v; // metres, like the lawn; the texture repeat does the scaling
-      if (beach && near) for (let k = 0; k < 2; k++) flowers.push([x0 + 0.06 + rnd() * (C - 0.12), z0 + 0.06 + rnd() * (C - 0.12)]);
+      if ((beach || jungle) && near) for (let k = 0; k < 2; k++) flowers.push([x0 + 0.06 + rnd() * (C - 0.12), z0 + 0.06 + rnd() * (C - 0.12)]);
       lawn.quad([x0, y, z0 + C], [x0 + C, y, z0 + C], [x0 + C, y, z0], [x0, y, z0], [u(x0), u(-z0 - C)], [u(x0 + C), u(-z0 - C)], [u(x0 + C), u(-z0)], [u(x0), u(-z0)]);
       continue;
     }
@@ -1543,15 +1717,17 @@ function buildHole(hole, style = 'park') {
     soil.quad([x0, y, z0 + C], [x0 + C, y, z0 + C], [x0 + C, y, z0], [x0, y, z0], [0, 1], [1, 1], [1, 0], [0, 0]);
     for (let k = 0; k < 5; k++) flowers.push([x0 + 0.06 + rnd() * (C - 0.12), z0 + 0.06 + rnd() * (C - 0.12)]);
   }
-  if (!lawn.empty) holeGroup.add(meshOf(lawn, beach ? MAT.sand : MAT.grass, false));
+  if (!lawn.empty) holeGroup.add(meshOf(lawn, beach ? MAT.sand : jungle ? MAT.jungle : MAT.grass, false));
 
   const add = (gb, mat, shadows) => { if (!gb.empty) holeGroup.add(meshOf(gb, mat, shadows)); };
   add(carpet, MAT.carpet, false); add(bridge, beach ? MAT.deck : MAT.wood, false); add(basin, beach ? MAT.shallows : MAT.basin, false);
   add(bunker, MAT.bunker, false); add(deck, MAT.deck, true); add(hull, MAT.hull, true);
+  add(tramp, MAT.tramp, false); add(basalt, MAT.basalt, true);
+  if (!lava.empty) holeGroup.add(meshOf(lava, MAT.lava, false));
   add(brick, MAT.brick, true); add(wood, MAT.wood, true); add(stone, MAT.stone, true); add(soil, MAT.soil, false);
   if (!water.empty) { const wm = meshOf(water, beach ? MAT.lagoon : MAT.water, false); wm.receiveShadow = true; holeGroup.add(wm); }
 
-  if (beach) addDuneGrass(flowers); else addFlowers(flowers);
+  if (beach) addDuneGrass(flowers); else if (jungle) addFerns(flowers); else addFlowers(flowers);
   addCupAndFlag(hole);
   addTee(hole);
   for (const w of hole.windmills) addWindmillModel(hole, w);
@@ -1563,8 +1739,10 @@ function buildHole(hole, style = 'park') {
   for (const p of hole.posts) addPostModel(hole, p);
   for (const cn of hole.cannons) addCannonModel(hole, cn);
   if (hole.ship) addShipModel(hole);
+  if (hole.volcano) addVolcanoModel(hole.volcano);
+  if (jungle) addTrampolineFrames(hole);
   animateMachines(0);
-  if (beach) addBeachScenery(hole); else addScenery(hole);
+  if (beach) addBeachScenery(hole); else if (jungle) addJungleScenery(hole); else addScenery(hole);
 
   scene.add(holeGroup);
   buildGround(hole);
@@ -1672,8 +1850,8 @@ function addTunnelModel(hole, tn) {
   const away = new THREE.Vector3(-tn.a.out[0] - tn.b.out[0], 0, -tn.a.out[1] - tn.b.out[1]);
   mid.add(away.multiplyScalar(0.4));
   const curve = new THREE.CatmullRomCurve3([a0, a1, mid, b1, b0]);
-  const beach = STYLE === 'beach';
-  const tube = new THREE.Mesh(new THREE.TubeGeometry(curve, 64, beach ? 0.13 : 0.1, 16, false), beach ? MAT.rock : MAT.bark);
+  const beach = STYLE === 'beach', jungle = STYLE === 'jungle';
+  const tube = new THREE.Mesh(new THREE.TubeGeometry(curve, 64, beach || jungle ? 0.13 : 0.1, 16, false), jungle ? MAT.basaltRock : beach ? MAT.rock : MAT.bark);
   if (beach) {
     // a sea-cave rock heaped over the pipe, with two dark hollows for eyes
     const rockMid = curve.getPoint(0.5);
@@ -1717,7 +1895,7 @@ function addScenery(hole) {
   const pick = (m0, m1) => {
     for (let i = 0; i < 40; i++) {
       const x = b.x0 - m1 + rnd() * (b.x1 - b.x0 + 2 * m1), z = b.z0 - m1 + rnd() * (b.z1 - b.z0 + 2 * m1);
-      if (inBand(x, z, m0, m1)) return [x, z];
+      if (inBand(x, z, m0, m1) && Math.hypot(x - hole.tee.x, z - hole.tee.z) > 2.8) return [x, z]; // keep the tee-off camera clear
     }
     return [cx + m1, cz];
   };
@@ -1989,8 +2167,8 @@ function updateSmoke(dt) {
     const p = puffs[i], u = p.userData;
     u.life -= dt;
     p.position.x += u.vx * dt; p.position.y += u.vy * dt; p.position.z += u.vz * dt;
-    p.scale.multiplyScalar(1 + dt * 1.5);
-    p.material.opacity = Math.max(0, u.life / 1.4) * 0.8;
+    p.scale.multiplyScalar(1 + dt * (u.grow ?? 1.5));
+    p.material.opacity = Math.max(0, Math.min(1, u.life / 1.4)) * 0.8;
     if (u.life <= 0) { scene.remove(p); p.geometry.dispose(); p.material.dispose(); puffs.splice(i, 1); }
   }
 }
@@ -2002,7 +2180,7 @@ function addBeachScenery(hole) {
       const x = b.x0 - m1 + rnd() * (b.x1 - b.x0 + 2 * m1), z = b.z0 - m1 + rnd() * (b.z1 - b.z0 + 2 * m1);
       const dx = Math.max(b.x0 - x, 0, x - b.x1), dz = Math.max(b.z0 - z, 0, z - b.z1);
       const d = Math.hypot(dx, dz);
-      if (d > m0 && d < m1) return [x, z];
+      if (d > m0 && d < m1 && Math.hypot(x - hole.tee.x, z - hole.tee.z) > 2.8) return [x, z]; // keep the tee-off camera clear
     }
     return [b.x1 + m1, b.z0];
   };
@@ -2063,6 +2241,200 @@ function addBeachScenery(hole) {
   fl.position.set(0, 6.3, -1.5); fl.rotation.y = Math.PI / 2; ship.add(fl);
   anim.ship = ship;
   holeGroup.add(ship);
+}
+
+// ============================================================
+//  VOLCANO ISLAND SET PIECES
+// ============================================================
+// A carved tiki statue: stacked blocks with a painted face.
+function addTiki(x, y, z, rad, h) {
+  const g = new THREE.Group();
+  g.position.set(x, y, z);
+  g.rotation.y = Math.round(rnd() * 3) * (Math.PI / 2);
+  const w = rad * 1.6;
+  g.add(box(w, h, w, MAT.tiki, 0, h / 2, 0));
+  g.add(box(w * 1.25, 0.04, w * 1.25, MAT.tiki, 0, h + 0.02, 0));
+  g.add(box(w * 0.9, 0.05, w * 0.9, MAT.tiki, 0, h + 0.065, 0));
+  const f = w / 2 + 0.002;
+  for (const ex of [-w * 0.22, w * 0.22]) g.add(box(w * 0.2, w * 0.14, 0.01, MAT.tikiPaint, ex, h * 0.72, f));
+  g.add(box(w * 0.12, h * 0.22, 0.02, MAT.tiki, 0, h * 0.55, f + 0.005));
+  g.add(box(w * 0.55, w * 0.1, 0.01, MAT.tikiPaint, 0, h * 0.32, f));
+  holeGroup.add(g);
+}
+
+function addFerns(spots) {
+  if (!spots.length) return;
+  // a fern frond: a narrow leaf that tapers to a point
+  const leaf = new THREE.BufferGeometry();
+  leaf.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, -0.02, 0.2, 0, 0, 0, 0, 0.02], 3));
+  leaf.computeVertexNormals();
+  const ferns = new THREE.InstancedMesh(leaf, MAT.fern, spots.length * 6);
+  const m = new THREE.Matrix4(), e = new THREE.Euler(), q = new THREE.Quaternion(), s = new THREE.Vector3(1, 1, 1), p = new THREE.Vector3();
+  let k = 0;
+  for (const [x, z] of spots) {
+    for (let j = 0; j < 6; j++) {
+      e.set(0, (j / 6) * Math.PI * 2 + rnd() * 0.5, 0.6 + rnd() * 0.5, 'YXZ');
+      q.setFromEuler(e);
+      m.compose(p.set(x, 0.02, z), q, s); ferns.setMatrixAt(k++, m);
+    }
+  }
+  ferns.castShadow = true;
+  holeGroup.add(ferns);
+}
+
+// A sprung steel frame round each block of trampoline cells.
+function addTrampolineFrames(hole) {
+  const pads = hole.cells.filter(c => c.ch === 'j');
+  if (!pads.length) return;
+  const c0 = Math.min(...pads.map(c => c.c)), c1 = Math.max(...pads.map(c => c.c)) + 1;
+  const r0 = Math.min(...pads.map(c => c.r)), r1 = Math.max(...pads.map(c => c.r)) + 1;
+  const y = pads[0].level * CONFIG.levelStep;
+  const x0 = c0 * C, x1 = c1 * C, z0 = r0 * C, z1 = r1 * C;
+  const g = new GeoBuilder();
+  for (const [ax, az, bx, bz, nx, nz] of [[x0, z0, x1, z0, 0, -1], [x1, z0, x1, z1, 1, 0], [x1, z1, x0, z1, 0, 1], [x0, z1, x0, z0, -1, 0]]) {
+    prism(g, ax, az, bx, bz, nx, nz, 0.06, y - 0.25, y + 0.015, y + 0.015);
+  }
+  holeGroup.add(meshOf(g, MACH.steel, true));
+  for (let x = x0 + 0.1; x < x1; x += 0.2) for (const z of [z0 - 0.03, z1 + 0.03]) {
+    const spring = new THREE.Mesh(new THREE.TorusGeometry(0.02, 0.004, 4, 8), MACH.steel);
+    spring.position.set(x, y + 0.015, z); spring.rotation.y = Math.PI / 2;
+    holeGroup.add(spring);
+  }
+}
+
+// A smoking volcano cone with a glowing crater and lava running down its flanks.
+function addVolcanoModel(v, big = false) {
+  const g = new THREE.Group();
+  g.position.set(v.x, -0.02, v.z);
+  const cone = new THREE.Mesh(new THREE.CylinderGeometry(v.radius * 0.22, v.radius, v.height, 28, 6, true), MAT.basaltRock);
+  // roughen the slopes
+  const pos = cone.geometry.attributes.position;
+  for (let i = 0; i < pos.count; i++) {
+    const yy = pos.getY(i);
+    if (Math.abs(yy - v.height / 2) < 1e-3 || Math.abs(yy + v.height / 2) < 1e-3) continue;
+    const k = 1 + (rnd() - 0.5) * 0.12;
+    pos.setX(i, pos.getX(i) * k); pos.setZ(i, pos.getZ(i) * k);
+  }
+  cone.geometry.computeVertexNormals();
+  cone.position.y = v.height / 2; cone.castShadow = !big; cone.receiveShadow = true;
+  g.add(cone);
+  const crater = new THREE.Mesh(new THREE.CircleGeometry(v.radius * 0.22, 24), MAT.lava);
+  crater.rotation.x = -Math.PI / 2; crater.position.y = v.height - v.radius * 0.02;
+  g.add(crater);
+  // lava streams down the sides
+  for (let k = 0; k < (big ? 5 : 3); k++) {
+    const a = rnd() * Math.PI * 2, pts = [];
+    for (let i = 0; i <= 10; i++) {
+      const t = i / 10, r = v.radius * (0.22 + 0.7 * t) + 0.02, wob = Math.sin(t * 9 + k) * 0.08;
+      pts.push(new THREE.Vector3(Math.cos(a + wob) * r, v.height * (1 - t * 0.9) + 0.01, Math.sin(a + wob) * r));
+    }
+    g.add(new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 20, v.radius * (big ? 0.03 : 0.05), 5, false), MAT.lava));
+  }
+  holeGroup.add(g);
+  const glow = new THREE.PointLight(0xff6a1a, big ? 0 : 1.2, v.radius * 3, 2);
+  glow.position.set(v.x, v.height + 0.4, v.z);
+  if (!big) holeGroup.add(glow);
+  anim.volcanoes.push({ x: v.x, y: v.height, z: v.z, size: big ? 3 : 0.5, timer: 0, glow: big ? null : glow });
+}
+
+function addJungleTree(x, z, h) {
+  const g = new THREE.Group();
+  g.position.set(x, -0.02, z);
+  const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.14, h, 7), MAT.bark);
+  trunk.position.y = h / 2; trunk.castShadow = true;
+  g.add(trunk);
+  // a canopy of big flat leaves
+  for (let k = 0; k < 7; k++) {
+    const leaf = new THREE.Mesh(new THREE.CircleGeometry(0.55 + rnd() * 0.3, 7), k % 2 ? MAT.leafBig : MAT.leafDark);
+    const a = (k / 7) * Math.PI * 2;
+    leaf.position.set(Math.cos(a) * 0.45, h - 0.1 + rnd() * 0.3, Math.sin(a) * 0.45);
+    leaf.rotation.set(-Math.PI / 2 + (rnd() - 0.5) * 0.7, a, 0, 'YXZ');
+    leaf.castShadow = true;
+    g.add(leaf);
+  }
+  // hanging vines
+  for (let k = 0; k < 3; k++) {
+    const len = 0.6 + rnd() * 0.8;
+    const vine = new THREE.Mesh(new THREE.CylinderGeometry(0.006, 0.006, len, 3), MAT.leafDark);
+    vine.position.set((rnd() - 0.5) * 0.9, h - len / 2, (rnd() - 0.5) * 0.9);
+    g.add(vine);
+  }
+  holeGroup.add(g);
+}
+
+function addBamboo(x, z) {
+  const n = 4 + Math.floor(rnd() * 4);
+  for (let i = 0; i < n; i++) {
+    const h = 1.2 + rnd() * 1.6;
+    const stalk = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.03, h, 6), MAT.bamboo);
+    stalk.position.set(x + (rnd() - 0.5) * 0.35, h / 2 - 0.02, z + (rnd() - 0.5) * 0.35);
+    stalk.rotation.set((rnd() - 0.5) * 0.15, 0, (rnd() - 0.5) * 0.15);
+    stalk.castShadow = true;
+    holeGroup.add(stalk);
+    const tuft = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.3, 5), MAT.fern);
+    tuft.position.set(stalk.position.x, h - 0.05, stalk.position.z); tuft.rotation.x = Math.PI;
+    holeGroup.add(tuft);
+  }
+}
+
+function addTorch(x, z) {
+  holeGroup.add(box(0.05, 1.1, 0.05, MAT.bamboo, x, 0.53, z));
+  holeGroup.add(box(0.1, 0.1, 0.1, MAT.tiki, x, 1.1, z));
+  const flame = new THREE.Mesh(new THREE.ConeGeometry(0.06, 0.2, 7), MAT.flame);
+  flame.position.set(x, 1.25, z);
+  holeGroup.add(flame);
+  anim.flames.push(flame);
+}
+
+function addJungleScenery(hole) {
+  const b = holeBounds(hole);
+  const pick = (m0, m1) => {
+    for (let i = 0; i < 40; i++) {
+      const x = b.x0 - m1 + rnd() * (b.x1 - b.x0 + 2 * m1), z = b.z0 - m1 + rnd() * (b.z1 - b.z0 + 2 * m1);
+      const dx = Math.max(b.x0 - x, 0, x - b.x1), dz = Math.max(b.z0 - z, 0, z - b.z1);
+      const d = Math.hypot(dx, dz);
+      if (d > m0 && d < m1 && Math.hypot(x - hole.tee.x, z - hole.tee.z) > 2.8) return [x, z]; // keep the tee-off camera clear
+    }
+    return [b.x1 + m1, b.z0];
+  };
+  for (let i = 0; i < 12; i++) { const [x, z] = pick(2, 9); addJungleTree(x, z, 2.2 + rnd() * 2); }
+  for (let i = 0; i < 5; i++) { const [x, z] = pick(1.8, 8); addPalm(x, z, 2.4 + rnd() * 1.4, 0.2 + rnd() * 0.3, rnd() * 6.28); }
+  for (let i = 0; i < 6; i++) { const [x, z] = pick(1, 4); addBamboo(x, z); }
+  for (let i = 0; i < 4; i++) { const [x, z] = pick(0.6, 2.2); addTiki(x, -0.02, z, 0.18, 0.6 + rnd() * 0.5); }
+  for (let i = 0; i < 6; i++) { const [x, z] = pick(0.5, 1.4); addTorch(x, z); }
+  const ferns = [];
+  for (let i = 0; i < 40; i++) ferns.push(pick(0.3, 3));
+  addFerns(ferns);
+  const rocks = 16;
+  const rock = new THREE.InstancedMesh(new THREE.DodecahedronGeometry(1, 0), MAT.basaltRock, rocks);
+  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), p = new THREE.Vector3();
+  for (let i = 0; i < rocks; i++) {
+    const [x, z] = pick(0.4, 6), r = 0.12 + rnd() * 0.4;
+    q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), rnd() * 6);
+    m.compose(p.set(x, r * 0.3, z), q, s.set(r * 1.3, r * 0.9, r)); rock.setMatrixAt(i, m);
+  }
+  rock.castShadow = true; rock.receiveShadow = true; holeGroup.add(rock);
+  // bamboo fence round the plot
+  const fx0 = b.x0 - 1.4, fx1 = b.x1 + 1.4, fz0 = b.z0 - 1.4, fz1 = b.z1 + 1.4;
+  for (const [ax, az, bx, bz] of [[fx0, fz0, fx1, fz0], [fx1, fz0, fx1, fz1], [fx1, fz1, fx0, fz1], [fx0, fz1, fx0, fz0]]) {
+    const len = Math.hypot(bx - ax, bz - az), n = Math.round(len / 1.4);
+    for (let i = 0; i <= n; i++) holeGroup.add(box(0.05, 0.55, 0.05, MAT.bamboo, ax + ((bx - ax) * i) / n, 0.26, az + ((bz - az) * i) / n));
+    for (const y of [0.22, 0.45]) {
+      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, len, 6), MAT.bamboo);
+      pole.position.set((ax + bx) / 2, y, (az + bz) / 2);
+      pole.rotation.set(0, -Math.atan2(bz - az, bx - ax), Math.PI / 2);
+      holeGroup.add(pole);
+    }
+  }
+  // the great volcano on its own island, smoking on the horizon
+  addVolcanoModel({ x: b.x1 + 45, z: b.z0 - 55, height: 18, radius: 22 }, true);
+}
+
+function emitAsh(v) {
+  const p = new THREE.Mesh(new THREE.SphereGeometry(0.1 * v.size, 8, 6), MAT.ash.clone());
+  p.position.set(v.x + (Math.random() - 0.5) * 0.2 * v.size, v.y + 0.1, v.z + (Math.random() - 0.5) * 0.2 * v.size);
+  p.userData = { vx: (Math.random() - 0.3) * 0.25 * v.size, vy: (0.35 + Math.random() * 0.3) * v.size, vz: (Math.random() - 0.5) * 0.25 * v.size, life: 3.5, grow: 0.5 };
+  scene.add(p); puffs.push(p);
 }
 
 function fitSun(hole) {
@@ -2149,6 +2521,8 @@ const sfx = {
   cup: () => { [0, 0.07, 0.13, 0.18].forEach((w, i) => noise(0.04, 0.25 - i * 0.04, 'bandpass', 3200 - i * 300, w, 4)); tone(140, 0.25, 'sine', 0.25, 0.2, 0.6); },
   cheer: () => { [523, 659, 784, 1047].forEach((f, i) => tone(f, 0.25, 'triangle', 0.1, 0.25 + i * 0.09)); },
   lip: () => { noise(0.05, 0.2, 'bandpass', 3000, 0, 5); tone(600, 0.06, 'sine', 0.06, 0.02, 0.7); },
+  sizzle: () => { noise(0.9, 0.35, 'highpass', 2500, 0, 0.5); noise(0.5, 0.3, 'lowpass', 300, 0, 1); },
+  bounce: v => { tone(160, 0.25, 'sine', 0.12 + Math.min(0.2, v / 20), 0, 2.2); noise(0.05, 0.08, 'bandpass', 600, 0, 2); },
   splash: () => { noise(0.6, 0.45, 'lowpass', 1400, 0, 0.7); noise(0.3, 0.2, 'highpass', 3000, 0.05); },
   tunnel: () => { noise(0.9, 0.25, 'lowpass', 260, 0, 1); },
   lift: () => { for (let i = 0; i < 10; i++) noise(0.03, 0.12, 'bandpass', 1800, i * 0.16, 6); tone(90, 1.6, 'sawtooth', 0.03, 0, 1.3); },
@@ -2299,17 +2673,18 @@ function handleEvents(events) {
       banner(name, `${game.players[game.cur].name} · ${game.strokes} stroke${game.strokes === 1 ? '' : 's'}`);
       finishPlayer(game.strokes, 'holed');
       return;
-    } else if (ev === 'water' || ev === 'out') {
-      sfx.splash();
+    } else if (ev === 'bounce') sfx.bounce(Math.abs(b.vy));
+    else if (ev === 'water' || ev === 'lava' || ev === 'out') {
+      if (ev === 'lava') sfx.sizzle(); else sfx.splash();
       game.strokes++;
       game.phase = 'penalty';
-      ballMesh.visible = ev !== 'water';
+      ballMesh.visible = ev === 'out';
       if (game.strokes >= CONFIG.maxStrokes) {
-        banner(ev === 'water' ? 'Splash!' : 'Out!', `Stroke limit — scores ${CONFIG.maxStrokes + 1}`);
+        banner({ water: 'Splash!', lava: 'Lava!' }[ev] || 'Out!', `Stroke limit — scores ${CONFIG.maxStrokes + 1}`);
         finishPlayer(cappedScore(game.strokes, false), 'cap');
         return;
       }
-      banner(ev === 'water' ? 'Splash!' : 'Out of bounds', '+1 stroke — back to where you hit from', 1.5);
+      banner({ water: 'Splash!', lava: 'Lava! Too hot!' }[ev] || 'Out of bounds', '+1 stroke — back to where you hit from', 1.5);
       renderPlayers();
       later(1.4, () => {
         game.ball = createBall(game.lastPos);
@@ -2552,6 +2927,13 @@ function frame(now) {
     for (const [i, f] of anim.flags.entries()) f.rotation.y = (f.userData.baseY ??= f.rotation.y) + Math.sin(now / 500 + i) * 0.25;
     if (anim.ship) { anim.ship.rotation.z = Math.sin(now / 1800) * 0.03; anim.ship.position.y = -0.1 + Math.sin(now / 1300) * 0.05; }
     updateSmoke(dt);
+    TEX.lava.offset.set(now / 70000, now / 50000);
+    for (const v of anim.volcanoes) {
+      v.timer -= dt;
+      if (v.timer <= 0) { emitAsh(v); v.timer = v.size > 1 ? 0.25 : 0.5; }
+      if (v.glow) v.glow.intensity = 1.0 + Math.sin(now / 230) * 0.25 + Math.random() * 0.15;
+    }
+    for (const fl of anim.flames) { const k = 0.85 + Math.random() * 0.3; fl.scale.set(k, 0.8 + Math.random() * 0.5, k); }
 
     $('power').querySelector('.fill').style.height = `${Math.round(game.power * 100)}%`;
     const hint = game.overview ? 'Overview — press Overview (V) to return'

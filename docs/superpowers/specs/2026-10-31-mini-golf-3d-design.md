@@ -188,3 +188,9 @@ UI styling (in keeping with the portal), and SFX design.
 - **Sunny Park made crazier** (user request): ball lift, loop-the-loop, swinging pendulums, a sliding gate and pinball posts added; six plain holes rebuilt as combo holes (Swing Corner, Pinball Hill, Lift Off, Loop de Loop, Lock Gate, Grand Finale).
 - **Pirate Cove**, with theming as the priority (user request): a beach island in a turquoise sea, palms, rope fence, pirate flags, barrels, chests, a shipwreck set piece and a ship at anchor offshore. Mechanisms: sand, a ship's plank, a ball cannon, a ship deck with a ramp up and a drop off, a sea-cave tunnel, barrel posts, a cannonball pendulum and a tidal gate.
 - Left for later themes: conveyors, trampolines, ice and marble-run chutes.
+
+## 12. Phase 3: Volcano Island (built 2026-10-31)
+
+- Theming: a jungle island in the sea with black basalt borders, jungle trees with vines, bamboo, ferns, tiki statues and torches, a bamboo fence, and a great smoking volcano on the horizon.
+- Mechanisms: lava pools (hazard, +1 stroke), trampolines (a falling ball bounces back with 90% of its speed, so you drop off a terrace and bounce over lava onto a lower one), rope bridges over lava, a volcano you putt up into that sends the ball down a lava tube, tiki-statue posts, a stone pendulum and a bamboo gate.
+- Scenery is kept out of a 2.8 m circle round each tee so it never blocks the tee-off camera (all themes).

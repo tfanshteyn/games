@@ -69,3 +69,23 @@ for (const [i, def] of PIRATE_COVE.holes.entries()) {
     assert.ok(res.strokes !== null && res.strokes <= def.par + 2, `took ${res.strokes} on a par ${def.par}`);
   });
 }
+
+const { VOLCANO_ISLAND } = PURE;
+
+test('Volcano Island has 15 holes, a 10-hole round, lava, trampolines and the volcano', () => {
+  assert.equal(VOLCANO_ISLAND.holes.length, 15);
+  assert.equal(new Set(VOLCANO_ISLAND.shortRound).size, 10);
+  assert.equal(THEMES.find(t => t.id === 'volcano').course, VOLCANO_ISLAND);
+  const chars = VOLCANO_ISLAND.holes.flatMap(h => h.map).join('');
+  for (const ch of ['L', 'j', '=']) assert.ok(chars.includes(ch), `uses ${ch}`);
+  const types = new Set(VOLCANO_ISLAND.holes.flatMap(h => (h.extras || []).map(e => e.type)));
+  for (const t of ['volcano', 'tunnel', 'post', 'pendulum', 'slider']) assert.ok(types.has(t), t);
+});
+
+for (const [i, def] of VOLCANO_ISLAND.holes.entries()) {
+  test(`Volcano Island hole ${i + 1} "${def.name}" can be finished`, () => {
+    if (def.levels) assert.equal(def.levels.length, def.map.length, 'levels rows');
+    const res = botPlay(parseHole(def));
+    assert.ok(res.strokes !== null && res.strokes <= def.par + 2, `took ${res.strokes} on a par ${def.par}`);
+  });
+}
