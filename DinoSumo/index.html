@@ -36,6 +36,26 @@
   #play:active { transform: translateY(3px); box-shadow: 0 3px 0 #7d1612; }
   #touchNote { margin-top: 14px; color: #ffcf5a; font-weight: 700; }
 
+  /* ---- Touch controls (phones / tablets) ---- */
+  #touch { position: fixed; inset: 0; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+  #touch .tzone { position: absolute; top: 90px; bottom: 0; touch-action: none; }
+  #touch.duo .tzone[data-p="0"] { left: 0; width: 50%; } #touch.duo .tzone[data-p="1"] { right: 0; width: 50%; }
+  #touch.solo .tzone[data-p="0"] { left: 0; width: 58%; } #touch.solo .p1only { display: none; }
+  .stick { position: absolute; width: 124px; height: 124px; margin: -62px 0 0 -62px; border-radius: 50%; border: 1.5px solid rgba(255,240,220,.4); background: radial-gradient(circle, rgba(255,240,220,.1), rgba(14,9,5,.25) 70%); display: none; pointer-events: none; }
+  .stick i { position: absolute; left: 50%; top: 50%; width: 54px; height: 54px; margin: -27px 0 0 -27px; border-radius: 50%; background: radial-gradient(circle at 40% 35%, rgba(255,255,255,.55), rgba(255,240,220,.18)); border: 1.5px solid rgba(255,255,255,.6); box-shadow: 0 0 14px var(--c); }
+  .tbtn { position: absolute; border-radius: 50%; border: 2px solid var(--c); background: radial-gradient(circle at 40% 35%, rgba(255,255,255,.22), rgba(14,9,5,.55)); color: #fff; font-weight: 800; letter-spacing: 1.5px; box-shadow: 0 0 16px var(--c), inset 0 0 12px rgba(0,0,0,.4); touch-action: none; }
+  .tbtn.on { background: var(--c); box-shadow: 0 0 26px var(--c), 0 0 4px #fff; transform: scale(.94); }
+  .tbtn.shove { width: 92px; height: 92px; bottom: max(22px, env(safe-area-inset-bottom)); font-size: 13px; }
+  .tbtn.roar { width: 54px; height: 54px; bottom: calc(max(22px, env(safe-area-inset-bottom)) + 104px); font-size: 10px; }
+  #touch.duo .tbtn.shove[data-p="0"] { left: max(22px, env(safe-area-inset-left)); } #touch.duo .tbtn.roar[data-p="0"] { left: calc(max(22px, env(safe-area-inset-left)) + 106px); bottom: max(22px, env(safe-area-inset-bottom)); }
+  #touch.duo .tbtn.shove[data-p="1"] { right: max(22px, env(safe-area-inset-right)); } #touch.duo .tbtn.roar[data-p="1"] { right: calc(max(22px, env(safe-area-inset-right)) + 106px); bottom: max(22px, env(safe-area-inset-bottom)); }
+  #touch.solo .tbtn.shove[data-p="0"] { right: max(26px, env(safe-area-inset-right)); width: 104px; height: 104px; }
+  #touch.solo .tbtn.roar[data-p="0"] { right: calc(max(26px, env(safe-area-inset-right)) + 25px); bottom: calc(max(22px, env(safe-area-inset-bottom)) + 116px); }
+  #tpause { position: absolute; left: 50%; top: 150px; transform: translateX(-50%); width: 40px; height: 40px; border-radius: 50%; border: 1.5px solid rgba(255,240,220,.45); background: rgba(14,9,5,.5); color: #fff; font-weight: 900; font-size: 13px; }
+  #touch .zlabel { position: absolute; bottom: 8px; font-size: 10px; letter-spacing: 2.5px; font-weight: 700; color: rgba(255,240,220,.45); pointer-events: none; }
+  #touch .zlabel[data-p="0"] { left: max(16px, env(safe-area-inset-left)); } #touch .zlabel[data-p="1"] { right: 16px; }
+  @media (max-width: 680px) { #tpause { top: 96px; } }
+
   /* ---- HUD: thin vector lines, glow accents, clean type ---- */
   #hud { position: fixed; inset: 0; pointer-events: none; font-family: 'Segoe UI Variable Display', 'Segoe UI', 'Helvetica Neue', system-ui, sans-serif; --line: rgba(255,240,220,.22); }
   .plate { position: absolute; top: 16px; width: min(300px, 38vw); padding: 12px 16px 12px; background: linear-gradient(180deg, rgba(14,9,5,.62), rgba(14,9,5,.28)); border: 1px solid var(--line); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 14px 100%, 0 calc(100% - 14px)); }
@@ -83,6 +103,20 @@
   .card .row { justify-content: center; }
   .card button { border: 0; border-radius: 12px; padding: 12px 22px; font-weight: 800; background: #e8392f; color: #fff; }
   .card button.alt { background: rgba(255,255,255,.14); }
+  /* short landscape phones: compact HUD so the ring stays visible */
+  @media (max-height: 500px) {
+    .plate { top: 8px; width: min(230px, 30vw); padding: 7px 12px; }
+    .plate .sp { font-size: 17px; } .plate .row2 { margin-top: 5px; } .plate .wins { margin-top: 5px; }
+    #telemetry { top: 4px; bottom: auto; width: 74px; } #telemetry svg { width: 74px; height: 74px; } #roundTag { font-size: 8.5px; letter-spacing: 2px; margin-top: -2px; }
+    #tpause { top: 14px; left: calc(50% + 62px); transform: none; width: 34px; height: 34px; font-size: 11px; }
+    #touch .tzone { top: 70px; }
+    #hint { display: none; }
+    .tbtn.shove { width: 82px; height: 82px; } .tbtn.roar { width: 50px; height: 50px; }
+    #touch.duo .tbtn.roar[data-p="0"] { left: calc(max(22px, env(safe-area-inset-left)) + 94px); }
+    #touch.duo .tbtn.roar[data-p="1"] { right: calc(max(22px, env(safe-area-inset-right)) + 94px); }
+    #touch.solo .tbtn.roar[data-p="0"] { bottom: calc(max(22px, env(safe-area-inset-bottom)) + 100px); }
+    #banner .big { font-size: 40px; }
+  }
 </style>
 </head>
 <body>
@@ -132,8 +166,19 @@
       </div>
     </div>
     <button id="play">Hakkeyoi! ▶</button>
-    <div id="touchNote" class="hidden">Dino Sumo needs a keyboard — two players share one.</div>
+    <div id="touchNote" class="hidden">Turn your phone sideways. Drag on the left to move, hold SHOVE to charge, let go to shove.</div>
   </div>
+</div>
+
+<div id="touch" class="hidden duo">
+  <div class="tzone" data-p="0"></div><div class="tzone p1only" data-p="1"></div>
+  <div class="stick" id="stick0" style="--c:#b8232c"><i></i></div><div class="stick" id="stick1" style="--c:#2246a0"><i></i></div>
+  <button class="tbtn shove" data-p="0" style="--c:#b8232c">SHOVE</button>
+  <button class="tbtn roar" data-p="0" style="--c:#b8232c">ROAR</button>
+  <button class="tbtn shove p1only" data-p="1" style="--c:#2246a0">SHOVE</button>
+  <button class="tbtn roar p1only" data-p="1" style="--c:#2246a0">ROAR</button>
+  <span class="zlabel" data-p="0">DRAG TO MOVE</span><span class="zlabel p1only" data-p="1">P2 · DRAG TO MOVE</span>
+  <button id="tpause" aria-label="Pause">II</button>
 </div>
 
 <div id="pause" class="overlay hidden">
@@ -401,7 +446,10 @@ const PURE = { CONFIG, SPECIES, SPECIES_IDS, MOVE_NAMES, NO_INPUT, makeRng, angD
 const canvas = document.getElementById('view');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
 // Backing store at the full device pixel ratio: razor sharp on Retina / 4K screens.
-renderer.setPixelRatio(window.devicePixelRatio || 1);
+// Phones (3x screens, small GPUs) cap at 2x and use lighter shadows so they keep a smooth frame rate.
+const PHONE = matchMedia('(pointer: coarse)').matches && Math.min(screen.width, screen.height) < 820;
+const pixelRatio = () => PHONE ? Math.min(2, window.devicePixelRatio || 1) : (window.devicePixelRatio || 1);
+renderer.setPixelRatio(pixelRatio());
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.outputEncoding = THREE.sRGBEncoding;
@@ -763,7 +811,7 @@ const hemi = new THREE.HemisphereLight(col('#ffd2a0'), col('#2a1608'), 0.22); sc
 scene.add(new THREE.AmbientLight(col('#ffd9b0'), 0.05));
 const key = new THREE.SpotLight(col('#fff3e2'), 2.0, 24, 0.56, 0.5, 1.1);
 key.position.set(0, 5.95, 0); key.target.position.set(0, MOUND_TOP, 0);
-key.castShadow = true; key.shadow.mapSize.set(4096, 4096); key.shadow.bias = -0.0003; key.shadow.normalBias = 0.02; key.shadow.camera.near = 1; key.shadow.camera.far = 10; key.shadow.radius = 3;
+key.castShadow = true; key.shadow.mapSize.set(PHONE ? 2048 : 4096, PHONE ? 2048 : 4096); key.shadow.bias = -0.0003; key.shadow.normalBias = 0.02; key.shadow.camera.near = 1; key.shadow.camera.far = 10; key.shadow.radius = 3;
 scene.add(key, key.target);
 // four softer roof lamps fill the mound's flanks (no shadows: the key light owns those)
 for (const [x, z] of [[2.6, 2.6], [-2.6, 2.6], [2.6, -2.6], [-2.6, -2.6]]) {
@@ -1413,6 +1461,63 @@ function readInput(map, extra) {
   return { mx, mz, act: has(mp => any(mp.act)), roar: has(mp => anyPressed(mp.roar)) };
 }
 
+// ---------- Touch controls ----------
+// Each player owns half the screen: drag anywhere in it for a floating stick, hold SHOVE to charge, tap ROAR.
+// Pointer events, so it also works with a mouse (add #touch to the URL to try it on a desktop).
+const TOUCH = matchMedia('(pointer: coarse)').matches || location.hash.includes('touch');
+const touchIn = [{ mx: 0, mz: 0, act: false, roar: false }, { mx: 0, mz: 0, act: false, roar: false }];
+(function initTouch() {
+  const layer = document.getElementById('touch');
+  const R = 50;   // stick throw in CSS px
+  layer.querySelectorAll('.tzone').forEach(z => {
+    const p = +z.dataset.p, stick = document.getElementById('stick' + p), knob = stick.firstChild;
+    let id = null, ox = 0, oy = 0;
+    z.addEventListener('pointerdown', e => {
+      if (id !== null) return;
+      id = e.pointerId; ox = e.clientX; oy = e.clientY; try { z.setPointerCapture(id); } catch (err) {}
+      stick.style.left = ox + 'px'; stick.style.top = oy + 'px'; stick.style.display = 'block'; knob.style.transform = '';
+      e.preventDefault();
+    });
+    z.addEventListener('pointermove', e => {
+      if (e.pointerId !== id) return;
+      let dx = e.clientX - ox, dy = e.clientY - oy; const d = Math.hypot(dx, dy);
+      if (d > R) { dx *= R / d; dy *= R / d; }
+      knob.style.transform = `translate(${dx}px, ${dy}px)`;
+      const k = d < 8 ? 0 : 1 / R;   // small dead zone
+      touchIn[p].mx = dx * k; touchIn[p].mz = dy * k;
+    });
+    const end = e => { if (e.pointerId !== id) return; id = null; touchIn[p].mx = touchIn[p].mz = 0; stick.style.display = 'none'; };
+    z.addEventListener('pointerup', end); z.addEventListener('pointercancel', end);
+  });
+  layer.querySelectorAll('.tbtn').forEach(b => {
+    const p = +b.dataset.p, isShove = b.classList.contains('shove');
+    let id = null;
+    b.addEventListener('pointerdown', e => {
+      e.preventDefault(); e.stopPropagation(); sfx.init();
+      if (isShove) { id = e.pointerId; try { b.setPointerCapture(id); } catch (err) {} touchIn[p].act = true; } else touchIn[p].roar = true;
+      b.classList.add('on'); if (navigator.vibrate) navigator.vibrate(12);
+    });
+    const end = e => { if (isShove && e.pointerId !== id) return; id = null; if (isShove) touchIn[p].act = false; b.classList.remove('on'); };
+    b.addEventListener('pointerup', end); b.addEventListener('pointercancel', end);
+    b.addEventListener('contextmenu', e => e.preventDefault());
+  });
+  document.getElementById('tpause').addEventListener('pointerdown', e => { e.preventDefault(); e.stopPropagation(); if (game.running) setPaused(!game.paused); });
+  // a phone call or app switch can swallow pointerup: let go of everything
+  const releaseAll = () => {
+    for (const t of touchIn) { t.mx = t.mz = 0; t.act = false; t.roar = false; }
+    layer.querySelectorAll('.stick').forEach(el => el.style.display = 'none');
+    layer.querySelectorAll('.tbtn').forEach(b => b.classList.remove('on'));
+  };
+  document.addEventListener('visibilitychange', () => { if (document.hidden) { releaseAll(); if (game.running && !game.paused) setPaused(true); } });
+  window.releaseTouch = releaseAll;
+})();
+function showTouch(on) {
+  const layer = document.getElementById('touch');
+  layer.classList.toggle('hidden', !(on && TOUCH));
+  layer.classList.toggle('solo', game.mode === 1); layer.classList.toggle('duo', game.mode !== 1);   // touch screens are always solo
+  window.releaseTouch();
+}
+
 // ---------- Game state ----------
 const game = { running: false, paused: false, mode: 2, picks: ['rex', 'trike'], match: null, dinos: [], looks: [], acc: 0, timeScale: 1, slowT: 0, nokottaCd: 0, hintT: 0 };
 let perfT = 0;
@@ -1431,13 +1536,14 @@ function startMatch() {
   document.getElementById('over').classList.add('hidden');
   document.getElementById('hud').classList.remove('hidden');
   setupHud();
+  showTouch(true);
   clearCushions();
   camState.orbit = 0.9;
   handleEvents();
 }
-function setPaused(p) { game.paused = p; document.getElementById('pause').classList.toggle('hidden', !p); }
+function setPaused(p) { game.paused = p; document.getElementById('pause').classList.toggle('hidden', !p); if (p && TOUCH) window.releaseTouch(); }
 function toMenu() {
-  game.running = false; game.paused = false;
+  game.running = false; game.paused = false; showTouch(false);
   document.getElementById('pause').classList.add('hidden');
   document.getElementById('over').classList.add('hidden');
   document.getElementById('hud').classList.add('hidden');
@@ -1467,7 +1573,9 @@ function setupHud() {
   for (let i = 0; i < 2; i++) { const dot = $('dot' + i); dot.setAttribute('fill', BELTS[i].main); dot.setAttribute('stroke', '#fff'); dot.setAttribute('stroke-width', '1.2'); dot.style.filter = `drop-shadow(0 0 4px ${BELTS[i].main})`; }
   game.bal = [0, 1].map(i => $('plate' + i).querySelector('.bal'));
   game.bubbles = [];
-  $('hint').innerHTML = game.mode === 1
+  $('hint').innerHTML = TOUCH
+    ? (game.mode === 1 ? 'Drag on the left to move · hold SHOVE to charge, let go to shove' : 'Drag on your half to move · hold SHOVE to charge, let go to shove')
+    : game.mode === 1
     ? 'Move: WASD or arrows · hold F, Space or left mouse to charge, let go to shove · G or right-click to roar · Esc pause'
     : 'P1: WASD + F (G roar) &nbsp;·&nbsp; P2: Arrows + Enter (Right Shift roar) &nbsp;·&nbsp; hold to charge, let go to shove';
   $('hint').style.opacity = 1;
@@ -1574,7 +1682,7 @@ function handleEvents() {
         const who = (ev.idx && game.mode === 1 ? 'CPU ' : 'Player ' + (ev.idx + 1) + ' ');
         $('overTitle').textContent = SPECIES[m.species[ev.idx]].name + ' is Yokozuna!';
         $('overText').textContent = who.trim() + ' wins ' + m.wins[ev.idx] + '–' + m.wins[1 - ev.idx] + '. The crowd throws cushions.';
-        setTimeout(() => { if (game.running) $('over').classList.remove('hidden'); }, 600);
+        setTimeout(() => { if (game.running) { $('over').classList.remove('hidden'); showTouch(false); } }, 600);
         sfx.cheer(1); crowd.excite = 1; throwCushions(26);
         break;
       }
@@ -1646,6 +1754,10 @@ function frame(now) {
     const dt = realDt * game.timeScale;
     game.acc += dt;
     let i1 = readInput(P1, game.mode === 1 ? P2 : null), i2 = readInput(P2);
+    if (TOUCH) for (const [inp, t] of [[i1, touchIn[0]], [i2, touchIn[1]]]) {
+      if (t.mx || t.mz) { inp.mx = t.mx; inp.mz = t.mz; }
+      inp.act = inp.act || t.act; inp.roar = inp.roar || t.roar; t.roar = false;
+    }
     if (game.mode === 1) { i1.act = i1.act || mouseAct; i1.roar = i1.roar || mouseRoar; }
     mouseRoar = false;
     while (game.acc >= STEP) {
@@ -1683,7 +1795,7 @@ function frame(now) {
 let flash = 0;
 
 function resize() {
-  const dpr = window.devicePixelRatio || 1;
+  const dpr = pixelRatio();
   renderer.setPixelRatio(dpr);
   renderer.setSize(innerWidth, innerHeight, false);
   if (POST) { POST.composer.setPixelRatio(dpr); POST.composer.setSize(innerWidth, innerHeight); }
@@ -1726,7 +1838,13 @@ function buildMenu() {
   $('quitBtn').addEventListener('click', toMenu);
   $('menuBtn').addEventListener('click', toMenu);
   $('rematchBtn').addEventListener('click', () => { const c = game.picks; game.picks = c.map(id => id === 'random' ? SPECIES_IDS[(Math.random() * 4) | 0] : id); startMatch(); game.picks = c; });
-  if (matchMedia('(pointer: coarse)').matches && !matchMedia('(any-pointer: fine)').matches) $('touchNote').classList.remove('hidden');
+  if (TOUCH) {
+    // On a touch screen it's you against the CPU: there's no room for two pairs of thumbs.
+    document.querySelector('#modeRow .pill[data-mode="1"]').click();
+    document.querySelector('#modeRow .pill[data-mode="2"]').classList.add('hidden');
+    $('touchNote').classList.remove('hidden');
+    document.querySelectorAll('.picker .keys').forEach(k => k.style.display = 'none');
+  }
 }
 
 scene.add(buildDohyo(), buildRoof(), buildStands());

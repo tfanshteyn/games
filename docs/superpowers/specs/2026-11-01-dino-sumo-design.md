@@ -43,7 +43,8 @@ A goofy two-player shoving game. Chunky cartoon dinosaurs in sumo belts try to p
   2. Fight.
   3. Knockout: slow motion, then a joke move name (for example "Belly Bounce-Out").
   4. Next round.
-- **Keyboard first** (1-player mode also takes the left mouse button to charge). Phones see a "needs a keyboard" note.
+- **Keyboard first** (1-player mode also takes the left mouse button to charge).
+- **Phones (user's call):** touch screens play 1 player vs the CPU only, with a floating stick on the left and SHOVE / ROAR buttons on the right. Phones cap the pixel ratio at 2 to keep the frame rate up.
 
 ## Visual upgrade (user request, mid-build)
 
