@@ -157,7 +157,7 @@ function parseHole(def) {
   const cols = Math.max(...def.map.map(r => r.length));
   const hole = {
     name: def.name, par: def.par, rows, cols, cells: [], tee: null, cup: null,
-    hills: [], windmills: [], tunnels: [], lifts: [], loops: [], cannons: [], ship: null, volcano: null, sliders: [], pendulums: [], posts: [],
+    hills: [], windmills: [], tunnels: [], lifts: [], loops: [], cannons: [], ship: null, volcano: null, drawbridge: null, portcullises: [], sliders: [], pendulums: [], posts: [],
     extraSegs: [], segments: [], cellSegs: [],
   };
   for (let r = 0; r < rows; r++) {
@@ -200,6 +200,12 @@ function parseHole(def) {
     else if (e.type === 'cannon') hole.cannons.push({ a: mouth(e.in), target: { c: e.target.c, r: e.target.r, x: (e.target.c + 0.5) * C, z: (e.target.r + 0.5) * C }, apex: e.apex || 1, landSpeed: e.landSpeed || 1 });
     else if (e.type === 'ship') hole.ship = { bow: e.bow };
     else if (e.type === 'volcano') hole.volcano = { x: e.c * C, z: e.r * C, height: e.height, radius: e.radius };
+    else if (e.type === 'drawbridge') {
+      const cells = hole.cells.filter(c => c.ch === 'D');
+      hole.drawbridge = { cells, hinge: e.hinge, d: OUT_DIRS[e.hinge], period: e.period || 5, phase: e.phase || 0, down: true };
+      for (const c of cells) c.db = hole.drawbridge;
+    } else if (e.type === 'portcullis') addGatehouse(hole, e);
+    else if (e.type === 'castlewall') hole.castleWalls = [...(hole.castleWalls || []), { a: [e.a[0] * C, e.a[1] * C], b: [e.b[0] * C, e.b[1] * C] }];
     else throw new Error(`${def.name}: unknown extra ${e.type}`);
   }
 
@@ -252,6 +258,7 @@ function baseHeight(cell, x, z) {
   }
   if (cell.ch === 'w' || cell.ch === 'L') return cell.level * CONFIG.levelStep - CONFIG.waterDepth;
   if (offPlank(cell, x, z)) return -CONFIG.waterDepth; // the sea under a plank is at ground level
+  if (cell.db && !cell.db.down) return cell.level * CONFIG.levelStep - CONFIG.waterDepth;
   return cell.level * CONFIG.levelStep;
 }
 
@@ -263,7 +270,7 @@ function offPlank(cell, x, z) {
 }
 
 // Water and lava are both hazards the ball sinks into.
-function isWet(cell, x, z) { return cell.ch === 'w' || cell.ch === 'L' || offPlank(cell, x, z); }
+function isWet(cell, x, z) { return cell.ch === 'w' || cell.ch === 'L' || offPlank(cell, x, z) || (cell.db && !cell.db.down); }
 const isHazardChar = ch => ch === 'w' || ch === 'L';
 
 function surfaceDecel(cell) { return cell && cell.ch === 's' ? CONFIG.sandDecel : CONFIG.rollDecel; }
@@ -355,6 +362,39 @@ function addWindmill(hole, e) {
   const gu = w.front * (hd + 0.04);
   w.gate = S(gu, -dd, gu, dd, 'blade');
   hole.windmills.push(w);
+}
+
+// A castle gatehouse across a lane: two stone faces with an arched passage and an iron portcullis
+// in the middle of it that rises and drops on a cycle. e.c/e.r are the passage centre in cell units.
+function addGatehouse(hole, e) {
+  const C = CONFIG.cell;
+  const g = { x: e.c * C, z: e.r * C, axis: e.axis, halfWidth: e.halfWidth, door: 0.32, depth: 0.6, period: e.period || 4, phase: e.phase || 0 };
+  const S = (u0, v0, u1, v1, kind) => { const [ax, az] = laneXZ(g, u0, v0), [bx, bz] = laneXZ(g, u1, v1); return seg(ax, az, bx, bz, 10, kind); };
+  const hd = g.depth / 2, dd = g.door / 2, hw = g.halfWidth;
+  for (const u of [-hd, hd]) hole.extraSegs.push(S(u, -hw, u, -dd, 'gatehouse'), S(u, dd, u, hw, 'gatehouse'));
+  hole.extraSegs.push(S(-hd, -dd, hd, -dd, 'gatehouse'), S(-hd, dd, hd, dd, 'gatehouse'));
+  g.gate = S(0, -dd, 0, dd, 'portcullis');
+  hole.portcullises.push(g);
+}
+
+// 0 = down, 1 = fully up. Down 40% of the cycle, up 40%, moving in between.
+function portcullisLift(p, t) {
+  const u = (((t / p.period + p.phase) % 1) + 1) % 1;
+  if (u < 0.4) return 0;
+  if (u < 0.5) return (u - 0.4) / 0.1;
+  if (u < 0.9) return 1;
+  return 1 - (u - 0.9) / 0.1;
+}
+// it lifts 20 cm; the ball passes once the bottom bars clear its top
+function portcullisBlocked(p, t) { return portcullisLift(p, t) * 0.2 < 2 * CONFIG.ballR + 0.005; }
+
+// 0 = down (a bridge), 1 = fully raised. Down 45% of the cycle, raised 35%.
+function drawbridgeRaise(db, t) {
+  const u = (((t / db.period + db.phase) % 1) + 1) % 1;
+  if (u < 0.45) return 0;
+  if (u < 0.55) return (u - 0.45) / 0.1;
+  if (u < 0.9) return 1;
+  return 1 - (u - 0.9) / 0.1;
 }
 
 function windmillAngle(w, t) { return (2 * Math.PI * t) / w.period + w.phase; }
@@ -486,6 +526,30 @@ function enterLoop(ball, lp, sgn, sp) {
 // A ball must never come to rest where a moving gate or pendulum sweeps; nudge it clear.
 function clearOfMachines(hole, ball) {
   const R = CONFIG.ballR;
+  for (const p of hole.portcullises) {
+    const [u, v] = laneUV(p, ball.x, ball.z);
+    if (Math.abs(u) < R * 1.6 && Math.abs(v) < p.door / 2 + 0.02) {
+      const [x, z] = laneXZ(p, (u < 0 ? -1 : 1) * R * 1.7, v);
+      ball.x = x; ball.z = z;
+    }
+  }
+  // nor on a drawbridge that is about to lift: it rolls off to the nearer bank
+  const cell = cellAt(hole, ball.x, ball.z);
+  if (cell && cell.db) {
+    const [dx, dz] = cell.db.d, Cc = CONFIG.cell;
+    const bank = sgn => {
+      let k = 1;
+      while (cellOf(hole, cell.r + dz * sgn * k, cell.c + dx * sgn * k)?.db) k++;
+      return k;
+    };
+    const kf = bank(1), kb = bank(-1);
+    const sd = dx || dz, i = dx ? cell.c : cell.r; // axis direction sign, and the cell index along it
+    let target;
+    if (kf <= kb) { const ib = i + sd * kf; target = (sd > 0 ? ib * Cc : (ib + 1) * Cc) + sd * R * 2; }
+    else { const ib = i - sd * kb; target = (sd > 0 ? (ib + 1) * Cc : ib * Cc) - sd * R * 2; }
+    if (dx) ball.x = target; else ball.z = target;
+    ball.y = groundHeight(hole, ball.x, ball.z);
+  }
   for (const o of [...hole.sliders, ...hole.pendulums]) {
     const half = (o.bobR || 0) + R * 1.6;
     const [u, v] = laneUV(o, ball.x, ball.z);
@@ -581,6 +645,7 @@ function collideWalls(hole, ball, t) {
   }
   for (const s of hole.extraSegs) hit = collideSegment(ball, s) || hit;
   for (const w of hole.windmills) if (windmillBlocked(w, t)) hit = collideSegment(ball, w.gate) || hit;
+  for (const p of hole.portcullises) if (portcullisBlocked(p, t)) hit = collideSegment(ball, p.gate) || hit;
   return hit ? 'wall' : null;
 }
 
@@ -589,6 +654,7 @@ function collideWalls(hole, ball, t) {
 function substep(hole, ball, t, h) {
   const K = CONFIG.rollK, G = CONFIG.gravity;
   let bounced = false;
+  if (hole.drawbridge) hole.drawbridge.down = drawbridgeRaise(hole.drawbridge, t) < 0.05;
   const tr = ball.transport;
   if (tr) {
     tr.t += h;
@@ -1043,19 +1109,124 @@ const VOLCANO_ISLAND = {
   ],
 };
 
+// Castle Kingdom adds: D drawbridge cells over a moat. Extras: drawbridge, portcullis, castlewall (decoration).
+// Cannons are dressed as catapults here, lifts as winch towers, pendulums as maces, posts as suits of armour.
+const CASTLE_KINGDOM = {
+  id: 'castle', name: 'Castle Kingdom', style: 'castle',
+  shortRound: [0, 1, 2, 4, 5, 6, 9, 11, 13, 14],
+  holes: [
+    { name: 'Castle Green', par: 2,
+      map: ['ggggg', 'ggogg', ...rep(14, 'ggggg'), 'gg@gg', 'ggggg'],
+      extras: [{ type: 'post', c: 1.5, r: 8, rad: 0.08 }, { type: 'post', c: 3.5, r: 8, rad: 0.08 }] },
+
+    { name: 'The Moat', par: 3,
+      map: ['ggggg', 'ggogg', ...rep(3, 'ggggg'), 'DDDDD', 'DDDDD', ...rep(8, 'ggggg'), 'gg@gg', 'ggggg'],
+      extras: [{ type: 'drawbridge', hinge: 'n', period: 5 }] },
+
+    { name: 'Portcullis', par: 3,
+      map: ['ggg', 'gog', ...rep(17, 'ggg'), 'g@g', 'ggg'],
+      extras: [{ type: 'portcullis', c: 1.5, r: 10, axis: 'z', halfWidth: 0.75, period: 4 }] },
+
+    { name: 'Mace Alley', par: 3,
+      map: ['ggg', 'gog', ...rep(18, 'ggg'), 'g@g', 'ggg'],
+      extras: [
+        { type: 'pendulum', c: 1.5, r: 7, axis: 'z', halfWidth: 0.75, period: 2.2 },
+        { type: 'pendulum', c: 1.5, r: 14, axis: 'z', halfWidth: 0.75, period: 2.9, phase: 0.4 },
+      ] },
+
+    { name: 'Catapult', par: 3,
+      map: ['ggggggg', 'gggoggg', 'ggggggg', 'ggggggg', 'ggggggg', '.......', '.......', '..gtg..', ...rep(6, '..ggg..'), '..g@g..', '..ggg..'],
+      extras: [
+        { type: 'cannon', in: { c: 3, r: 7, out: 's' }, target: { c: 2, r: 3 }, apex: 1.6 },
+        { type: 'castlewall', a: [-1.5, 6], b: [8.5, 6] },
+      ] },
+
+    { name: 'Tower Hoist', par: 3,
+      map: ['gtg.ggggg', 'ggg.tgggg', 'ggg.ggggg', 'ggg.ggogg', 'ggg.ggggg', ...rep(8, 'ggg......'), 'g@g......', 'ggg......'],
+      levels: [...rep(5, '000.33333'), ...rep(10, '000')],
+      extras: [
+        { type: 'lift', in: { c: 1, r: 0, out: 's' }, out: { c: 4, r: 1, out: 'e' } },
+        { type: 'post', c: 7.5, r: 1.5, rad: 0.08 },
+      ] },
+
+    { name: 'Dungeon', par: 3,
+      map: ['gtg.ggg', 'ggg.gog', ...rep(10, 'ggg.ggg'), 'g@g.ggg', 'ggg.gtg'],
+      extras: [
+        { type: 'tunnel', a: { c: 1, r: 0, out: 's' }, b: { c: 5, r: 13, out: 'n' }, length: 6 },
+        { type: 'post', c: 5.5, r: 7, rad: 0.08 },
+      ] },
+
+    { name: 'Sliding Walls', par: 3,
+      map: ['ggggg', 'ggogg', ...rep(17, 'ggggg'), 'gg@gg', 'ggggg'],
+      extras: [
+        { type: 'slider', c: 2.5, r: 7, axis: 'z', halfWidth: 1.25, gap: 0.45, period: 3 },
+        { type: 'slider', c: 2.5, r: 13, axis: 'z', halfWidth: 1.25, gap: 0.45, period: 3.8, phase: 1.3 },
+      ] },
+
+    { name: 'Battlements', par: 3,
+      map: ['ggg', 'gog', ...rep(4, 'ggg'), ...rep(6, 'ggg'), ...rep(4, '^^^'), ...rep(7, 'ggg'), 'g@g', 'ggg'],
+      levels: [...rep(6, '000'), ...rep(6, '222'), ...rep(13, '000')] },
+
+    { name: 'Drawbridge Dash', par: 3,
+      map: ['ggg', 'gog', ...rep(3, 'ggg'), 'DDD', 'DDD', ...rep(12, 'ggg'), 'g@g', 'ggg'],
+      extras: [
+        { type: 'drawbridge', hinge: 'n', period: 4.4, phase: 0.3 },
+        { type: 'pendulum', c: 1.5, r: 13, axis: 'z', halfWidth: 0.75, period: 2.5 },
+      ] },
+
+    { name: 'Twin Towers', par: 3,
+      map: ['ggggggggggg', 'gggggggggog', 'ggggggggggg', ...rep(12, 'ggg........'), 'g@g........', 'ggg........'],
+      extras: [
+        { type: 'bumper', a: [0, 1.5], b: [1.5, 0] },
+        { type: 'portcullis', c: 6, r: 1.5, axis: 'x', halfWidth: 0.75, period: 3.6 },
+        { type: 'post', c: 0.8, r: 7, rad: 0.08 }, { type: 'post', c: 2.2, r: 10, rad: 0.08 },
+      ] },
+
+    { name: 'Castle Island', par: 3,
+      map: ['wwwwwww', 'wgggggw', 'wggoggw', 'wgggggw', 'wwDDDww', 'wwDDDww', ...rep(7, 'ggggggg'), 'ggg@ggg', 'ggggggg'],
+      extras: [{ type: 'drawbridge', hinge: 'n', period: 5.5 }] },
+
+    { name: 'Throne Room', par: 3,
+      map: ['ggggg', 'ggogg', 'ggggg', '^^^^^', '^^^^^', ...rep(11, 'ggggg'), 'gg@gg', 'ggggg'],
+      levels: [...rep(3, '11111'), ...rep(15, '00000')],
+      extras: [
+        { type: 'hill', c: 2.5, r: 10, rad: 2, h: 0.05 },
+        { type: 'post', c: 0.8, r: 7, rad: 0.08 }, { type: 'post', c: 4.2, r: 7, rad: 0.08 },
+        { type: 'post', c: 0.8, r: 12, rad: 0.08 }, { type: 'post', c: 4.2, r: 12, rad: 0.08 },
+      ] },
+
+    { name: 'Siege', par: 3,
+      map: ['ggggggg', 'ggggogg', 'ggggggg', 'ggggggg', '.......', '.......', '...tgg.', ...rep(6, '...ggg.'), '...g@g.', '...ggg.'],
+      levels: [...rep(4, '2222222'), ...rep(11, '0000000')],
+      extras: [
+        { type: 'cannon', in: { c: 3, r: 6, out: 's' }, target: { c: 2, r: 2 }, apex: 1.8 },
+        { type: 'castlewall', a: [-1.5, 5], b: [8.5, 5] },
+      ] },
+
+    { name: "King's Gate", par: 4,
+      map: ['ggg', 'gog', ...rep(5, 'ggg'), 'DDD', 'DDD', ...rep(16, 'ggg'), 'g@g', 'ggg'],
+      extras: [
+        { type: 'portcullis', c: 1.5, r: 4.5, axis: 'z', halfWidth: 0.75, period: 4 },
+        { type: 'drawbridge', hinge: 'n', period: 5 },
+        { type: 'pendulum', c: 1.5, r: 17, axis: 'z', halfWidth: 0.75, period: 2.6 },
+        { type: 'slider', c: 1.5, r: 22, axis: 'z', halfWidth: 0.75, gap: 0.4, period: 3 },
+      ] },
+  ],
+};
+
 const THEMES = [
   { id: 'sunny', name: 'Sunny Park', blurb: 'Windmill, ball lift, loop-the-loop and ponds', course: SUNNY_PARK, colour: '#5cc46a' },
   { id: 'pirate', name: 'Pirate Cove', blurb: 'Shipwrecks, sand, a plank and a ball cannon', course: PIRATE_COVE, colour: '#e0b45a' },
   { id: 'volcano', name: 'Volcano Island', blurb: 'Lava, trampolines and a smoking volcano', course: VOLCANO_ISLAND, colour: '#e0573a' },
-  { id: 'castle', name: 'Castle Kingdom', blurb: 'Drawbridge, moat and swinging gates', course: null, colour: '#9aa0b5' },
+  { id: 'castle', name: 'Castle Kingdom', blurb: 'Drawbridge, portcullis, catapult and maces', course: CASTLE_KINGDOM, colour: '#9aa0b5' },
   { id: 'frozen', name: 'Frozen Peaks', blurb: 'Ice, snow and marble-run chutes', course: null, colour: '#8fd3f0' },
   { id: 'robot', name: 'Robot Factory', blurb: 'Ball lift, conveyors and a loop', course: null, colour: '#c0c4cc' },
 ];
 
 const PURE = {
-  SUNNY_PARK, PIRATE_COVE, VOLCANO_ISLAND, THEMES,
+  SUNNY_PARK, PIRATE_COVE, VOLCANO_ISLAND, CASTLE_KINGDOM, THEMES,
   CONFIG, parseHole, cellAt, cellOf, baseHeight, groundHeight, gradient, createBall, shoot, stepBall, simulateShot,
-  windmillBlocked, windmillAngle, distanceField, botPlay, cappedScore, isCourseChar,
+  windmillBlocked, windmillAngle, portcullisLift, portcullisBlocked, drawbridgeRaise, distanceField, botPlay, cappedScore, isCourseChar,
   sliderPieces, pendulumState, transportPos, loopSpeedNeeded, laneXZ, offPlank, isWet, cannonMuzzle,
 };
 // ==== PURE END ====
@@ -1279,6 +1450,35 @@ Object.assign(TEX, {
   }),
 });
 TEX.jungle.repeat.set(0.35, 0.35);
+
+// Castle Kingdom
+Object.assign(TEX, {
+  castle: canvasTex(256, 128, (g, w, h) => {
+    g.fillStyle = '#8f8a82'; g.fillRect(0, 0, w, h);
+    const bw = 64, bh = 32;
+    for (let r = 0; r < h / bh; r++) for (let c = -1; c < w / bw + 1; c++) {
+      const x = c * bw + (r % 2) * bw / 2, y = r * bh, v = Math.floor(Math.random() * 40);
+      g.fillStyle = `rgb(${150 + v},${146 + v},${138 + v})`;
+      g.fillRect(x + 2, y + 2, bw - 4, bh - 4);
+      g.fillStyle = 'rgba(0,0,0,.08)'; g.fillRect(x + 2, y + bh - 8, bw - 4, 6);
+    }
+    speckle(g, w, h, 900, ['rgba(60,60,55,.25)', 'rgba(255,255,250,.15)'], 2);
+  }),
+  cobble: canvasTex(256, 256, (g, w, h) => {
+    g.fillStyle = '#6f6a62'; g.fillRect(0, 0, w, h);
+    for (let i = 0; i < 220; i++) {
+      const v = 120 + Math.floor(Math.random() * 50);
+      g.fillStyle = `rgb(${v},${v - 4},${v - 10})`;
+      g.beginPath(); g.ellipse(Math.random() * w, Math.random() * h, 8 + Math.random() * 7, 6 + Math.random() * 5, Math.random() * 3, 0, Math.PI * 2); g.fill();
+    }
+  }),
+  banner: canvasTex(64, 128, (g, w, h) => {
+    g.fillStyle = '#b3202a'; g.fillRect(0, 0, w, h);
+    g.fillStyle = '#f2c230'; g.fillRect(0, 0, w, 10); g.fillRect(w / 2 - 4, 20, 8, 60); g.fillRect(14, 36, w - 28, 8);
+    g.beginPath(); g.moveTo(0, h - 20); g.lineTo(w / 2, h); g.lineTo(w, h - 20); g.lineTo(w, h); g.lineTo(0, h); g.fillStyle = 'rgba(0,0,0,0)'; g.clearRect(0, h - 20, w, 20);
+    g.fillStyle = '#b3202a'; g.beginPath(); g.moveTo(0, h - 20); g.lineTo(w / 2, h - 2); g.lineTo(w, h - 20); g.fill();
+  }),
+});
 TEX.grass.repeat.set(1, 1);
 
 const MAT = {
@@ -1334,6 +1534,14 @@ const MAT = {
   leafBig: new THREE.MeshStandardMaterial({ color: '#2e7d32', roughness: 0.8, side: THREE.DoubleSide, flatShading: true }),
   fern: new THREE.MeshStandardMaterial({ color: '#2f6b24', roughness: 0.9, side: THREE.DoubleSide, flatShading: true }),
   ash: new THREE.MeshStandardMaterial({ color: '#6b6560', roughness: 1, transparent: true, opacity: 0.75, depthWrite: false }),
+  // Castle Kingdom
+  castle: new THREE.MeshStandardMaterial({ map: TEX.castle, roughness: 0.9, side: THREE.DoubleSide }),
+  cobble: new THREE.MeshStandardMaterial({ map: TEX.cobble, roughness: 0.95 }),
+  moat: new THREE.MeshStandardMaterial({ map: TEX.water, color: '#6f9a8c', roughness: 0.15, metalness: 0.1, transparent: true, opacity: 0.88 }),
+  banner: new THREE.MeshStandardMaterial({ map: TEX.banner, roughness: 0.8, side: THREE.DoubleSide, transparent: true }),
+  armour: new THREE.MeshStandardMaterial({ color: '#b8bcc4', roughness: 0.25, metalness: 0.9 }),
+  slate: new THREE.MeshStandardMaterial({ color: '#3d4a6b', roughness: 0.7, flatShading: true }),
+  hedge: new THREE.MeshStandardMaterial({ color: '#2f6b2c', roughness: 1 }),
 };
 TEX.lava.repeat.set(0.8, 0.8);
 TEX.sand.repeat.set(0.4, 0.4);
@@ -1352,7 +1560,7 @@ function buildGround(hole) {
   const W = hole.cols * C, D = hole.rows * C;
   const shape = new THREE.Shape();
   // the park lawn runs to the horizon; the beach is a sandy island in the sea
-  const island = STYLE !== 'park';
+  const island = STYLE === 'beach' || STYLE === 'jungle';
   const m = island ? 11 : 200;
   const x0 = island ? -m : -200, x1 = island ? W + m : 200;
   const y0 = island ? -D - m : -200, y1 = island ? m : 200;
@@ -1472,6 +1680,7 @@ function rails(points, side, radius, mat) {
 }
 
 function addLiftModel(hole, lf) {
+  if (STYLE === 'castle') addWinchTower(lf);
   const a = lf.a, b = lf.b;
   const top = Math.max(a.y, b.y) + 0.45;
   const tx = a.x - a.out[0] * 0.35, tz = a.z - a.out[1] * 0.35;
@@ -1524,7 +1733,7 @@ function addSliderModel(hole, s) {
   const [cx, cz] = laneXZ(s, 0, 0);
   const beam = box(s.axis === 'z' ? 2 * hw + 0.18 : 0.06, 0.06, s.axis === 'z' ? 0.06 : 2 * hw + 0.18, MAT.wood, cx, s.y + 0.32, cz);
   holeGroup.add(beam);
-  const pieces = [0, 1].map(() => { const m = box(1, 0.09, 0.035, { beach: MAT.deck, jungle: MAT.bamboo }[STYLE] || MACH.stripes, 0, 0, 0); holeGroup.add(m); return m; });
+  const pieces = [0, 1].map(() => { const m = box(1, 0.09, 0.035, { beach: MAT.deck, jungle: MAT.bamboo, castle: MAT.castle }[STYLE] || MACH.stripes, 0, 0, 0); holeGroup.add(m); return m; });
   anim.sliders.push({ s, pieces });
 }
 
@@ -1544,6 +1753,17 @@ function addPendulumModel(hole, p) {
   const bob = new THREE.Mesh(new THREE.SphereGeometry(p.bobR, 24, 16), { beach: MAT.iron, jungle: MAT.basaltRock }[STYLE] || MACH.stripes);
   bob.position.y = -p.length; bob.castShadow = true;
   arm.add(rod, bob);
+  if (STYLE === 'castle') {
+    // a mace: spikes all round the iron ball
+    bob.material = MAT.iron;
+    for (let k = 0; k < 14; k++) {
+      const spike = new THREE.Mesh(new THREE.ConeGeometry(0.025, 0.08, 6), MAT.iron);
+      const dir = new THREE.Vector3(Math.sin(k * 2.4) * Math.cos(k * 1.3), Math.cos(k * 2.4), Math.sin(k * 2.4) * Math.sin(k * 1.3)).normalize();
+      spike.position.copy(dir.clone().multiplyScalar(p.bobR + 0.03)).add(bob.position);
+      spike.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
+      arm.add(spike);
+    }
+  }
   holeGroup.add(arm);
   anim.pendulums.push({ p, arm });
 }
@@ -1551,6 +1771,7 @@ function addPendulumModel(hole, p) {
 function addPostModel(hole, p) {
   const y = groundHeight(hole, p.x, p.z) ?? 0;
   if (STYLE === 'jungle') { addTiki(p.x, y, p.z, p.rad, 0.32); return; }
+  if (STYLE === 'castle') { addArmour(p.x, y, p.z, p.rad); return; }
   if (STYLE === 'beach') {
     // a rum barrel: staves with iron hoops
     const barrel = new THREE.Mesh(new THREE.CylinderGeometry(p.rad * 0.92, p.rad * 0.92, 0.22, 16), MAT.wood);
@@ -1573,6 +1794,7 @@ function addPostModel(hole, p) {
 }
 
 function animateMachines(t) {
+  animateCastle(t);
   for (const a of anim.windmills) a.rotor.rotation.z = a.flip * windmillAngle(a.w, t);
   for (const { s, pieces } of anim.sliders) {
     sliderPieces(s, t).forEach((pc, i) => {
@@ -1600,31 +1822,32 @@ const SKIES = {
   park: { top: '#3f87d6', bottom: '#d9ecff' },
   beach: { top: '#2f8fe0', bottom: '#dff3ff' },
   jungle: { top: '#4a78b8', bottom: '#f3d2ad' }, // hazy, warmed by the volcano
+  castle: { top: '#3a74c4', bottom: '#e4ecf5' },
 };
 
 function buildHole(hole, style = 'park') {
   STYLE = style;
-  const beach = style === 'beach', jungle = style === 'jungle';
+  const beach = style === 'beach', jungle = style === 'jungle', castle = style === 'castle';
   const sk = SKIES[style] || SKIES.park;
   sky.material.uniforms.top.value.set(sk.top);
   sky.material.uniforms.bottom.value.set(sk.bottom);
   scene.fog.color.set(sk.bottom);
   if (holeGroup) disposeGroup(holeGroup);
   holeGroup = new THREE.Group();
-  anim.windmills = []; anim.water = []; anim.sliders = []; anim.pendulums = []; anim.flags = []; anim.ship = null; anim.volcanoes = []; anim.flames = [];
+  anim.windmills = []; anim.water = []; anim.sliders = []; anim.pendulums = []; anim.flags = []; anim.ship = null; anim.volcanoes = []; anim.flames = []; anim.drawbridge = null; anim.gates = [];
   seed = 1 + hole.rows * 131 + hole.cols * 17;
 
   const carpet = new GeoBuilder(), bridge = new GeoBuilder(), water = new GeoBuilder(), basin = new GeoBuilder();
   const brick = new GeoBuilder(), wood = new GeoBuilder(), stone = new GeoBuilder(), soil = new GeoBuilder();
   const bunker = new GeoBuilder(), deck = new GeoBuilder(), hull = new GeoBuilder();
-  const lava = new GeoBuilder(), tramp = new GeoBuilder(), basalt = new GeoBuilder();
+  const lava = new GeoBuilder(), tramp = new GeoBuilder(), basalt = new GeoBuilder(), stoneBlocks = new GeoBuilder();
   const N = 4;
 
   for (const cell of hole.cells) {
     if (!isCourseChar(cell.ch)) continue;
     const x0 = cell.c * C, z0 = cell.r * C;
-    if (cell.ch === 'w' || cell.ch === 'p' || cell.ch === 'L') {
-      const y = cell.ch !== 'p' ? baseHeight(cell, x0 + C / 2, z0 + C / 2) : -CONFIG.waterDepth;
+    if (cell.ch === 'w' || cell.ch === 'p' || cell.ch === 'L' || cell.ch === 'D') {
+      const y = cell.ch === 'p' ? -CONFIG.waterDepth : cell.ch === 'D' ? cell.level * CONFIG.levelStep - CONFIG.waterDepth : baseHeight(cell, x0 + C / 2, z0 + C / 2);
       if (cell.ch === 'L') {
         lava.quad([x0, y, z0 + C], [x0 + C, y, z0 + C], [x0 + C, y, z0], [x0, y, z0], [x0, z0 + C], [x0 + C, z0 + C], [x0 + C, z0], [x0, z0]);
         continue;
@@ -1665,7 +1888,7 @@ function buildHole(hole, style = 'park') {
       const ha = baseHeight(cell, s.ax - s.nx * 1e-4, s.az - s.nz * 1e-4);
       const hb = baseHeight(cell, s.bx - s.nx * 1e-4, s.bz - s.nz * 1e-4);
       const low = isHazardChar(cell.ch) ? ha - 0.12 : -0.05;
-      const edge = jungle ? basalt : cell.ch === 'w' ? stone : cell.ch === 'd' ? hull : beach ? wood : brick;
+      const edge = jungle ? basalt : castle ? stoneBlocks : cell.ch === 'w' ? stone : cell.ch === 'd' ? hull : beach ? wood : brick;
       prism(edge, s.ax, s.az, s.bx, s.bz, s.nx, s.nz, 0.07, Math.min(low, -0.05), ha + CONFIG.wallHeight, hb + CONFIG.wallHeight);
     } else if (s.kind === 'step') {
       const a = s.cellA, b = s.cellB;
@@ -1675,7 +1898,7 @@ function buildHole(hole, style = 'park') {
       const lowCell = hA < hB ? a : b;
       const bottom = isHazardChar(lowCell.ch) ? Math.min(hA, hB) - 0.12 : Math.min(hA, hB);
       const highCell = lowCell === a ? b : a;
-      prism(highCell.ch === 'd' ? hull : jungle ? basalt : lowCell.ch === 'w' ? stone : wood, s.ax, s.az, s.bx, s.bz, 0, 0, 0, bottom, s.top, s.top);
+      prism(highCell.ch === 'd' ? hull : jungle ? basalt : castle ? stoneBlocks : lowCell.ch === 'w' ? stone : wood, s.ax, s.az, s.bx, s.bz, 0, 0, 0, bottom, s.top, s.top);
     } else if (s.kind === 'rail' && jungle) {
       // a rope bridge: posts and a sagging hand-rope instead of a timber rail
       const y = s.top - CONFIG.wallHeight;
@@ -1694,7 +1917,7 @@ function buildHole(hole, style = 'park') {
     const dx = s.bx - s.ax, dz = s.bz - s.az, l = Math.hypot(dx, dz);
     const cell = cellAt(hole, (s.ax + s.bx) / 2 + 0.01, (s.az + s.bz) / 2 + 0.01);
     const base = cell ? baseHeight(cell, (s.ax + s.bx) / 2, (s.az + s.bz) / 2) : 0;
-    prism(jungle ? basalt : beach ? wood : brick, s.ax, s.az, s.bx, s.bz, dz / l, -dx / l, 0.06, base - 0.05, base + CONFIG.wallHeight, base + CONFIG.wallHeight);
+    prism(jungle ? basalt : castle ? stoneBlocks : beach ? wood : brick, s.ax, s.az, s.bx, s.bz, dz / l, -dx / l, 0.06, base - 0.05, base + CONFIG.wallHeight, base + CONFIG.wallHeight);
   }
 
   // scenery cells inside the plot: flower beds hugging the course, lawn elsewhere
@@ -1707,9 +1930,9 @@ function buildHole(hole, style = 'park') {
       if (n && isCourseChar(n.ch)) near = true;
     }
     const x0 = cell.c * C, z0 = cell.r * C;
-    if (!near || beach || jungle) {
+    if (!near || STYLE !== 'park') {
       const y = -0.02, u = v => v; // metres, like the lawn; the texture repeat does the scaling
-      if ((beach || jungle) && near) for (let k = 0; k < 2; k++) flowers.push([x0 + 0.06 + rnd() * (C - 0.12), z0 + 0.06 + rnd() * (C - 0.12)]);
+      if (STYLE !== 'park' && near) for (let k = 0; k < 2; k++) flowers.push([x0 + 0.06 + rnd() * (C - 0.12), z0 + 0.06 + rnd() * (C - 0.12)]);
       lawn.quad([x0, y, z0 + C], [x0 + C, y, z0 + C], [x0 + C, y, z0], [x0, y, z0], [u(x0), u(-z0 - C)], [u(x0 + C), u(-z0 - C)], [u(x0 + C), u(-z0)], [u(x0), u(-z0)]);
       continue;
     }
@@ -1722,12 +1945,12 @@ function buildHole(hole, style = 'park') {
   const add = (gb, mat, shadows) => { if (!gb.empty) holeGroup.add(meshOf(gb, mat, shadows)); };
   add(carpet, MAT.carpet, false); add(bridge, beach ? MAT.deck : MAT.wood, false); add(basin, beach ? MAT.shallows : MAT.basin, false);
   add(bunker, MAT.bunker, false); add(deck, MAT.deck, true); add(hull, MAT.hull, true);
-  add(tramp, MAT.tramp, false); add(basalt, MAT.basalt, true);
+  add(tramp, MAT.tramp, false); add(basalt, MAT.basalt, true); add(stoneBlocks, MAT.castle, true);
   if (!lava.empty) holeGroup.add(meshOf(lava, MAT.lava, false));
   add(brick, MAT.brick, true); add(wood, MAT.wood, true); add(stone, MAT.stone, true); add(soil, MAT.soil, false);
-  if (!water.empty) { const wm = meshOf(water, beach ? MAT.lagoon : MAT.water, false); wm.receiveShadow = true; holeGroup.add(wm); }
+  if (!water.empty) { const wm = meshOf(water, beach ? MAT.lagoon : castle ? MAT.moat : MAT.water, false); wm.receiveShadow = true; holeGroup.add(wm); }
 
-  if (beach) addDuneGrass(flowers); else if (jungle) addFerns(flowers); else addFlowers(flowers);
+  if (beach) addDuneGrass(flowers); else if (jungle) addFerns(flowers); else if (castle) addHedges(flowers); else addFlowers(flowers);
   addCupAndFlag(hole);
   addTee(hole);
   for (const w of hole.windmills) addWindmillModel(hole, w);
@@ -1741,8 +1964,11 @@ function buildHole(hole, style = 'park') {
   if (hole.ship) addShipModel(hole);
   if (hole.volcano) addVolcanoModel(hole.volcano);
   if (jungle) addTrampolineFrames(hole);
+  if (hole.drawbridge) addDrawbridgeModel(hole);
+  for (const p of hole.portcullises) addGatehouseModel(hole, p);
+  for (const w of hole.castleWalls || []) addCastleWall(w.a[0], w.a[1], w.b[0], w.b[1], 1.1);
   animateMachines(0);
-  if (beach) addBeachScenery(hole); else if (jungle) addJungleScenery(hole); else addScenery(hole);
+  if (beach) addBeachScenery(hole); else if (jungle) addJungleScenery(hole); else if (castle) addCastleScenery(hole); else addScenery(hole);
 
   scene.add(holeGroup);
   buildGround(hole);
@@ -1851,7 +2077,7 @@ function addTunnelModel(hole, tn) {
   mid.add(away.multiplyScalar(0.4));
   const curve = new THREE.CatmullRomCurve3([a0, a1, mid, b1, b0]);
   const beach = STYLE === 'beach', jungle = STYLE === 'jungle';
-  const tube = new THREE.Mesh(new THREE.TubeGeometry(curve, 64, beach || jungle ? 0.13 : 0.1, 16, false), jungle ? MAT.basaltRock : beach ? MAT.rock : MAT.bark);
+  const tube = new THREE.Mesh(new THREE.TubeGeometry(curve, 64, beach || jungle || STYLE === 'castle' ? 0.13 : 0.1, 16, false), jungle ? MAT.basaltRock : beach ? MAT.rock : STYLE === 'castle' ? MAT.castle : MAT.bark);
   if (beach) {
     // a sea-cave rock heaped over the pipe, with two dark hollows for eyes
     const rockMid = curve.getPoint(0.5);
@@ -2128,6 +2354,7 @@ function addShipModel(hole) {
 
 // A deck cannon behind the mouth, aimed along the ball's flight.
 function addCannonModel(hole, cn) {
+  if (STYLE === 'castle') return addCatapultModel(hole, cn);
   const m = cannonMuzzle(cn), a = cn.a;
   const bx = a.x - a.out[0] * 0.55, bz = a.z - a.out[1] * 0.55;
   const g = new THREE.Group();
@@ -2435,6 +2662,270 @@ function emitAsh(v) {
   p.position.set(v.x + (Math.random() - 0.5) * 0.2 * v.size, v.y + 0.1, v.z + (Math.random() - 0.5) * 0.2 * v.size);
   p.userData = { vx: (Math.random() - 0.3) * 0.25 * v.size, vy: (0.35 + Math.random() * 0.3) * v.size, vz: (Math.random() - 0.5) * 0.25 * v.size, life: 3.5, grow: 0.5 };
   scene.add(p); puffs.push(p);
+}
+
+// ============================================================
+//  CASTLE KINGDOM SET PIECES
+// ============================================================
+function addHedges(spots) {
+  if (!spots.length) return;
+  const hedge = new THREE.InstancedMesh(new THREE.BoxGeometry(0.2, 0.18, 0.2), MAT.hedge, spots.length);
+  const m = new THREE.Matrix4();
+  spots.forEach(([x, z], i) => { m.makeTranslation(x, 0.07, z); hedge.setMatrixAt(i, m); });
+  hedge.castShadow = true; hedge.receiveShadow = true;
+  holeGroup.add(hedge);
+}
+
+// A suit of armour on a plinth, holding a shield.
+function addArmour(x, y, z, rad) {
+  const g = new THREE.Group();
+  g.position.set(x, y, z);
+  g.rotation.y = rnd() * 6.28;
+  g.add(box(rad * 2, 0.04, rad * 2, MAT.castle, 0, 0.02, 0));
+  const body = new THREE.Mesh(new THREE.CylinderGeometry(rad * 0.55, rad * 0.75, 0.2, 10), MAT.armour);
+  body.position.y = 0.14; body.castShadow = true;
+  const helm = new THREE.Mesh(new THREE.SphereGeometry(rad * 0.5, 12, 10), MAT.armour);
+  helm.position.y = 0.29; helm.castShadow = true;
+  const visor = box(rad * 0.6, 0.012, 0.01, MAT.dark, 0, 0.29, rad * 0.48);
+  const plume = new THREE.Mesh(new THREE.ConeGeometry(0.015, 0.08, 6), MAT.flag);
+  plume.position.y = 0.37;
+  const shield = box(rad * 0.9, rad * 1.1, 0.012, MAT.banner, rad * 0.5, 0.16, rad * 0.6);
+  shield.rotation.y = 0.4;
+  g.add(body, helm, visor, plume, shield);
+  holeGroup.add(g);
+}
+
+// A wooden catapult behind the mouth; its arm is cocked, ready to fling.
+function addCatapultModel(hole, cn) {
+  const a = cn.a;
+  const bx = a.x - a.out[0] * 0.6, bz = a.z - a.out[1] * 0.6;
+  const g = new THREE.Group();
+  g.position.set(bx, a.y, bz);
+  g.rotation.y = Math.atan2(cn.target.x - bx, cn.target.z - bz);
+  for (const sx of [-0.16, 0.16]) {
+    g.add(box(0.05, 0.05, 0.6, MAT.wood, sx, 0.05, 0));
+    const upright = box(0.05, 0.4, 0.05, MAT.wood, sx, 0.25, 0.05);
+    g.add(upright);
+    for (const sz of [-0.24, 0.24]) {
+      const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.04, 12), MAT.wood);
+      wheel.rotation.z = Math.PI / 2; wheel.position.set(sx * 1.25, 0.07, sz); wheel.castShadow = true;
+      g.add(wheel);
+    }
+  }
+  g.add(box(0.36, 0.04, 0.04, MAT.wood, 0, 0.42, 0.05));
+  const arm = box(0.05, 0.05, 0.7, MAT.wood, 0, 0.3, -0.1);
+  arm.rotation.x = 0.55;
+  const cup = new THREE.Mesh(new THREE.SphereGeometry(0.06, 10, 6, 0, Math.PI * 2, Math.PI / 2, Math.PI / 2), MAT.wood);
+  cup.position.set(0, 0.12, -0.38);
+  g.add(arm, cup);
+  holeGroup.add(g);
+  holeGroup.add(rails([{ x: a.x, y: a.y + 0.01, z: a.z }, { x: bx, y: a.y + 0.1, z: bz }], 0.025, 0.006, MACH.steel));
+}
+
+// The ball lift dressed as a round stone winch tower with a slate cone roof.
+function addWinchTower(lf) {
+  const a = lf.a, b = lf.b;
+  const top = Math.max(a.y, b.y) + 0.45;
+  const tx = a.x - a.out[0] * 0.35, tz = a.z - a.out[1] * 0.35;
+  const H = top + 0.2 - a.y;
+  const tower = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.3, H, 16, 1, true, Math.PI * 0.25, Math.PI * 1.5), MAT.castle);
+  tower.position.set(tx, a.y + H / 2, tz);
+  tower.rotation.y = Math.atan2(a.out[0], a.out[1]) + Math.PI; // the open side faces the lane
+  tower.castShadow = true;
+  const roof = new THREE.Mesh(new THREE.ConeGeometry(0.36, 0.5, 16), MAT.slate);
+  roof.position.set(tx, a.y + H + 0.3, tz); roof.castShadow = true;
+  holeGroup.add(tower, roof);
+  addBanner(tx, a.y + H + 0.55, tz, 0.5);
+}
+
+function addBanner(x, y, z, pole) {
+  holeGroup.add(box(0.02, pole, 0.02, MAT.wood, x, y + pole / 2, z));
+  const flag = new THREE.Mesh(new THREE.PlaneGeometry(0.22, 0.14).translate(0.11, 0, 0), MAT.banner);
+  flag.position.set(x, y + pole - 0.08, z);
+  holeGroup.add(flag);
+  anim.flags.push(flag);
+}
+
+// The drawbridge: planks hinged at the far bank, raised and lowered on chains from two pillars.
+function addDrawbridgeModel(hole) {
+  const db = hole.drawbridge, cells = db.cells;
+  const c0 = Math.min(...cells.map(c => c.c)), c1 = Math.max(...cells.map(c => c.c)) + 1;
+  const r0 = Math.min(...cells.map(c => c.r)), r1 = Math.max(...cells.map(c => c.r)) + 1;
+  const y = cells[0].level * CONFIG.levelStep;
+  const [dx, dz] = db.d; // towards the hinge
+  // hinge line on the far side of the span
+  const hx = dx > 0 ? c1 * C : dx < 0 ? c0 * C : (c0 + c1) * C / 2;
+  const hz = dz > 0 ? r1 * C : dz < 0 ? r0 * C : (r0 + r1) * C / 2;
+  const spanLen = dx ? (c1 - c0) * C : (r1 - r0) * C, width = dx ? (r1 - r0) * C : (c1 - c0) * C;
+  const pivot = new THREE.Group();
+  pivot.position.set(hx, y, hz);
+  pivot.rotation.order = 'YXZ'; // turn to face the span first, then tilt about the hinge
+  pivot.rotation.y = Math.atan2(-dx, -dz); // local +z points from the hinge back across the span
+  const deck = box(width, 0.04, spanLen, MAT.deck, 0, -0.02, spanLen / 2);
+  deck.castShadow = true; deck.receiveShadow = true;
+  pivot.add(deck);
+  for (const sx of [-width / 2 + 0.04, width / 2 - 0.04]) pivot.add(box(0.05, 0.05, spanLen, MAT.iron, sx, 0.005, spanLen / 2));
+  holeGroup.add(pivot);
+  const pillars = [];
+  for (const s of [-1, 1]) {
+    const px = hx + (dx ? 0 : s * (width / 2 + 0.15)) + dx * 0.15, pz = hz + (dz ? 0 : s * (width / 2 + 0.15)) + dz * 0.15;
+    holeGroup.add(box(0.22, 0.9, 0.22, MAT.castle, px, y + 0.45, pz));
+    holeGroup.add(box(0.28, 0.06, 0.28, MAT.castle, px, y + 0.93, pz));
+    pillars.push(new THREE.Vector3(px, y + 0.85, pz));
+  }
+  const chains = pillars.map(() => { const c = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, 1, 5), MAT.iron); holeGroup.add(c); return c; });
+  anim.drawbridge = { db, pivot, chains, pillars, spanLen, width };
+}
+
+// A gatehouse: a stone block with battlements and two turrets, an arched passage, and an iron portcullis.
+function addGatehouseModel(hole, p) {
+  const g = new THREE.Group();
+  const y0 = groundHeight(hole, p.x, p.z) || 0;
+  g.position.set(p.x, y0, p.z);
+  if (p.axis === 'x') g.rotation.y = Math.PI / 2; // local z runs along the lane
+  const hw = p.halfWidth + 0.15, d = p.depth, dh = p.door / 2, H = 1.0, side = hw - dh;
+  g.add(box(side, H, d, MAT.castle, -(dh + side / 2), H / 2, 0), box(side, H, d, MAT.castle, dh + side / 2, H / 2, 0));
+  g.add(box(p.door, H - 0.3, d, MAT.castle, 0, 0.3 + (H - 0.3) / 2, 0));
+  const dark = new THREE.Mesh(new THREE.PlaneGeometry(p.door, 0.3), MAT.dark);
+  dark.position.set(0, 0.15, 0); g.add(dark);
+  for (let x = -hw + 0.08; x < hw; x += 0.22) for (const zz of [-d / 2 + 0.05, d / 2 - 0.05]) g.add(box(0.12, 0.12, 0.1, MAT.castle, x, H + 0.06, zz));
+  for (const s of [-1, 1]) {
+    const turret = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.22, H + 0.4, 12), MAT.castle);
+    turret.position.set(s * (hw + 0.12), (H + 0.4) / 2, 0); turret.castShadow = true;
+    const roof = new THREE.Mesh(new THREE.ConeGeometry(0.27, 0.45, 12), MAT.slate);
+    roof.position.set(s * (hw + 0.12), H + 0.62, 0);
+    g.add(turret, roof);
+  }
+  // the portcullis grid, slid up and down in the passage
+  const grid = new THREE.Group();
+  for (let x = -dh + 0.02; x <= dh - 0.02 + 1e-6; x += 0.055) grid.add(box(0.012, 0.32, 0.012, MAT.iron, x, 0.16, 0));
+  for (const yy of [0.06, 0.16, 0.26]) grid.add(box(p.door - 0.02, 0.012, 0.014, MAT.iron, 0, yy, 0));
+  for (let x = -dh + 0.02; x <= dh - 0.02 + 1e-6; x += 0.055) { const tip = new THREE.Mesh(new THREE.ConeGeometry(0.01, 0.03, 4), MAT.iron); tip.position.set(x, -0.005, 0); tip.rotation.x = Math.PI; grid.add(tip); }
+  g.add(grid);
+  holeGroup.add(g);
+  const [bx1, bz1] = laneXZ(p, 0, 0);
+  addBanner(bx1 + (p.axis === 'z' ? hw + 0.12 : 0), y0 + H + 0.8, bz1 + (p.axis === 'x' ? hw + 0.12 : 0), 0.4);
+  anim.gates.push({ p, grid });
+}
+
+// A crenellated curtain wall between two points, with a round tower at each end.
+function addCastleWall(ax, az, bx, bz, h) {
+  const len = Math.hypot(bx - ax, bz - az), ang = Math.atan2(bz - az, bx - ax);
+  const wall = box(len, h, 0.4, MAT.castle, (ax + bx) / 2, h / 2 - 0.02, (az + bz) / 2);
+  wall.rotation.y = -ang;
+  holeGroup.add(wall);
+  const n = Math.floor(len / 0.3);
+  for (let i = 0; i < n; i += 2) {
+    const t = (i + 0.5) / n;
+    const m = box(0.15, 0.14, 0.42, MAT.castle, ax + (bx - ax) * t, h + 0.05, az + (bz - az) * t);
+    m.rotation.y = -ang;
+    holeGroup.add(m);
+  }
+  for (const [x, z] of [[ax, az], [bx, bz]]) {
+    const tw = new THREE.Mesh(new THREE.CylinderGeometry(0.38, 0.42, h + 0.6, 14), MAT.castle);
+    tw.position.set(x, (h + 0.6) / 2 - 0.02, z); tw.castShadow = true;
+    const roof = new THREE.Mesh(new THREE.ConeGeometry(0.48, 0.7, 14), MAT.slate);
+    roof.position.set(x, h + 0.95, z); roof.castShadow = true;
+    holeGroup.add(tw, roof);
+    addBanner(x, h + 1.25, z, 0.5);
+  }
+}
+
+function addCastleScenery(hole) {
+  const b = holeBounds(hole);
+  const pick = (m0, m1) => {
+    for (let i = 0; i < 40; i++) {
+      const x = b.x0 - m1 + rnd() * (b.x1 - b.x0 + 2 * m1), z = b.z0 - m1 + rnd() * (b.z1 - b.z0 + 2 * m1);
+      const dx = Math.max(b.x0 - x, 0, x - b.x1), dz = Math.max(b.z0 - z, 0, z - b.z1);
+      const d = Math.hypot(dx, dz);
+      if (d > m0 && d < m1 && Math.hypot(x - hole.tee.x, z - hole.tee.z) > 2.8) return [x, z];
+    }
+    return [b.x1 + m1, b.z0];
+  };
+  // round-topped trees and clipped hedges in the castle grounds
+  for (let i = 0; i < 14; i++) {
+    const [x, z] = pick(2.5, 10), h = 1.4 + rnd() * 1.5, r = 0.6 + rnd() * 0.5;
+    const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.12, h, 6), MAT.bark);
+    trunk.position.set(x, h / 2, z); trunk.castShadow = true;
+    const crown = new THREE.Mesh(new THREE.IcosahedronGeometry(r, 1), MAT.leaf);
+    crown.position.set(x, h + r * 0.5, z); crown.castShadow = true;
+    holeGroup.add(trunk, crown);
+  }
+  for (let i = 0; i < 10; i++) {
+    const [x, z] = pick(0.6, 2.4);
+    const hd = box(0.5 + rnd() * 0.6, 0.35, 0.3, MAT.hedge, x, 0.16, z); hd.rotation.y = rnd() * 6;
+    holeGroup.add(hd);
+  }
+  for (let i = 0; i < 4; i++) { const [x, z] = pick(0.6, 2); addArmour(x, -0.02, z, 0.16); }
+  for (let i = 0; i < 4; i++) { const [x, z] = pick(0.5, 1.6); addBanner(x, -0.02, z, 1.4); }
+  // low crenellated wall round the plot, with corner towers
+  const fx0 = b.x0 - 1.4, fx1 = b.x1 + 1.4, fz0 = b.z0 - 1.4, fz1 = b.z1 + 1.4;
+  const corners = [[fx0, fz0], [fx1, fz0], [fx1, fz1], [fx0, fz1]];
+  for (let k = 0; k < 4; k++) {
+    const [ax, az] = corners[k], [bx, bz] = corners[(k + 1) % 4];
+    // leave the stretch behind the tee open so the camera can see over it
+    const len = Math.hypot(bx - ax, bz - az), ang = Math.atan2(bz - az, bx - ax), n = Math.ceil(len / 0.6);
+    for (let i = 0; i < n; i++) {
+      const t0 = i / n, t1 = (i + 1) / n, mx = ax + (bx - ax) * (t0 + t1) / 2, mz = az + (bz - az) * (t0 + t1) / 2;
+      if (Math.hypot(mx - hole.tee.x, mz - hole.tee.z) < 2.6) continue;
+      const seg = box(len / n + 0.01, 0.4, 0.22, MAT.castle, mx, 0.18, mz); seg.rotation.y = -ang;
+      const crn = box(len / n * 0.5, 0.12, 0.24, MAT.castle, mx, 0.44, mz); crn.rotation.y = -ang;
+      holeGroup.add(seg, crn);
+    }
+  }
+  for (const [x, z] of corners) {
+    if (Math.hypot(x - hole.tee.x, z - hole.tee.z) < 2.6) continue;
+    const tw = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.32, 1.2, 12), MAT.castle);
+    tw.position.set(x, 0.58, z); tw.castShadow = true;
+    const roof = new THREE.Mesh(new THREE.ConeGeometry(0.38, 0.55, 12), MAT.slate);
+    roof.position.set(x, 1.45, z);
+    holeGroup.add(tw, roof);
+    addBanner(x, 1.68, z, 0.45);
+  }
+  // the castle on its hill, keeping watch over the course
+  const cx = (b.x0 + b.x1) / 2 + 4, cz = b.z0 - 26;
+  const hill = new THREE.Mesh(new THREE.SphereGeometry(14, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2), MAT.grass);
+  hill.scale.y = 0.35; hill.position.set(cx, -0.5, cz);
+  holeGroup.add(hill);
+  const base = 4.4;
+  const keep = box(4, 6, 4, MAT.castle, cx, base + 3, cz);
+  holeGroup.add(keep);
+  for (const [ox, oz] of [[-4, -3], [4, -3], [-4, 3], [4, 3]]) {
+    const tw = new THREE.Mesh(new THREE.CylinderGeometry(1, 1.1, 6, 14), MAT.castle);
+    tw.position.set(cx + ox, base + 2.6, cz + oz);
+    const roof = new THREE.Mesh(new THREE.ConeGeometry(1.25, 2.4, 14), MAT.slate);
+    roof.position.set(cx + ox, base + 6.8, cz + oz);
+    holeGroup.add(tw, roof);
+  }
+  for (const [ax, az, bx, bz] of [[-4, 3, 4, 3], [-4, -3, 4, -3], [-4, -3, -4, 3], [4, -3, 4, 3]]) {
+    const w = box(Math.abs(bx - ax) || 0.6, 3.2, Math.abs(bz - az) || 0.6, MAT.castle, cx + (ax + bx) / 2, base + 1.4, cz + (az + bz) / 2);
+    holeGroup.add(w);
+  }
+  const keepRoof = new THREE.Mesh(new THREE.ConeGeometry(3, 2.5, 4), MAT.slate);
+  keepRoof.position.set(cx, base + 7.2, cz); keepRoof.rotation.y = Math.PI / 4;
+  holeGroup.add(keepRoof);
+  const bigBanner = new THREE.Mesh(new THREE.PlaneGeometry(1.2, 0.8).translate(0.6, 0, 0), MAT.banner);
+  bigBanner.position.set(cx, base + 9.2, cz);
+  holeGroup.add(box(0.08, 1.4, 0.08, MAT.wood, cx, base + 8.8, cz), bigBanner);
+  anim.flags.push(bigBanner);
+}
+
+function animateCastle(t) {
+  const a = anim.drawbridge;
+  if (a) {
+    const raise = drawbridgeRaise(a.db, t);
+    a.pivot.rotation.x = -raise * 1.35; // swings up about its hinge
+    a.pivot.updateMatrixWorld(true);
+    // chains run from the pillar tops to the bridge's free end
+    a.chains.forEach((c, i) => {
+      const end = new THREE.Vector3((i ? 1 : -1) * (a.width / 2 - 0.05), 0, a.spanLen).applyMatrix4(a.pivot.matrixWorld);
+      const st = a.pillars[i];
+      c.position.copy(st).add(end).multiplyScalar(0.5);
+      c.scale.set(1, st.distanceTo(end), 1);
+      c.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), end.clone().sub(st).normalize());
+    });
+  }
+  for (const { p, grid } of anim.gates) grid.position.y = portcullisLift(p, t) * 0.22;
 }
 
 function fitSun(hole) {

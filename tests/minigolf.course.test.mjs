@@ -89,3 +89,22 @@ for (const [i, def] of VOLCANO_ISLAND.holes.entries()) {
     assert.ok(res.strokes !== null && res.strokes <= def.par + 2, `took ${res.strokes} on a par ${def.par}`);
   });
 }
+
+const { CASTLE_KINGDOM } = PURE;
+
+test('Castle Kingdom has 15 holes, a 10-hole round, a drawbridge, portcullis and catapult', () => {
+  assert.equal(CASTLE_KINGDOM.holes.length, 15);
+  assert.equal(new Set(CASTLE_KINGDOM.shortRound).size, 10);
+  assert.equal(THEMES.find(t => t.id === 'castle').course, CASTLE_KINGDOM);
+  assert.ok(CASTLE_KINGDOM.holes.flatMap(h => h.map).join('').includes('D'));
+  const types = new Set(CASTLE_KINGDOM.holes.flatMap(h => (h.extras || []).map(e => e.type)));
+  for (const t of ['drawbridge', 'portcullis', 'cannon', 'lift', 'pendulum', 'slider', 'post', 'castlewall']) assert.ok(types.has(t), t);
+});
+
+for (const [i, def] of CASTLE_KINGDOM.holes.entries()) {
+  test(`Castle Kingdom hole ${i + 1} "${def.name}" can be finished`, () => {
+    if (def.levels) assert.equal(def.levels.length, def.map.length, 'levels rows');
+    const res = botPlay(parseHole(def));
+    assert.ok(res.strokes !== null && res.strokes <= def.par + 2, `took ${res.strokes} on a par ${def.par}`);
+  });
+}

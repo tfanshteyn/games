@@ -194,3 +194,8 @@ UI styling (in keeping with the portal), and SFX design.
 - Theming: a jungle island in the sea with black basalt borders, jungle trees with vines, bamboo, ferns, tiki statues and torches, a bamboo fence, and a great smoking volcano on the horizon.
 - Mechanisms: lava pools (hazard, +1 stroke), trampolines (a falling ball bounces back with 90% of its speed, so you drop off a terrace and bounce over lava onto a lower one), rope bridges over lava, a volcano you putt up into that sends the ball down a lava tube, tiki-statue posts, a stone pendulum and a bamboo gate.
 - Scenery is kept out of a 2.8 m circle round each tee so it never blocks the tee-off camera (all themes).
+
+## 13. Phase 4: Castle Kingdom (built 2026-10-31)
+
+- Theming: castle grounds on rolling lawn, stone-block borders, a low crenellated wall with corner towers, slate cone roofs, red-and-gold banners, clipped hedges, suits of armour, and a castle on a hill overlooking the course.
+- Mechanisms: a drawbridge over the moat (down 45% of its cycle; arrive while it's up and the ball drops in the moat; a ball never rests on it), a gatehouse with a timed portcullis, maces (spiked pendulums), sliding stone walls, a catapult (the cannon mechanism) that flings the ball over a curtain wall, a winch tower (the lift), a dungeon tunnel and armour-statue posts.
