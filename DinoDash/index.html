@@ -2193,12 +2193,18 @@ function drawMenu() {
   ctx.textAlign = 'center';
   ctx.shadowBlur = 25;
 
+  // Lay the two words out side by side from their measured widths
+  const dinoW = ctx.measureText('DINO').width;
+  const dashW = ctx.measureText('DASH').width;
+  const gap = 40;
+  const titleLeft = W/2 - (dinoW + gap + dashW) / 2;
+
   ctx.shadowColor = '#44BB44';
   ctx.fillStyle = '#44BB44';
-  ctx.fillText('DINO', W/2 - 75, H * 0.28 + pulse);
+  ctx.fillText('DINO', titleLeft + dinoW / 2, H * 0.28 + pulse);
   ctx.shadowColor = '#FFAA00';
   ctx.fillStyle = '#FFAA00';
-  ctx.fillText('DASH', W/2 + 75, H * 0.28 + pulse);
+  ctx.fillText('DASH', titleLeft + dinoW + gap + dashW / 2, H * 0.28 + pulse);
   ctx.shadowBlur = 0;
 
   ctx.font = '30px monospace';
