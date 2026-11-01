@@ -1380,9 +1380,15 @@ function animateDino(P, L, d, dt, t, match) {
 const sfx = (() => {
   let ac = null, master = null, crowdGain = null, crowdFilter = null, noiseBuf = null;
   function init() {
-    if (ac) { if (ac.state === 'suspended') ac.resume(); return; }
+    // iOS: 'suspended' or 'interrupted' (after a call or app switch) both need a resume from a user gesture
+    if (ac) { if (ac.state !== 'running') ac.resume().catch(() => {}); return; }
     const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return;
+    // iPhone: play as media, so sound isn't muted by the ring/silent switch (Safari 17+)
+    try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (e) {}
     ac = new AC(); master = ac.createGain(); master.gain.value = 0.7; master.connect(ac.destination);
+    // older iOS only unlocks output once something has played inside the gesture: a one-sample silent blip
+    const blip = ac.createBufferSource(); blip.buffer = ac.createBuffer(1, 1, 22050); blip.connect(ac.destination); blip.start(0);
+    if (ac.state !== 'running') ac.resume().catch(() => {});
     noiseBuf = ac.createBuffer(1, ac.sampleRate * 2, ac.sampleRate);
     const ch = noiseBuf.getChannelData(0); for (let i = 0; i < ch.length; i++) ch[i] = Math.random() * 2 - 1;
     // crowd murmur, swelled by exciting moments
@@ -1431,6 +1437,10 @@ const sfx = (() => {
     gasp() { noise(0.6, 0.25, 'bandpass', 1400, 1.5); },
   };
 })();
+
+// Phones only unlock audio on a completed tap (touchend / click), not on pointerdown, so listen for those too.
+for (const evName of ['touchend', 'click', 'keydown']) document.addEventListener(evName, () => sfx.init(), { capture: true, passive: true });
+document.addEventListener('visibilitychange', () => { if (!document.hidden) sfx.init(); });
 
 // ---------- Input ----------
 const keys = {};
