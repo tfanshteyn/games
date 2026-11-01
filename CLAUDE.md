@@ -22,7 +22,8 @@ VoidArena/index.html    — Neon Clash: feudal arena brawler (Canvas 2D, ~2900 l
 escape-room/index.html  — Escape Room 3D: 20-level puzzle (Three.js via CDN, ~2400 lines)
 SpiderMan/index.html    — Spider-Man: Brand New Day: 3D web-swinging open city (Three.js via CDN, ~1150 lines)
 MiniGolf/index.html     — Mini Golf 3D: realistic adventure mini golf, 6 themed courses (Three.js via CDN)
-tests/                  — Node tests for the pure-logic blocks of Spider-Man, Tesseract FC and Mini Golf (`node --test "tests/**/*.test.mjs"`)
+DinoSumo/index.html     — Dino Sumo: goofy 2-player dino sumo in a realistic 3D sumo hall (Three.js + r128 post-processing via CDN)
+tests/                  — Node tests for the pure-logic blocks of Spider-Man, Tesseract FC, Mini Golf and Dino Sumo (`node --test "tests/**/*.test.mjs"`)
 DinoDash/TODO.md        — Improvement ideas for Dino Dash
 ```
 
@@ -66,3 +67,13 @@ Realistic 3D adventure mini golf. Spec: `docs/superpowers/specs/2026-10-31-mini-
 - **Colours**: r128 treats colour codes as linear; flat-colour materials are converted with `convertSRGBToLinear()` so they don't render washed out.
 - **Reflections**: materials in `SHINY` get an environment map built per course from a painted sky panorama (`updateEnvironment`, PMREM `fromEquirectangular`; `fromScene` rendered black in r128). `userData.env` scales a material's reflection (water 0.3).
 - **Controls**: drag down for power, sideways to aim, release to putt; ←→ aim, ↑↓ power, Space putt, V overview.
+
+## Dino Sumo (DinoSumo/) — Details
+
+Goofy cartoon dinosaurs in sumo belts shove each other out of a realistic sumo ring. Spec: `docs/superpowers/specs/2026-11-01-dino-sumo-design.md`.
+
+- **Pure block**: top-down physics on the ring plane (x/z metres, angles from +x toward +z), match flow and the CPU, between the PURE markers; `tests/pure-dinosumo.mjs` loads it. All flying, tumbling and squash-and-stretch is visual only.
+- **Rules**: a dino whose centre crosses `CONFIG.ringR` is out; first to `winsNeeded` (3) wins. Hold the shove key to charge, release to attack: T-Rex `bump` and Triceratops `horn` lunge and hit on contact; Stegosaurus `swipe` (all round) and Brachiosaurus `slap` (front cone) strike at the end of the wind-up. A hit leaves a steady dino `stun`ned; a second hit while dizzy, or a big hit while off balance (charging or mid-attack), makes it `flop`. Tests guard that no single full-power hit from the start lines ends a round.
+- **Rendering**: full `devicePixelRatio`; `EffectComposer` → `UnrealBloomPass` → a finishing pass (vignette, grain, lens fringe, sRGB conversion: materials write linear tone-mapped colour into the render target). Falls back to a plain render if the CDN passes don't load. `rimify()` adds a fresnel rim light to character materials; `sculpt()` reshapes primitive geometry vertex by vertex.
+- **Effects**: one `particles` manager (two `Points` layers: soft dust and additive sparks) with per-particle life, drag, gravity, size curve and colour ramp; salt is thrown before each bout, and the crowd throws cushions after a ring-out.
+- **Controls**: P1 WASD, hold F/Space to charge, G roar. P2 arrows, hold Enter or `/`, Right Shift or `.` roar. In 1-player mode P1 may also use arrows and the left mouse button; Esc pauses.

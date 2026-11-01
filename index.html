@@ -153,6 +153,15 @@
       <span class="tag" style="background:#5cc46a22;color:#5cc46a;">3D Mini Golf</span>
     </div>
   </a>
+
+  <a class="game-card" href="DinoSumo/index.html" style="--glow:rgba(232,57,47,0.3);--accent:#e8392f;">
+    <canvas id="dinoSumoThumb" width="680" height="400"></canvas>
+    <div class="game-info">
+      <h2>Dino Sumo</h2>
+      <p>Very serious sumo, very silly dinosaurs. Belly-bump, horn-charge, tail-swipe and neck-slap your friend out of the ring in a grand 3D sumo hall. Two players on one keyboard, or take on the CPU.</p>
+      <span class="tag" style="background:#e8392f22;color:#e8392f;">3D Party Brawler</span>
+    </div>
+  </a>
 </div>
 
 <script>
@@ -1044,6 +1053,61 @@
   }
   draw();
 })();
+
+// Draw Dino Sumo thumbnail: two sumo dinos bumping bellies under the ring's spotlight
+(function () {
+  const c = document.getElementById('dinoSumoThumb'); if (!c) return;
+  const g = c.getContext('2d'), W = c.width, H = c.height;
+  let t = 0;
+  function dino(x, y, body, belt, dir, squash, rex) {
+    g.save(); g.translate(x, y); g.scale(dir, 1);
+    g.fillStyle = 'rgba(0,0,0,0.35)'; g.beginPath(); g.ellipse(0, 6, 58, 12, 0, 0, Math.PI * 2); g.fill();
+    g.fillStyle = body;
+    g.beginPath(); g.moveTo(-40, -40); g.quadraticCurveTo(-110, -30, -120, -14); g.quadraticCurveTo(-80, -18, -40, -20); g.fill();   // tail
+    g.fillRect(-26, -24, 18, 26); g.fillRect(8, -24, 18, 26);                                                                         // legs
+    const bw = 58 / squash, bh = 52 * squash;
+    const grad = g.createRadialGradient(-14, -60 - bh * 0.3, 6, 0, -38 - bh * 0.4, bw * 1.3); grad.addColorStop(0, '#ffffff55'); grad.addColorStop(0.25, body); grad.addColorStop(1, '#00000055');
+    g.fillStyle = body; g.beginPath(); g.ellipse(0, -20 - bh, bw, bh, 0, 0, Math.PI * 2); g.fill();
+    g.fillStyle = grad; g.fill();
+    g.fillStyle = belt; g.beginPath(); g.ellipse(0, -30, bw * 0.98, 13, 0, 0, Math.PI * 2); g.fill();
+    g.fillStyle = body; g.beginPath(); g.ellipse(42, -30 - bh * 1.7, 30, 22, -0.2, 0, Math.PI * 2); g.fill();                          // head
+    if (rex) { g.fillStyle = '#fff'; for (let i = 0; i < 5; i++) { g.beginPath(); g.moveTo(52 + i * 7, -14 - bh * 1.7); g.lineTo(55 + i * 7, -6 - bh * 1.7); g.lineTo(58 + i * 7, -14 - bh * 1.7); g.fill(); } }
+    else { g.fillStyle = '#f0e2c0'; g.beginPath(); g.moveTo(52, -48 - bh * 1.7); g.lineTo(86, -62 - bh * 1.7); g.lineTo(58, -40 - bh * 1.7); g.fill(); g.fillStyle = '#e9b44c'; g.beginPath(); g.arc(20, -40 - bh * 1.7, 30, Math.PI * 0.8, Math.PI * 1.9); g.fill(); }
+    g.fillStyle = '#fff'; g.beginPath(); g.arc(46, -40 - bh * 1.7, 10, 0, Math.PI * 2); g.fill();
+    g.fillStyle = '#111'; g.beginPath(); g.arc(49 + Math.sin(t * 6) * 2, -40 - bh * 1.7, 4.5, 0, Math.PI * 2); g.fill();
+    g.restore();
+  }
+  function draw() {
+    t += 1 / 60;
+    g.fillStyle = '#120a05'; g.fillRect(0, 0, W, H);
+    // stands and crowd
+    for (let r = 0; r < 6; r++) for (let i = 0; i < 34; i++) {
+      const x = i * 21 + (r % 2) * 10, y = 40 + r * 22 + Math.sin(t * 3 + i + r) * 1.5;
+      g.fillStyle = `hsl(${(i * 47 + r * 13) % 360},25%,${18 + r * 3}%)`; g.fillRect(x, y + 6, 12, 12);
+      g.fillStyle = '#c99a74'; g.beginPath(); g.arc(x + 6, y + 3, 4.5, 0, Math.PI * 2); g.fill();
+    }
+    // the clay mound and ring
+    g.fillStyle = '#9a7048'; g.beginPath(); g.moveTo(60, 300); g.lineTo(620, 300); g.lineTo(680, 400); g.lineTo(0, 400); g.fill();
+    g.fillStyle = '#c69a6a'; g.beginPath(); g.moveTo(90, 220); g.lineTo(590, 220); g.lineTo(640, 330); g.lineTo(40, 330); g.fill();
+    g.fillStyle = '#e2c99c'; g.beginPath(); g.ellipse(W / 2, 278, 230, 46, 0, 0, Math.PI * 2); g.fill();
+    g.strokeStyle = '#d8bf78'; g.lineWidth = 8; g.beginPath(); g.ellipse(W / 2, 278, 210, 40, 0, 0, Math.PI * 2); g.stroke();
+    // bump cycle: lean in, squash, bounce apart
+    const ph = (t % 2.2) / 2.2, gap = ph < 0.45 ? 70 - ph / 0.45 * 62 : 8 + Math.sin((ph - 0.45) / 0.55 * Math.PI) * 50;
+    const sq = ph > 0.42 && ph < 0.55 ? 0.82 : 1;
+    dino(W / 2 - 60 - gap, 286, '#5f9f43', '#b8232c', 1, sq, true);
+    dino(W / 2 + 60 + gap, 286, '#cf7a3a', '#2246a0', -1, sq, false);
+    if (ph > 0.43 && ph < 0.6) { g.fillStyle = '#fff'; g.font = 'bold 34px Impact, "Arial Black", sans-serif'; g.textAlign = 'center'; g.lineWidth = 6; g.strokeStyle = '#000'; g.strokeText('BOING!', W / 2, 150); g.fillText('BOING!', W / 2, 150); }
+    // spotlight
+    const light = g.createRadialGradient(W / 2, 260, 20, W / 2, 260, 330); light.addColorStop(0, 'rgba(255,240,210,0.22)'); light.addColorStop(1, 'rgba(0,0,0,0.55)');
+    g.fillStyle = light; g.fillRect(0, 0, W, H);
+    g.textAlign = 'center'; g.shadowColor = '#e8392f'; g.shadowBlur = 24;
+    g.font = 'bold italic 40px Georgia, serif'; g.lineWidth = 5; g.strokeStyle = '#1a0805';
+    g.strokeText('DINO SUMO', W / 2, 54); g.fillStyle = '#fff'; g.fillText('DINO SUMO', W / 2, 54); g.shadowBlur = 0;
+    requestAnimationFrame(draw);
+  }
+  draw();
+})();
+
 
 // Draw Spider-Man thumbnail
 (function () {
