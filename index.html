@@ -144,6 +144,15 @@
       <span class="tag" style="background:#e6242922;color:#e62429;">3D Web-Swinging</span>
     </div>
   </a>
+
+  <a class="game-card" href="MiniGolf/index.html" style="--glow:rgba(92,196,106,0.3);--accent:#5cc46a;">
+    <canvas id="miniGolfThumb" width="680" height="400"></canvas>
+    <div class="game-info">
+      <h2>Mini Golf 3D</h2>
+      <p>A real adventure golf park: windmills, ponds, tunnels and terraces. Pick a course, play 10 or 15 holes with up to 4 friends.</p>
+      <span class="tag" style="background:#5cc46a22;color:#5cc46a;">3D Mini Golf</span>
+    </div>
+  </a>
 </div>
 
 <script>
@@ -994,6 +1003,46 @@
   ctx.fillStyle = '#88ccaa';
   ctx.font = '14px sans-serif';
   ctx.fillText('20 Rooms \u2022 Find the Way Out', W/2, 78);
+})();
+
+// Draw Mini Golf thumbnail
+(function () {
+  const c = document.getElementById('miniGolfThumb'); if (!c) return;
+  const g = c.getContext('2d'), W = c.width, H = c.height;
+  let blade = 0;
+  function draw() {
+    const sky = g.createLinearGradient(0, 0, 0, H * 0.45); sky.addColorStop(0, '#3f87d6'); sky.addColorStop(1, '#d9ecff');
+    g.fillStyle = sky; g.fillRect(0, 0, W, H);
+    g.fillStyle = '#5f9e46'; g.fillRect(0, H * 0.42, W, H);
+    // trees
+    for (const [x, r] of [[60, 46], [150, 34], [560, 52], [640, 38], [470, 30]]) {
+      g.fillStyle = '#6b4a2e'; g.fillRect(x - 5, H * 0.42 - 70, 10, 70);
+      g.fillStyle = '#3f8a35'; g.beginPath(); g.arc(x, H * 0.42 - 80, r, 0, Math.PI * 2); g.fill();
+    }
+    // lane in perspective, brick border
+    const lane = (pad, col) => { g.fillStyle = col; g.beginPath(); g.moveTo(290 - pad, 170 - pad * 0.3); g.lineTo(390 + pad, 170 - pad * 0.3); g.lineTo(560 + pad * 2, H + 10); g.lineTo(120 - pad * 2, H + 10); g.fill(); };
+    lane(12, '#a14a2e'); lane(0, '#2d8a3c');
+    // windmill
+    g.fillStyle = '#efe3c8'; g.fillRect(300, 70, 80, 95);
+    g.fillStyle = '#8c3a2a'; g.beginPath(); g.moveTo(290, 72); g.lineTo(340, 25); g.lineTo(390, 72); g.fill();
+    g.fillStyle = '#120d08'; g.fillRect(332, 150, 16, 15);
+    g.save(); g.translate(340, 100); g.rotate(blade);
+    for (let k = 0; k < 4; k++) { g.rotate(Math.PI / 2); g.fillStyle = '#9b6a3c'; g.fillRect(0, -2, 62, 4); g.fillStyle = '#f4efe2'; g.fillRect(16, 2, 44, 12); }
+    g.restore();
+    // cup, flag, ball, aim dashes
+    g.fillStyle = '#0b0f0b'; g.beginPath(); g.ellipse(410, 250, 12, 5, 0, 0, Math.PI * 2); g.fill();
+    g.fillStyle = '#f5f5f0'; g.fillRect(408, 160, 3, 90);
+    g.fillStyle = '#e8322f'; g.beginPath(); g.moveTo(411, 160); g.lineTo(455, 172); g.lineTo(411, 186); g.fill();
+    g.strokeStyle = 'rgba(255,255,255,.9)'; g.lineWidth = 3; g.setLineDash([10, 10]);
+    g.beginPath(); g.moveTo(330, 345); g.lineTo(395, 262); g.stroke(); g.setLineDash([]);
+    g.fillStyle = '#fff'; g.beginPath(); g.arc(325, 352, 9, 0, Math.PI * 2); g.fill();
+    // title
+    g.textAlign = 'center'; g.font = 'bold 40px sans-serif'; g.lineWidth = 6; g.strokeStyle = '#0b3b1b';
+    g.strokeText('MINI GOLF 3D', W / 2, 395 - 20); g.fillStyle = '#ffd43b'; g.fillText('MINI GOLF 3D', W / 2, 395 - 20);
+    blade += 0.02;
+    requestAnimationFrame(draw);
+  }
+  draw();
 })();
 
 // Draw Spider-Man thumbnail

@@ -1,0 +1,1714 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Mini Golf 3D</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #cfe8ff; font-family: 'Segoe UI', system-ui, sans-serif; color: #17301c; }
+  canvas#view { display: block; width: 100%; height: 100%; touch-action: none; cursor: grab; }
+  .hidden { display: none !important; }
+  button { font: inherit; cursor: pointer; }
+
+  /* ---- Menu ---- */
+  #menu { position: fixed; inset: 0; overflow-y: auto; background: linear-gradient(160deg, rgba(40,110,60,.92), rgba(20,60,40,.95)); color: #fff; padding: 24px 16px 40px; }
+  #menu .wrap { max-width: 880px; margin: 0 auto; }
+  #menu .back { color: #d6f5dc; text-decoration: none; font-size: 14px; opacity: .85; }
+  #menu h1 { font-size: clamp(36px, 7vw, 64px); font-weight: 900; letter-spacing: 1px; margin: 10px 0 2px; text-shadow: 0 4px 0 #0b3b1b; }
+  #menu h1 span { color: #ffd43b; }
+  #menu .tag { opacity: .85; margin-bottom: 22px; }
+  #menu h2 { font-size: 15px; text-transform: uppercase; letter-spacing: 2px; color: #bfeccb; margin: 22px 0 10px; }
+  .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+  .pill { background: rgba(255,255,255,.12); border: 2px solid rgba(255,255,255,.25); color: #fff; border-radius: 999px; padding: 8px 18px; font-weight: 700; }
+  .pill.on { background: #ffd43b; border-color: #ffd43b; color: #263a12; }
+  .names { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; margin-top: 12px; }
+  .names label { display: flex; align-items: center; gap: 8px; background: rgba(0,0,0,.18); border-radius: 12px; padding: 6px 10px; }
+  .names .dot { width: 16px; height: 16px; border-radius: 50%; flex: none; box-shadow: inset 0 -2px 0 rgba(0,0,0,.25); }
+  .names input { width: 100%; min-width: 0; background: transparent; border: 0; color: #fff; font: inherit; font-weight: 600; outline: none; }
+  .themes { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
+  .theme { position: relative; text-align: left; border-radius: 16px; padding: 16px; min-height: 96px; border: 3px solid transparent; background: rgba(255,255,255,.1); color: #fff; }
+  .theme .sw { position: absolute; right: 14px; top: 14px; width: 34px; height: 34px; border-radius: 10px; }
+  .theme b { display: block; font-size: 18px; margin-bottom: 4px; padding-right: 44px; }
+  .theme small { opacity: .8; }
+  .theme.on { border-color: #ffd43b; background: rgba(255,212,59,.15); }
+  .theme:disabled { opacity: .45; cursor: not-allowed; }
+  .theme .soon { display: inline-block; margin-top: 8px; font-size: 11px; font-weight: 800; letter-spacing: 1px; background: rgba(0,0,0,.3); border-radius: 6px; padding: 2px 6px; }
+  #play { margin-top: 28px; background: #ffd43b; color: #263a12; border: 0; border-radius: 16px; padding: 16px 48px; font-size: 22px; font-weight: 900; box-shadow: 0 6px 0 #b8901a; }
+  #play:active { transform: translateY(3px); box-shadow: 0 3px 0 #b8901a; }
+
+  /* ---- HUD ---- */
+  #hud { position: fixed; inset: 0; pointer-events: none; }
+  .panel { background: rgba(255,255,255,.88); border-radius: 14px; box-shadow: 0 4px 16px rgba(0,0,0,.18); }
+  #holeInfo { position: absolute; left: 12px; top: 12px; padding: 10px 14px; }
+  #holeInfo .num { font-size: 13px; font-weight: 800; color: #3a7a45; letter-spacing: 1px; text-transform: uppercase; }
+  #holeInfo .name { font-size: 20px; font-weight: 900; }
+  #holeInfo .par { font-size: 14px; opacity: .75; }
+  #players { position: absolute; left: 50%; top: 12px; transform: translateX(-50%); display: flex; gap: 6px; padding: 6px; }
+  .chip { display: flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 10px; font-weight: 700; font-size: 14px; white-space: nowrap; }
+  .chip.on { background: #17301c; color: #fff; }
+  .chip .dot { width: 12px; height: 12px; border-radius: 50%; }
+  .chip .s { font-variant-numeric: tabular-nums; opacity: .8; }
+  #buttons { position: absolute; right: 12px; top: 12px; display: flex; gap: 8px; pointer-events: auto; }
+  #buttons button { border: 0; padding: 10px 14px; font-weight: 800; }
+  #buttons button.on { background: #ffd43b; }
+  #power { position: absolute; left: 16px; bottom: 16px; width: 26px; height: 180px; padding: 4px; display: flex; align-items: flex-end; }
+  #power .fill { width: 100%; border-radius: 8px; background: linear-gradient(0deg, #3fbf5a, #ffd43b 60%, #ff5b3a); height: 0%; }
+  #hint { position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%); padding: 8px 14px; font-size: 14px; font-weight: 600; text-align: center; max-width: calc(100% - 100px); }
+  #banner { position: absolute; left: 50%; top: 38%; transform: translate(-50%, -50%); text-align: center; color: #fff; text-shadow: 0 3px 12px rgba(0,0,0,.45), 0 2px 0 rgba(0,0,0,.35); transition: opacity .35s; }
+  #banner .big { font-size: clamp(34px, 7vw, 64px); font-weight: 900; }
+  #banner .small { font-size: clamp(16px, 3vw, 22px); font-weight: 700; }
+
+  /* ---- Scorecard ---- */
+  #card { position: fixed; inset: 0; background: rgba(10,30,15,.55); display: flex; align-items: center; justify-content: center; padding: 16px; }
+  #card .box { background: #fffdf4; border-radius: 18px; padding: 20px; max-width: 100%; max-height: 100%; overflow: auto; box-shadow: 0 10px 40px rgba(0,0,0,.35); }
+  #card h3 { font-size: 24px; font-weight: 900; margin-bottom: 4px; }
+  #card .sub { opacity: .7; margin-bottom: 14px; }
+  #card table { border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  #card th, #card td { padding: 6px 8px; text-align: center; border-bottom: 1px solid #e3e0cf; font-size: 14px; }
+  #card th:first-child, #card td:first-child { text-align: left; font-weight: 800; white-space: nowrap; }
+  #card tr.par td { color: #6b7a5a; font-style: italic; }
+  #card td.tot { font-weight: 900; background: #f1f6e6; }
+  #card .under { color: #1f8a3c; font-weight: 800; }
+  #card .over { color: #b8402a; }
+  #card .actions { display: flex; gap: 10px; margin-top: 16px; flex-wrap: wrap; }
+  #card .actions button { border: 0; border-radius: 12px; padding: 12px 22px; font-weight: 900; font-size: 16px; background: #2f8f3a; color: #fff; }
+  #card .actions button.alt { background: #e6e2cf; color: #17301c; }
+
+  @media (max-width: 600px) {
+    #holeInfo .name { font-size: 16px; }
+    #players { top: auto; bottom: 60px; }
+    #hint { font-size: 12px; }
+    #power { height: 130px; }
+  }
+</style>
+</head>
+<body>
+<canvas id="view"></canvas>
+
+<div id="hud" class="hidden">
+  <div id="holeInfo" class="panel"><div class="num"></div><div class="name"></div><div class="par"></div></div>
+  <div id="players" class="panel"></div>
+  <div id="buttons"><button id="btnView" class="panel" title="Overview (V)">Overview</button><button id="btnMenu" class="panel">Menu</button></div>
+  <div id="power" class="panel"><div class="fill"></div></div>
+  <div id="hint" class="panel"></div>
+  <div id="banner"><div class="big"></div><div class="small"></div></div>
+</div>
+
+<div id="card" class="hidden"><div class="box"></div></div>
+
+<div id="menu">
+  <div class="wrap">
+    <a class="back" href="../index.html">← All games</a>
+    <h1>Mini Golf <span>3D</span></h1>
+    <p class="tag">A real adventure golf park — pick a course, grab your friends, sink some putts.</p>
+    <h2>Players</h2>
+    <div class="row" id="countRow"></div>
+    <div class="names" id="names"></div>
+    <h2>Course</h2>
+    <div class="themes" id="themes"></div>
+    <h2>Round</h2>
+    <div class="row" id="lenRow"></div>
+    <button id="play">Play ⛳</button>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+// ==== PURE BEGIN ====
+// Everything between the PURE markers is plain JS (no THREE, no DOM) so tests/pure-minigolf.mjs
+// can load it in Node. Units: metres and seconds. Holes are ASCII grids of CELL-sized squares,
+// x = column, z = row, y = up.
+
+const CONFIG = {
+  cell: 0.5,            // grid cell size
+  levelStep: 0.25,      // height of one level digit
+  wallHeight: 0.1,      // border height above the green
+  waterDepth: 0.05,     // water surface sits this far below its level
+  ballR: 0.02135,       // regulation ball
+  cupR: 0.054,          // regulation cup
+  gravity: 9.81,
+  rollK: 5 / 7,         // rolling-sphere factor on slope acceleration
+  rollDecel: 0.65,      // carpet rolling resistance, m/s²
+  maxSpeed: 5.5,        // full-power putt
+  stopSpeed: 0.02,
+  captureSpeed: 1.4,    // crosses the cup slower than this → holed
+  lipSpeed: 2.2,        // between capture and this → lips out; faster skims over
+  restitution: 0.7,     // wall bounce, normal component
+  wallTangent: 0.95,    // wall bounce, tangential component
+  landing: 0.8,         // horizontal speed kept when landing from a drop
+  dropTolerance: 0.01,  // ground falling away faster than this → airborne
+  tunnelExitMin: 0.9,
+  maxStrokes: 6,        // not holed after this many → hole scores maxStrokes + 1
+  dt: 1 / 120,
+};
+
+const RAMP_DIRS = { '^': [0, -1], 'v': [0, 1], '>': [1, 0], '<': [-1, 0] };
+const OUT_DIRS = { n: [0, -1], s: [0, 1], e: [1, 0], w: [-1, 0] };
+
+function isCourseChar(ch) { return ch !== undefined && ch !== '.' && ch !== ' '; }
+
+function parseHole(def) {
+  const C = CONFIG.cell;
+  const rows = def.map.length;
+  const cols = Math.max(...def.map.map(r => r.length));
+  const hole = {
+    name: def.name, par: def.par, rows, cols, cells: [], tee: null, cup: null,
+    hills: [], windmills: [], tunnels: [], extraSegs: [], segments: [], cellSegs: [],
+  };
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const ch = def.map[r][c] || '.';
+      const lvChar = def.levels && def.levels[r] ? def.levels[r][c] : '0';
+      const level = /[0-9]/.test(lvChar || '') ? +lvChar : 0;
+      hole.cells[r * cols + c] = { ch, level, r, c, ramp: null };
+      hole.cellSegs[r * cols + c] = [];
+      const centre = { x: (c + 0.5) * C, z: (r + 0.5) * C };
+      if (ch === '@') { if (hole.tee) throw new Error(`${def.name}: two tees`); hole.tee = centre; }
+      if (ch === 'o') { if (hole.cup) throw new Error(`${def.name}: two cups`); hole.cup = centre; }
+    }
+  }
+  if (!hole.tee || !hole.cup) throw new Error(`${def.name}: needs one tee (@) and one cup (o)`);
+
+  computeRamps(hole);
+
+  for (const e of def.extras || []) {
+    if (e.type === 'hill') hole.hills.push({ x: e.c * C, z: e.r * C, rad: e.rad * C, h: e.h });
+    else if (e.type === 'bumper') hole.extraSegs.push(seg(e.a[0] * C, e.a[1] * C, e.b[0] * C, e.b[1] * C, 10, 'bumper'));
+    else if (e.type === 'windmill') addWindmill(hole, e);
+    else if (e.type === 'tunnel') {
+      const mouth = m => ({ c: m.c, r: m.r, x: (m.c + 0.5) * C, z: (m.r + 0.5) * C, out: OUT_DIRS[m.out] });
+      hole.tunnels.push({ a: mouth(e.a), b: mouth(e.b), length: e.length });
+    } else throw new Error(`${def.name}: unknown extra ${e.type}`);
+  }
+
+  hole.cup.y = groundHeight(hole, hole.cup.x, hole.cup.z);
+  hole.tee.y = groundHeight(hole, hole.tee.x, hole.tee.z);
+  buildWalls(hole);
+  return hole;
+}
+
+function cellOf(hole, r, c) {
+  if (r < 0 || c < 0 || r >= hole.rows || c >= hole.cols) return null;
+  return hole.cells[r * hole.cols + c];
+}
+
+function cellAt(hole, x, z) {
+  return cellOf(hole, Math.floor(z / CONFIG.cell), Math.floor(x / CONFIG.cell));
+}
+
+// A run of same-direction ramp cells climbs linearly from the cell before the run to the cell after it.
+function computeRamps(hole) {
+  for (const cell of hole.cells) {
+    const d = RAMP_DIRS[cell.ch];
+    if (!d) continue;
+    let back = 0, fwd = 0;
+    while (cellOf(hole, cell.r - d[1] * (back + 1), cell.c - d[0] * (back + 1))?.ch === cell.ch) back++;
+    while (cellOf(hole, cell.r + d[1] * (fwd + 1), cell.c + d[0] * (fwd + 1))?.ch === cell.ch) fwd++;
+    const low = cellOf(hole, cell.r - d[1] * (back + 1), cell.c - d[0] * (back + 1));
+    const high = cellOf(hole, cell.r + d[1] * (fwd + 1), cell.c + d[0] * (fwd + 1));
+    const own = cell.level * CONFIG.levelStep;
+    cell.ramp = {
+      dx: d[0], dz: d[1], idx: back, n: back + fwd + 1,
+      lowH: low && isCourseChar(low.ch) ? low.level * CONFIG.levelStep : own,
+      highH: high && isCourseChar(high.ch) ? high.level * CONFIG.levelStep : own,
+    };
+  }
+}
+
+// Height of the cell's own surface at (x, z), ignoring hills.
+function baseHeight(cell, x, z) {
+  const C = CONFIG.cell;
+  if (cell.ramp) {
+    const fx = x / C - cell.c, fz = z / C - cell.r;
+    const { dx, dz, idx, n, lowH, highH } = cell.ramp;
+    const s = dx === 1 ? fx : dx === -1 ? 1 - fx : dz === 1 ? fz : 1 - fz;
+    return lowH + (highH - lowH) * (idx + s) / n;
+  }
+  if (cell.ch === 'w') return cell.level * CONFIG.levelStep - CONFIG.waterDepth;
+  return cell.level * CONFIG.levelStep;
+}
+
+function hillHeight(hole, x, z) {
+  let h = 0;
+  for (const hl of hole.hills) {
+    const d2 = (x - hl.x) ** 2 + (z - hl.z) ** 2;
+    h += hl.h * Math.exp(-d2 / (hl.rad * hl.rad));
+  }
+  return h;
+}
+
+// Surface height under (x, z), or null off the course.
+function groundHeight(hole, x, z) {
+  const cell = cellAt(hole, x, z);
+  if (!cell || !isCourseChar(cell.ch)) return null;
+  const h = baseHeight(cell, x, z);
+  return cell.ch === 'w' ? h : h + hillHeight(hole, x, z);
+}
+
+function seg(ax, az, bx, bz, top, kind) { return { ax, az, bx, bz, top, kind }; }
+
+// Borders where the course meets scenery, rails where a bridge meets water, and step faces where
+// two course cells meet at different heights (a step face only stops the ball on its lower side).
+function buildWalls(hole) {
+  const C = CONFIG.cell, inset = 1e-4;
+  const sampleEdge = (cell, ax, az, bx, bz, nx, nz) => {
+    const pts = [[ax, az], [(ax + bx) / 2, (az + bz) / 2], [bx, bz]]
+      .map(([x, z]) => baseHeight(cell, x - nx * inset, z - nz * inset));
+    return { mid: pts[1], max: Math.max(...pts) };
+  };
+  const add = (s, a, b) => {
+    hole.segments.push(s);
+    if (a) hole.cellSegs[a.r * hole.cols + a.c].push(s);
+    if (b) hole.cellSegs[b.r * hole.cols + b.c].push(s);
+  };
+  for (const a of hole.cells) {
+    if (!isCourseChar(a.ch)) continue;
+    const { r, c } = a;
+    // [neighbour, edge endpoints in cell units, outward normal]
+    const edges = [
+      [cellOf(hole, r, c + 1), c + 1, r, c + 1, r + 1, 1, 0],
+      [cellOf(hole, r + 1, c), c, r + 1, c + 1, r + 1, 0, 1],
+      [cellOf(hole, r, c - 1), c, r, c, r + 1, -1, 0],
+      [cellOf(hole, r - 1, c), c, r, c + 1, r, 0, -1],
+    ];
+    edges.forEach(([b, ec0, er0, ec1, er1, nx, nz], i) => {
+      const ax = ec0 * C, az = er0 * C, bx = ec1 * C, bz = er1 * C;
+      const ha = sampleEdge(a, ax, az, bx, bz, nx, nz);
+      if (!b || !isCourseChar(b.ch)) {
+        const s = seg(ax, az, bx, bz, ha.max + CONFIG.wallHeight, 'border');
+        s.nx = nx; s.nz = nz; s.cell = a; // outward normal and owning cell, for drawing
+        add(s, a, null);
+        return;
+      }
+      if (i >= 2) return; // course–course edges are handled once, from the left/top cell
+      if ((a.ch === '=' && b.ch === 'w') || (a.ch === 'w' && b.ch === '=')) {
+        const bridge = a.ch === '=' ? a : b;
+        add(seg(ax, az, bx, bz, bridge.level * CONFIG.levelStep + CONFIG.wallHeight, 'rail'), a, b);
+        return;
+      }
+      const hb = sampleEdge(b, ax, az, bx, bz, -nx, -nz);
+      if (Math.abs(ha.mid - hb.mid) > 0.005) {
+        const s = seg(ax, az, bx, bz, Math.max(ha.max, hb.max), 'step');
+        s.cellA = a; s.cellB = b;
+        add(s, a, b);
+      }
+    });
+  }
+}
+
+// A windmill straddles a lane: two faces with a doorway, a short passage, and blades that close
+// the doorway whenever one points down. e.c/e.r are the doorway centre in cell units.
+function addWindmill(hole, e) {
+  const C = CONFIG.cell;
+  const w = {
+    x: e.c * C, z: e.r * C, axis: e.axis, halfWidth: e.halfWidth, door: 0.24, depth: 0.5,
+    period: e.period || 4, phase: e.phase || 0, front: e.front || -1, gate: null,
+  };
+  // u runs along the lane, v across it
+  const P = (u, v) => e.axis === 'z' ? [w.x + v, w.z + u] : [w.x + u, w.z + v];
+  const S = (u0, v0, u1, v1, kind) => { const [ax, az] = P(u0, v0), [bx, bz] = P(u1, v1); return seg(ax, az, bx, bz, 10, kind); };
+  const hd = w.depth / 2, dd = w.door / 2, hw = w.halfWidth;
+  for (const u of [-hd, hd]) {
+    hole.extraSegs.push(S(u, -hw, u, -dd, 'windmill'), S(u, dd, u, hw, 'windmill'));
+  }
+  hole.extraSegs.push(S(-hd, -dd, hd, -dd, 'windmill'), S(-hd, dd, hd, dd, 'windmill'));
+  const gu = w.front * (hd + 0.04);
+  w.gate = S(gu, -dd, gu, dd, 'blade');
+  hole.windmills.push(w);
+}
+
+function windmillAngle(w, t) { return (2 * Math.PI * t) / w.period + w.phase; }
+
+function windmillBlocked(w, t) {
+  const a = windmillAngle(w, t);
+  for (let k = 0; k < 4; k++) if (Math.sin(a + (k * Math.PI) / 2) < -0.949) return true;
+  return false;
+}
+
+function createBall(pos) {
+  return { x: pos.x, y: pos.y, z: pos.z, vx: 0, vy: 0, vz: 0, air: false, tunnel: null, lipLock: false, moving: false };
+}
+
+function shoot(ball, angle, power) {
+  const s = Math.min(1, Math.max(0, power)) * CONFIG.maxSpeed;
+  ball.vx = Math.cos(angle) * s;
+  ball.vz = Math.sin(angle) * s;
+  ball.vy = 0;
+  ball.moving = s > 0;
+  ball.lipLock = false;
+}
+
+// Downhill pull uses one-sided differences at step edges so a cliff never reads as a slope.
+function gradient(hole, x, z) {
+  const e = 0.005, h0 = groundHeight(hole, x, z);
+  const axis = (hp, hm) => {
+    const okP = hp !== null && Math.abs(hp - h0) < 0.01;
+    const okM = hm !== null && Math.abs(h0 - hm) < 0.01;
+    if (okP && okM) return (hp - hm) / (2 * e);
+    if (okP) return (hp - h0) / e;
+    if (okM) return (h0 - hm) / e;
+    return 0;
+  };
+  if (h0 === null) return { x: 0, z: 0 };
+  return {
+    x: axis(groundHeight(hole, x + e, z), groundHeight(hole, x - e, z)),
+    z: axis(groundHeight(hole, x, z + e), groundHeight(hole, x, z - e)),
+  };
+}
+
+function collideSegment(ball, s) {
+  if (ball.y >= s.top - 0.001) return false;
+  const R = CONFIG.ballR;
+  const ex = s.bx - s.ax, ez = s.bz - s.az;
+  const len2 = ex * ex + ez * ez;
+  let t = len2 ? ((ball.x - s.ax) * ex + (ball.z - s.az) * ez) / len2 : 0;
+  t = Math.max(0, Math.min(1, t));
+  const px = s.ax + ex * t, pz = s.az + ez * t;
+  let dx = ball.x - px, dz = ball.z - pz;
+  const d = Math.hypot(dx, dz);
+  if (d >= R) return false;
+  if (d < 1e-9) { dx = -ez; dz = ex; } // dead on the line: push along its normal
+  const dl = Math.hypot(dx, dz);
+  const nx = dx / dl, nz = dz / dl;
+  ball.x = px + nx * R;
+  ball.z = pz + nz * R;
+  const vn = ball.vx * nx + ball.vz * nz;
+  if (vn < 0) {
+    const tx = ball.vx - vn * nx, tz = ball.vz - vn * nz;
+    ball.vx = tx * CONFIG.wallTangent - vn * CONFIG.restitution * nx;
+    ball.vz = tz * CONFIG.wallTangent - vn * CONFIG.restitution * nz;
+  }
+  return true;
+}
+
+function collideWalls(hole, ball, t) {
+  let hit = false;
+  const r0 = Math.floor(ball.z / CONFIG.cell), c0 = Math.floor(ball.x / CONFIG.cell);
+  for (let r = r0 - 1; r <= r0 + 1; r++) {
+    for (let c = c0 - 1; c <= c0 + 1; c++) {
+      const cell = cellOf(hole, r, c);
+      if (!cell) continue;
+      for (const s of hole.cellSegs[r * hole.cols + c]) hit = collideSegment(ball, s) || hit;
+    }
+  }
+  for (const s of hole.extraSegs) hit = collideSegment(ball, s) || hit;
+  for (const w of hole.windmills) if (windmillBlocked(w, t)) hit = collideSegment(ball, w.gate) || hit;
+  return hit;
+}
+
+// One small step. Returns null, or an event: 'holed' | 'water' | 'out' | 'stopped' | 'wall' | 'tunnel' | 'lip'.
+function substep(hole, ball, t, h) {
+  const K = CONFIG.rollK, G = CONFIG.gravity;
+  if (ball.tunnel) {
+    ball.tunnel.timer -= h;
+    if (ball.tunnel.timer > 0) return null;
+    const m = ball.tunnel.exit, sp = Math.max(ball.tunnel.speed * 0.85, CONFIG.tunnelExitMin);
+    ball.x = m.x + m.out[0] * CONFIG.cell * 0.55;
+    ball.z = m.z + m.out[1] * CONFIG.cell * 0.55;
+    ball.y = groundHeight(hole, ball.x, ball.z);
+    ball.vx = m.out[0] * sp; ball.vz = m.out[1] * sp; ball.vy = 0;
+    ball.tunnel = null;
+    return 'tunnel';
+  }
+
+  if (!ball.air) {
+    const g = gradient(hole, ball.x, ball.z);
+    ball.vx -= K * G * g.x * h;
+    ball.vz -= K * G * g.z * h;
+    let sp = Math.hypot(ball.vx, ball.vz);
+    if (sp > 0) {
+      const dec = Math.min(sp, CONFIG.rollDecel * h);
+      ball.vx -= (ball.vx / sp) * dec;
+      ball.vz -= (ball.vz / sp) * dec;
+    }
+    sp = Math.hypot(ball.vx, ball.vz);
+    if (sp < CONFIG.stopSpeed && K * G * Math.hypot(g.x, g.z) < CONFIG.rollDecel) {
+      ball.vx = ball.vz = 0;
+      ball.moving = false;
+      return 'stopped';
+    }
+    const px = ball.x, pz = ball.z;
+    ball.x += ball.vx * h;
+    ball.z += ball.vz * h;
+    const gh = groundHeight(hole, ball.x, ball.z);
+    if (gh !== null) {
+      if (gh < ball.y - CONFIG.dropTolerance) { ball.air = true; ball.vy = 0; }
+      else if (gh > ball.y + CONFIG.dropTolerance) {
+        // ran into a rise with no step face (a corner) — bounce back
+        ball.x = px; ball.z = pz; ball.vx *= -0.5; ball.vz *= -0.5;
+      } else ball.y = gh;
+    }
+  } else {
+    ball.vy -= G * h;
+    ball.x += ball.vx * h;
+    ball.y += ball.vy * h;
+    ball.z += ball.vz * h;
+    const gh = groundHeight(hole, ball.x, ball.z);
+    if (gh !== null && ball.y <= gh) {
+      ball.y = gh; ball.vy = 0; ball.air = false;
+      ball.vx *= CONFIG.landing; ball.vz *= CONFIG.landing;
+    }
+  }
+
+  const hitWall = collideWalls(hole, ball, t);
+
+  const cell = cellAt(hole, ball.x, ball.z);
+  if (!cell || !isCourseChar(cell.ch)) return 'out';
+  if (cell.ch === 'w' && ball.y <= baseHeight(cell, ball.x, ball.z) + 0.02) return 'water';
+
+  if (!ball.air) {
+    for (const tn of hole.tunnels) {
+      for (const [m, other] of [[tn.a, tn.b], [tn.b, tn.a]]) {
+        if (cell.r !== m.r || cell.c !== m.c) continue;
+        if (ball.vx * m.out[0] + ball.vz * m.out[1] > -0.05) continue;
+        const sp = Math.hypot(ball.vx, ball.vz);
+        ball.tunnel = { timer: tn.length / Math.max(sp, 1), exit: other, speed: sp };
+        return 'tunnel';
+      }
+    }
+  }
+
+  const cup = hole.cup;
+  const dc = Math.hypot(ball.x - cup.x, ball.z - cup.z);
+  if (dc > CONFIG.cupR + CONFIG.ballR) ball.lipLock = false;
+  else if (!ball.air && dc < CONFIG.cupR && !ball.lipLock && Math.abs(ball.y - cup.y) < 0.03) {
+    const sp = Math.hypot(ball.vx, ball.vz);
+    if (sp < CONFIG.captureSpeed) {
+      ball.x = cup.x; ball.z = cup.z; ball.y = cup.y - 0.08;
+      ball.vx = ball.vz = ball.vy = 0; ball.moving = false;
+      return 'holed';
+    }
+    ball.lipLock = true;
+    if (sp < CONFIG.lipSpeed) {
+      // spin round the rim and out: turn away from the side the cup is on
+      const side = Math.sign(ball.vx * (cup.z - ball.z) - ball.vz * (cup.x - ball.x)) || 1;
+      const a = -side * (0.5 + 0.5 * (1 - dc / CONFIG.cupR));
+      const ca = Math.cos(a), sa = Math.sin(a);
+      const vx = ball.vx * ca - ball.vz * sa, vz = ball.vx * sa + ball.vz * ca;
+      ball.vx = vx * 0.7; ball.vz = vz * 0.7;
+      return 'lip';
+    }
+  }
+  return hitWall ? 'wall' : null;
+}
+
+// Advance dt seconds, sub-stepping so the ball never moves more than half its radius per step.
+// Returns the events that happened, in order.
+function stepBall(hole, ball, t, dt) {
+  const sp = Math.hypot(ball.vx, ball.vy, ball.vz);
+  const n = Math.max(1, Math.ceil((sp * dt) / (CONFIG.ballR * 0.5)));
+  const h = dt / n, events = [];
+  for (let i = 0; i < n; i++) {
+    const ev = substep(hole, ball, t + i * h, h);
+    if (ev) {
+      events.push(ev);
+      if (ev === 'holed' || ev === 'water' || ev === 'out' || ev === 'stopped') break;
+    }
+  }
+  return events;
+}
+
+const FINAL_EVENTS = ['holed', 'water', 'out', 'stopped'];
+
+// Play one putt to completion. Returns the final event and where the ball ended up.
+function simulateShot(hole, start, angle, power, maxTime = 25) {
+  const ball = createBall(start);
+  shoot(ball, angle, power);
+  for (let t = 0; t < maxTime; t += CONFIG.dt) {
+    const evs = stepBall(hole, ball, t, CONFIG.dt);
+    const fin = evs.find(e => FINAL_EVENTS.includes(e));
+    if (fin) return { event: fin, ball };
+  }
+  return { event: 'stopped', ball };
+}
+
+// Walking distance (m) from every cell to the cup, through tunnels, around water.
+function distanceField(hole) {
+  const dist = new Array(hole.cells.length).fill(Infinity);
+  const startC = cellAt(hole, hole.cup.x, hole.cup.z);
+  const q = [startC];
+  dist[startC.r * hole.cols + startC.c] = 0;
+  const links = [];
+  for (const tn of hole.tunnels) links.push([tn.a, tn.b], [tn.b, tn.a]);
+  while (q.length) {
+    const cell = q.shift();
+    const d0 = dist[cell.r * hole.cols + cell.c];
+    const next = [[0, 1], [1, 0], [0, -1], [-1, 0]].map(([dr, dc]) => cellOf(hole, cell.r + dr, cell.c + dc));
+    for (const [m, other] of links) if (m.r === cell.r && m.c === cell.c) next.push(cellOf(hole, other.r, other.c));
+    for (const n of next) {
+      if (!n || !isCourseChar(n.ch) || n.ch === 'w') continue;
+      const i = n.r * hole.cols + n.c;
+      if (dist[i] > d0 + CONFIG.cell) { dist[i] = d0 + CONFIG.cell; q.push(n); }
+    }
+  }
+  return dist;
+}
+
+// A brute-force putter used by tests to prove every hole can be finished.
+function botPlay(hole, opts = {}) {
+  const angles = opts.angles || 72;
+  const powers = opts.powers || [0.06, 0.1, 0.14, 0.19, 0.25, 0.32, 0.4, 0.5, 0.62, 0.76, 0.9];
+  const field = distanceField(hole);
+  let pos = { x: hole.tee.x, y: hole.tee.y, z: hole.tee.z };
+  for (let stroke = 1; stroke <= CONFIG.maxStrokes; stroke++) {
+    let best = null;
+    for (let i = 0; i < angles; i++) {
+      const a = (i / angles) * Math.PI * 2;
+      for (const p of powers) {
+        const res = simulateShot(hole, pos, a, p);
+        if (res.event === 'holed') return { strokes: stroke };
+        if (res.event !== 'stopped') continue;
+        const cell = cellAt(hole, res.ball.x, res.ball.z);
+        const score = field[cell.r * hole.cols + cell.c] + 0.1 * Math.hypot(res.ball.x - hole.cup.x, res.ball.z - hole.cup.z);
+        if (!best || score < best.score) best = { score, pos: { x: res.ball.x, y: res.ball.y, z: res.ball.z } };
+      }
+    }
+    if (best) pos = best.pos;
+  }
+  return { strokes: null };
+}
+
+// Score for a hole given how many strokes were played without holing out.
+function cappedScore(strokes, holed) { return holed ? strokes : CONFIG.maxStrokes + 1; }
+
+// ---- Courses ----
+// Map: g green, @ tee, o cup, ^v<> ramp rising that way, w water, = bridge, t tunnel mouth, . scenery.
+// Levels: digit per cell, 0.25 m each. Extras use cell units (c = column, r = row; 1 unit = 0.5 m).
+const rep = (n, s) => Array(n).fill(s);
+
+const SUNNY_PARK = {
+  id: 'sunny', name: 'Sunny Park',
+  shortRound: [0, 1, 3, 4, 5, 6, 7, 10, 13, 14],
+  holes: [
+    { name: 'First Putt', par: 2,
+      map: ['ggg', 'gog', ...rep(13, 'ggg'), 'g@g', 'ggg'] },
+
+    { name: 'Dogleg', par: 2,
+      map: ['gggggggggggg', 'ggggggggggog', 'gggggggggggg', ...rep(10, 'ggg.........'), 'g@g.........', 'ggg.........'],
+      extras: [{ type: 'bumper', a: [0, 1.5], b: [1.5, 0] }] },
+
+    { name: 'Little Hills', par: 2,
+      map: ['ggggg', 'ggggg', 'ggogg', ...rep(16, 'ggggg'), 'gg@gg', 'ggggg'],
+      extras: [
+        { type: 'hill', c: 2.5, r: 8, rad: 2, h: 0.07 },
+        { type: 'hill', c: 1, r: 13.5, rad: 1.5, h: 0.05 },
+        { type: 'hill', c: 4, r: 13.5, rad: 1.5, h: 0.05 },
+      ] },
+
+    { name: 'Windmill Lane', par: 3,
+      map: ['ggg', 'gog', ...rep(19, 'ggg'), 'g@g', 'ggg'],
+      extras: [{ type: 'windmill', c: 1.5, r: 11, axis: 'z', halfWidth: 0.75, period: 4, front: 1 }] },
+
+    { name: 'Up the Ramp', par: 3,
+      map: ['ggg', 'gog', ...rep(4, 'ggg'), ...rep(4, '^^^'), ...rep(8, 'ggg'), 'g@g', 'ggg'],
+      levels: [...rep(6, '111'), ...rep(14, '000')] },
+
+    { name: 'Duck Pond', par: 3,
+      map: ['ggggggg', 'gggoggg', 'ggggggg', 'gww=wwg', 'gww=wwg', 'gww=wwg', ...rep(7, 'ggggggg'), 'ggg@ggg', 'ggggggg'] },
+
+    { name: 'Drop Shot', par: 2,
+      map: ['ggggg', 'ggogg', ...rep(5, 'ggggg'), ...rep(6, '.ggg.'), '.g@g.', '.ggg.'],
+      levels: [...rep(7, '00000'), ...rep(8, '02220')] },
+
+    { name: 'Log Tunnel', par: 3,
+      map: ['gtg.ggg', 'ggg.ggg', 'ggg.ggg', 'ggg.gog', ...rep(9, 'ggg.ggg'), 'g@g.ggg', 'ggg.gtg'],
+      extras: [{ type: 'tunnel', a: { c: 1, r: 0, out: 's' }, b: { c: 5, r: 14, out: 'n' }, length: 6 }] },
+
+    { name: 'Zig Zag', par: 3,
+      map: ['....ggggg', '....gggog', '....ggggg', '......ggg', '......ggg', 'ggggggggg', 'ggggggggg', 'ggggggggg',
+        ...rep(4, 'ggg......'), 'g@g......', 'ggg......'],
+      extras: [
+        { type: 'bumper', a: [0, 6.5], b: [1.5, 5] },
+        { type: 'bumper', a: [7.5, 8], b: [9, 6.5] },
+        { type: 'bumper', a: [7.5, 0], b: [9, 1.5] },
+      ] },
+
+    { name: 'The Valley', par: 2,
+      map: ['ggggg', 'ggogg', ...rep(14, 'ggggg'), 'gg@gg', 'ggggg'],
+      extras: [
+        { type: 'hill', c: 2.5, r: 9, rad: 3, h: -0.08 },
+        { type: 'hill', c: 2.5, r: 4, rad: 1.2, h: 0.04 },
+      ] },
+
+    { name: 'Stream Crossing', par: 3,
+      map: ['ggggg', 'ggogg', ...rep(3, 'ggggg'), 'www=w', 'www=w', ...rep(8, 'ggggg'), 'gg@gg', 'ggggg'] },
+
+    { name: 'Windmill Corner', par: 3,
+      map: ['ggggggggggg', 'gggggggggog', 'ggggggggggg', ...rep(12, 'ggg........'), 'g@g........', 'ggg........'],
+      extras: [
+        { type: 'bumper', a: [0, 1.5], b: [1.5, 0] },
+        { type: 'windmill', c: 6, r: 1.5, axis: 'x', halfWidth: 0.75, period: 3.5, front: -1 },
+      ] },
+
+    { name: 'Terrace', par: 3,
+      map: ['ggg', 'gog', ...rep(4, 'ggg'), ...rep(6, 'ggg'), ...rep(4, '^^^'), ...rep(7, 'ggg'), 'g@g', 'ggg'],
+      levels: [...rep(6, '000'), ...rep(6, '111'), ...rep(13, '000')] },
+
+    { name: 'Island Green', par: 3,
+      map: ['wwwwwww', 'wgggggw', 'wggoggw', 'wgggggw', 'www=www', 'www=www', 'www=www', ...rep(6, 'ggggggg'), 'ggg@ggg', 'ggggggg'] },
+
+    { name: 'Grand Finale', par: 4,
+      map: ['ggg', 'gog', ...rep(6, 'ggg'), ...rep(4, '^^^'), ...rep(19, 'ggg'), 'g@g', 'ggg'],
+      levels: [...rep(8, '111'), ...rep(25, '000')],
+      extras: [
+        { type: 'windmill', c: 1.5, r: 20, axis: 'z', halfWidth: 0.75, period: 4.5, front: 1 },
+        { type: 'hill', c: 1.5, r: 4, rad: 1.5, h: 0.04 },
+      ] },
+  ],
+};
+
+const THEMES = [
+  { id: 'sunny', name: 'Sunny Park', blurb: 'Flowers, a windmill, ponds and bridges', course: SUNNY_PARK, colour: '#5cc46a' },
+  { id: 'pirate', name: 'Pirate Cove', blurb: 'Shipwrecks, sand and a ball cannon', course: null, colour: '#e0b45a' },
+  { id: 'volcano', name: 'Volcano Island', blurb: 'Putt up into a smoking volcano', course: null, colour: '#e0573a' },
+  { id: 'castle', name: 'Castle Kingdom', blurb: 'Drawbridge, moat and swinging gates', course: null, colour: '#9aa0b5' },
+  { id: 'frozen', name: 'Frozen Peaks', blurb: 'Ice, snow and marble-run chutes', course: null, colour: '#8fd3f0' },
+  { id: 'robot', name: 'Robot Factory', blurb: 'Ball lift, conveyors and a loop', course: null, colour: '#c0c4cc' },
+];
+
+const PURE = {
+  SUNNY_PARK, THEMES,
+  CONFIG, parseHole, cellAt, cellOf, baseHeight, groundHeight, gradient, createBall, shoot, stepBall, simulateShot,
+  windmillBlocked, windmillAngle, distanceField, botPlay, cappedScore, isCourseChar,
+};
+// ==== PURE END ====
+</script>
+<script>
+// ============================================================
+//  RENDERER, SCENE, LIGHTS
+// ============================================================
+const canvas = document.getElementById('view');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.outputEncoding = THREE.sRGBEncoding;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+
+const scene = new THREE.Scene();
+const HORIZON = new THREE.Color('#d9ecff');
+scene.fog = new THREE.Fog(HORIZON, 30, 90);
+const camera = new THREE.PerspectiveCamera(55, 1, 0.01, 400);
+
+const sky = new THREE.Mesh(
+  new THREE.SphereGeometry(200, 32, 16),
+  new THREE.ShaderMaterial({
+    side: THREE.BackSide, depthWrite: false, fog: false,
+    uniforms: { top: { value: new THREE.Color('#3f87d6') }, bottom: { value: HORIZON } },
+    vertexShader: 'varying vec3 vP; void main(){ vP = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
+    fragmentShader: 'uniform vec3 top; uniform vec3 bottom; varying vec3 vP; void main(){ float h = clamp(normalize(vP).y * 1.6, 0.0, 1.0); gl_FragColor = vec4(mix(bottom, top, pow(h, 0.7)), 1.0); }',
+  })
+);
+scene.add(sky);
+
+scene.add(new THREE.HemisphereLight(0xdcefff, 0x4d7a3a, 0.65));
+const sun = new THREE.DirectionalLight(0xfff0d0, 1.25);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.bias = -0.0004;
+sun.shadow.normalBias = 0.01;
+scene.add(sun, sun.target);
+
+function resize() {
+  const w = window.innerWidth, h = window.innerHeight;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+}
+window.addEventListener('resize', resize);
+resize();
+
+// ============================================================
+//  PROCEDURAL TEXTURES
+// ============================================================
+let seed = 1;
+function rnd() { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; }
+
+function canvasTex(w, h, draw, srgb = true) {
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  draw(c.getContext('2d'), w, h);
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  if (srgb) t.encoding = THREE.sRGBEncoding;
+  return t;
+}
+
+function speckle(g, w, h, n, colours, size) {
+  for (let i = 0; i < n; i++) {
+    g.fillStyle = colours[(i * 7919) % colours.length];
+    g.fillRect(Math.random() * w, Math.random() * h, size * (0.5 + Math.random()), size * (0.5 + Math.random()));
+  }
+}
+
+const TEX = {
+  carpet: canvasTex(256, 256, (g, w, h) => {
+    g.fillStyle = '#2d8a3c'; g.fillRect(0, 0, w, h);
+    speckle(g, w, h, 9000, ['#3a9c48', '#24763a', '#33914a', '#1f6b33', '#46a855'], 1.6);
+  }),
+  grass: canvasTex(256, 256, (g, w, h) => {
+    g.fillStyle = '#5f9e46'; g.fillRect(0, 0, w, h);
+    for (let i = 0; i < 2600; i++) {
+      g.strokeStyle = ['#6fae52', '#4f8a3a', '#7ab85c', '#568f3f'][i % 4];
+      const x = Math.random() * w, y = Math.random() * h;
+      g.beginPath(); g.moveTo(x, y); g.lineTo(x + (Math.random() - 0.5) * 3, y - 3 - Math.random() * 5); g.stroke();
+    }
+  }),
+  brick: canvasTex(256, 128, (g, w, h) => {
+    g.fillStyle = '#d9ccb4'; g.fillRect(0, 0, w, h);
+    const bw = 64, bh = 32;
+    for (let r = 0; r < h / bh; r++) {
+      for (let c = -1; c < w / bw + 1; c++) {
+        const x = c * bw + (r % 2) * bw / 2, y = r * bh;
+        const v = Math.floor(Math.random() * 30);
+        g.fillStyle = `rgb(${150 + v},${62 + v / 2},${42 + v / 3})`;
+        g.fillRect(x + 3, y + 3, bw - 6, bh - 6);
+      }
+    }
+  }),
+  wood: canvasTex(128, 256, (g, w, h) => {
+    g.fillStyle = '#9b6a3c'; g.fillRect(0, 0, w, h);
+    for (let x = 0; x < w; x += 32) {
+      g.fillStyle = `rgba(0,0,0,${0.08 + Math.random() * 0.1})`; g.fillRect(x, 0, 32, h);
+      g.fillStyle = 'rgba(40,20,5,.6)'; g.fillRect(x, 0, 2, h);
+      for (let i = 0; i < 14; i++) {
+        g.strokeStyle = `rgba(60,30,10,${0.15 + Math.random() * 0.2})`;
+        const xx = x + 4 + Math.random() * 26;
+        g.beginPath(); g.moveTo(xx, 0); g.bezierCurveTo(xx + 3, h / 3, xx - 3, h * 2 / 3, xx + 1, h); g.stroke();
+      }
+    }
+  }),
+  stone: canvasTex(128, 128, (g, w, h) => {
+    g.fillStyle = '#8d8a80'; g.fillRect(0, 0, w, h);
+    speckle(g, w, h, 2500, ['#a3a094', '#77746b', '#96938a', '#6c6a62'], 2.5);
+  }),
+  water: canvasTex(256, 256, (g, w, h) => {
+    g.fillStyle = '#2a78b8'; g.fillRect(0, 0, w, h);
+    for (let i = 0; i < 140; i++) {
+      g.strokeStyle = `rgba(200,235,255,${0.12 + Math.random() * 0.25})`;
+      g.lineWidth = 1 + Math.random() * 2;
+      const x = Math.random() * w, y = Math.random() * h, l = 8 + Math.random() * 24;
+      g.beginPath(); g.moveTo(x, y); g.quadraticCurveTo(x + l / 2, y - 3, x + l, y); g.stroke();
+    }
+  }),
+  soil: canvasTex(128, 128, (g, w, h) => {
+    g.fillStyle = '#5a3d26'; g.fillRect(0, 0, w, h);
+    speckle(g, w, h, 1800, ['#6b4a30', '#4a311e', '#73553a'], 2);
+  }),
+};
+TEX.grass.repeat.set(1, 1);
+
+const MAT = {
+  carpet: new THREE.MeshStandardMaterial({ map: TEX.carpet, roughness: 0.95 }),
+  grass: new THREE.MeshStandardMaterial({ map: TEX.grass, roughness: 1 }),
+  brick: new THREE.MeshStandardMaterial({ map: TEX.brick, roughness: 0.85, side: THREE.DoubleSide }),
+  wood: new THREE.MeshStandardMaterial({ map: TEX.wood, roughness: 0.8, side: THREE.DoubleSide }),
+  stone: new THREE.MeshStandardMaterial({ map: TEX.stone, roughness: 0.9, side: THREE.DoubleSide }),
+  water: new THREE.MeshStandardMaterial({ map: TEX.water, roughness: 0.12, metalness: 0.15, transparent: true, opacity: 0.85 }),
+  basin: new THREE.MeshStandardMaterial({ color: '#1d4a4a', roughness: 1 }),
+  soil: new THREE.MeshStandardMaterial({ map: TEX.soil, roughness: 1 }),
+  cup: new THREE.MeshBasicMaterial({ color: '#0b0f0b' }),
+  rim: new THREE.MeshStandardMaterial({ color: '#f2f2f2', roughness: 0.4 }),
+  white: new THREE.MeshStandardMaterial({ color: '#f5f5f0', roughness: 0.5 }),
+  flag: new THREE.MeshStandardMaterial({ color: '#e8322f', roughness: 0.7, side: THREE.DoubleSide }),
+  tee: new THREE.MeshStandardMaterial({ color: '#1b5c2a', roughness: 1 }),
+  bark: new THREE.MeshStandardMaterial({ color: '#6b4a2e', roughness: 1 }),
+  leaf: new THREE.MeshStandardMaterial({ color: '#3f8a35', roughness: 0.9, flatShading: true }),
+  leafDark: new THREE.MeshStandardMaterial({ color: '#2f6e2a', roughness: 0.9, flatShading: true }),
+  rock: new THREE.MeshStandardMaterial({ color: '#9a978c', roughness: 0.95, flatShading: true }),
+  plaster: new THREE.MeshStandardMaterial({ color: '#efe3c8', roughness: 0.9 }),
+  roof: new THREE.MeshStandardMaterial({ color: '#8c3a2a', roughness: 0.8, flatShading: true }),
+  sail: new THREE.MeshStandardMaterial({ color: '#f4efe2', roughness: 0.8, side: THREE.DoubleSide }),
+  dark: new THREE.MeshBasicMaterial({ color: '#120d08' }),
+  aim: new THREE.MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0.85, depthWrite: false, side: THREE.DoubleSide }),
+};
+
+// Colour codes are sRGB but r128 treats them as linear; convert so they don't render washed out.
+for (const m of Object.values(MAT)) if (m.color && !m.map) m.color.convertSRGBToLinear();
+
+TEX.grass.repeat.set(0.25, 0.25); // UVs are in metres: one tile per 4 m
+
+// The park lawn, with the hole's plot cut out so ponds below green level aren't covered.
+// Inside the plot every non-course cell gets its own grass or flower-bed square.
+let ground = null;
+function buildGround(hole) {
+  if (ground) { ground.geometry.dispose(); scene.remove(ground); }
+  const W = hole.cols * C, D = hole.rows * C;
+  const shape = new THREE.Shape();
+  shape.moveTo(-200, -200); shape.lineTo(200, -200); shape.lineTo(200, 200); shape.lineTo(-200, 200); shape.lineTo(-200, -200);
+  // shape y maps to world −z after the rotation below
+  const cut = new THREE.Path();
+  cut.moveTo(0, 0); cut.lineTo(0, -D); cut.lineTo(W, -D); cut.lineTo(W, 0); cut.lineTo(0, 0);
+  shape.holes.push(cut);
+  ground = new THREE.Mesh(new THREE.ShapeGeometry(shape), MAT.grass);
+  ground.rotation.x = -Math.PI / 2;
+  ground.position.y = -0.02;
+  ground.receiveShadow = true;
+  scene.add(ground);
+}
+
+// ============================================================
+//  GEOMETRY HELPERS
+// ============================================================
+// Collects triangles with UVs and builds a non-indexed BufferGeometry.
+class GeoBuilder {
+  constructor() { this.pos = []; this.nor = []; this.uv = []; }
+  tri(a, b, c, ua, ub, uc, na, nb, nc) {
+    if (!na) {
+      const ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2];
+      const vx = c[0] - a[0], vy = c[1] - a[1], vz = c[2] - a[2];
+      let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+      const l = Math.hypot(nx, ny, nz) || 1;
+      na = nb = nc = [nx / l, ny / l, nz / l];
+    }
+    this.pos.push(...a, ...b, ...c);
+    this.nor.push(...na, ...nb, ...nc);
+    this.uv.push(...ua, ...ub, ...uc);
+  }
+  quad(a, b, c, d, ua, ub, uc, ud) { this.tri(a, b, c, ua, ub, uc); this.tri(a, c, d, ua, uc, ud); }
+  build() {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(this.pos, 3));
+    g.setAttribute('normal', new THREE.Float32BufferAttribute(this.nor, 3));
+    g.setAttribute('uv', new THREE.Float32BufferAttribute(this.uv, 2));
+    return g;
+  }
+  get empty() { return this.pos.length === 0; }
+}
+
+// A wall-like block along a ground segment a→b, extending `thick` along normal n, with a sloped top.
+function prism(gb, ax, az, bx, bz, nx, nz, thick, bottom, topA, topB) {
+  const ox = nx * thick, oz = nz * thick;
+  const len = Math.hypot(bx - ax, bz - az);
+  const A0 = [ax, bottom, az], B0 = [bx, bottom, bz], A1 = [ax, topA, az], B1 = [bx, topB, bz];
+  const C0 = [ax + ox, bottom, az + oz], D0 = [bx + ox, bottom, bz + oz], C1 = [ax + ox, topA, az + oz], D1 = [bx + ox, topB, bz + oz];
+  const s = 2; // texture repeats per metre
+  gb.quad(A0, B0, B1, A1, [0, bottom * s], [len * s, bottom * s], [len * s, topB * s], [0, topA * s]);
+  gb.quad(D0, C0, C1, D1, [len * s, bottom * s], [0, bottom * s], [0, topA * s], [len * s, topB * s]);
+  gb.quad(A1, B1, D1, C1, [0, 0], [len * s, 0], [len * s, thick * s], [0, thick * s]);
+  gb.quad(C0, A0, A1, C1, [0, bottom * s], [thick * s, bottom * s], [thick * s, topA * s], [0, topA * s]);
+  gb.quad(B0, D0, D1, B1, [0, bottom * s], [thick * s, bottom * s], [thick * s, topB * s], [0, topB * s]);
+}
+
+function meshOf(gb, mat, shadows = true) {
+  const m = new THREE.Mesh(gb.build(), mat);
+  m.castShadow = shadows; m.receiveShadow = true;
+  return m;
+}
+
+function box(w, h, d, mat, x, y, z) {
+  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+  m.position.set(x, y, z); m.castShadow = true; m.receiveShadow = true;
+  return m;
+}
+
+// ============================================================
+//  BUILDING A HOLE
+// ============================================================
+const C = CONFIG.cell;
+let holeGroup = null;
+const anim = { windmills: [], flag: null, water: [] };
+
+function disposeGroup(g) {
+  g.traverse(o => { if (o.geometry) o.geometry.dispose(); });
+  scene.remove(g);
+}
+
+function buildHole(hole) {
+  if (holeGroup) disposeGroup(holeGroup);
+  holeGroup = new THREE.Group();
+  anim.windmills = []; anim.water = [];
+  seed = 1 + hole.rows * 131 + hole.cols * 17;
+
+  const carpet = new GeoBuilder(), bridge = new GeoBuilder(), water = new GeoBuilder(), basin = new GeoBuilder();
+  const brick = new GeoBuilder(), wood = new GeoBuilder(), stone = new GeoBuilder(), soil = new GeoBuilder();
+  const N = 4;
+
+  for (const cell of hole.cells) {
+    if (!isCourseChar(cell.ch)) continue;
+    const x0 = cell.c * C, z0 = cell.r * C;
+    if (cell.ch === 'w') {
+      const y = baseHeight(cell, x0 + C / 2, z0 + C / 2);
+      water.quad([x0, y, z0 + C], [x0 + C, y, z0 + C], [x0 + C, y, z0], [x0, y, z0], [x0, z0 + C], [x0 + C, z0 + C], [x0 + C, z0], [x0, z0]);
+      const by = y - 0.12;
+      basin.quad([x0, by, z0 + C], [x0 + C, by, z0 + C], [x0 + C, by, z0], [x0, by, z0], [0, 1], [1, 1], [1, 0], [0, 0]);
+      continue;
+    }
+    const gb = cell.ch === '=' ? bridge : carpet;
+    // sample just inside the cell so neighbouring levels don't bleed in
+    const P = (i, j) => {
+      const x = x0 + Math.min(Math.max(i / N, 1e-4), 1 - 1e-4) * C;
+      const z = z0 + Math.min(Math.max(j / N, 1e-4), 1 - 1e-4) * C;
+      const y = groundHeight(hole, x, z);
+      const g = gradient(hole, x, z);
+      const l = Math.hypot(g.x, 1, g.z);
+      return { p: [x0 + (i / N) * C, y, z0 + (j / N) * C], n: [-g.x / l, 1 / l, -g.z / l], uv: [(x0 + (i / N) * C) * 1.2, (z0 + (j / N) * C) * 1.2] };
+    };
+    for (let i = 0; i < N; i++) {
+      for (let j = 0; j < N; j++) {
+        const a = P(i, j + 1), b = P(i + 1, j + 1), c = P(i + 1, j), d = P(i, j);
+        gb.tri(a.p, b.p, c.p, a.uv, b.uv, c.uv, a.n, b.n, c.n);
+        gb.tri(a.p, c.p, d.p, a.uv, c.uv, d.uv, a.n, c.n, d.n);
+      }
+    }
+  }
+
+  for (const s of hole.segments) {
+    if (s.kind === 'border') {
+      const cell = s.cell;
+      const ha = baseHeight(cell, s.ax - s.nx * 1e-4, s.az - s.nz * 1e-4);
+      const hb = baseHeight(cell, s.bx - s.nx * 1e-4, s.bz - s.nz * 1e-4);
+      const low = cell.ch === 'w' ? ha - 0.12 : -0.05;
+      prism(cell.ch === 'w' ? stone : brick, s.ax, s.az, s.bx, s.bz, s.nx, s.nz, 0.07, Math.min(low, -0.05), ha + CONFIG.wallHeight, hb + CONFIG.wallHeight);
+    } else if (s.kind === 'step') {
+      const a = s.cellA, b = s.cellB;
+      const mx = (s.ax + s.bx) / 2, mz = (s.az + s.bz) / 2;
+      const nx = b.c - a.c, nz = b.r - a.r;
+      const hA = baseHeight(a, mx - nx * 1e-4, mz - nz * 1e-4), hB = baseHeight(b, mx + nx * 1e-4, mz + nz * 1e-4);
+      const lowCell = hA < hB ? a : b;
+      const bottom = lowCell.ch === 'w' ? Math.min(hA, hB) - 0.12 : Math.min(hA, hB);
+      prism(lowCell.ch === 'w' ? stone : wood, s.ax, s.az, s.bx, s.bz, 0, 0, 0, bottom, s.top, s.top);
+    } else if (s.kind === 'rail') {
+      const y = s.top - CONFIG.wallHeight;
+      prism(wood, s.ax, s.az, s.bx, s.bz, 0, 0, 0, y - 0.15, s.top, s.top);
+      holeGroup.add(box(0.04, 0.3, 0.04, MAT.wood, s.ax, y + 0.1, s.az), box(0.04, 0.3, 0.04, MAT.wood, s.bx, y + 0.1, s.bz));
+    }
+  }
+  for (const s of hole.extraSegs) {
+    if (s.kind !== 'bumper') continue;
+    const dx = s.bx - s.ax, dz = s.bz - s.az, l = Math.hypot(dx, dz);
+    const cell = cellAt(hole, (s.ax + s.bx) / 2 + 0.01, (s.az + s.bz) / 2 + 0.01);
+    const base = cell ? baseHeight(cell, (s.ax + s.bx) / 2, (s.az + s.bz) / 2) : 0;
+    prism(brick, s.ax, s.az, s.bx, s.bz, dz / l, -dx / l, 0.06, base - 0.05, base + CONFIG.wallHeight, base + CONFIG.wallHeight);
+  }
+
+  // scenery cells inside the plot: flower beds hugging the course, lawn elsewhere
+  const flowers = [], lawn = new GeoBuilder();
+  for (const cell of hole.cells) {
+    if (isCourseChar(cell.ch)) continue;
+    let near = false;
+    for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) {
+      const n = cellOf(hole, cell.r + dr, cell.c + dc);
+      if (n && isCourseChar(n.ch)) near = true;
+    }
+    const x0 = cell.c * C, z0 = cell.r * C;
+    if (!near) {
+      const y = -0.02, u = v => v * 0.25;
+      lawn.quad([x0, y, z0 + C], [x0 + C, y, z0 + C], [x0 + C, y, z0], [x0, y, z0], [u(x0), u(-z0 - C)], [u(x0 + C), u(-z0 - C)], [u(x0 + C), u(-z0)], [u(x0), u(-z0)]);
+      continue;
+    }
+    const y = -0.02;
+    soil.quad([x0, y, z0 + C], [x0 + C, y, z0 + C], [x0 + C, y, z0], [x0, y, z0], [0, 1], [1, 1], [1, 0], [0, 0]);
+    for (let k = 0; k < 5; k++) flowers.push([x0 + 0.06 + rnd() * (C - 0.12), z0 + 0.06 + rnd() * (C - 0.12)]);
+  }
+  if (!lawn.empty) holeGroup.add(meshOf(lawn, MAT.grass, false));
+
+  const add = (gb, mat, shadows) => { if (!gb.empty) holeGroup.add(meshOf(gb, mat, shadows)); };
+  add(carpet, MAT.carpet, false); add(bridge, MAT.wood, false); add(basin, MAT.basin, false);
+  add(brick, MAT.brick, true); add(wood, MAT.wood, true); add(stone, MAT.stone, true); add(soil, MAT.soil, false);
+  if (!water.empty) { const wm = meshOf(water, MAT.water, false); wm.receiveShadow = true; holeGroup.add(wm); }
+
+  addFlowers(flowers);
+  addCupAndFlag(hole);
+  addTee(hole);
+  for (const w of hole.windmills) addWindmillModel(hole, w);
+  for (const tn of hole.tunnels) addTunnelModel(hole, tn);
+  addScenery(hole);
+
+  scene.add(holeGroup);
+  buildGround(hole);
+  fitSun(hole);
+}
+
+function addFlowers(spots) {
+  if (!spots.length) return;
+  const stem = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.004, 0.004, 0.1, 4), MAT.leafDark, spots.length);
+  const head = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(0.022, 0), new THREE.MeshStandardMaterial({ roughness: 0.7 }), spots.length);
+  const cols = ['#ff5c8a', '#ffd43b', '#ffffff', '#b06cff', '#ff8a3c', '#ff4040'].map(c => new THREE.Color(c).convertSRGBToLinear());
+  const m = new THREE.Matrix4();
+  spots.forEach(([x, z], i) => {
+    const h = 0.06 + rnd() * 0.06;
+    m.makeTranslation(x, h / 2, z); stem.setMatrixAt(i, m);
+    m.makeTranslation(x, h, z); head.setMatrixAt(i, m);
+    head.setColorAt(i, cols[Math.floor(rnd() * cols.length)]);
+  });
+  head.castShadow = true;
+  holeGroup.add(stem, head);
+}
+
+function addCupAndFlag(hole) {
+  const { x, y, z } = hole.cup;
+  const hole3 = new THREE.Mesh(new THREE.CircleGeometry(CONFIG.cupR, 32), MAT.cup);
+  hole3.rotation.x = -Math.PI / 2; hole3.position.set(x, y + 0.002, z);
+  const rim = new THREE.Mesh(new THREE.RingGeometry(CONFIG.cupR, CONFIG.cupR + 0.008, 32), MAT.rim);
+  rim.rotation.x = -Math.PI / 2; rim.position.set(x, y + 0.0025, z);
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.006, 0.006, 1.1, 8), MAT.white);
+  pole.position.set(x, y + 0.55, z); pole.castShadow = true;
+  const fg = new THREE.BufferGeometry();
+  fg.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0, 0.32, -0.1, 0, 0, -0.2, 0], 3));
+  fg.computeVertexNormals();
+  const flag = new THREE.Mesh(fg, MAT.flag);
+  flag.position.set(x, y + 1.1, z); flag.castShadow = true;
+  anim.flag = flag;
+  holeGroup.add(hole3, rim, pole, flag);
+}
+
+function addTee(hole) {
+  const { x, y, z } = hole.tee;
+  // a rubber tee mat, slightly raised, with a white tee spot
+  const mat = box(0.4, 0.003, 0.4, MAT.tee, x, y + 0.0015, z);
+  mat.castShadow = false;
+  const spot = new THREE.Mesh(new THREE.CircleGeometry(0.015, 16), MAT.white);
+  spot.rotation.x = -Math.PI / 2; spot.position.set(x, y + 0.0035, z);
+  holeGroup.add(mat, spot);
+}
+
+function addWindmillModel(hole, w) {
+  const g = new THREE.Group();
+  const along = w.axis === 'z';
+  const y0 = groundHeight(hole, w.x, w.z) || 0;
+  // local frame: u along the lane (local z), v across it (local x)
+  if (!along) g.rotation.y = Math.PI / 2;
+  g.position.set(w.x, y0, w.z);
+  const hw = w.halfWidth + 0.12, d = w.depth, dh = w.door / 2, H = 1.3;
+  const side = (hw - dh);
+  g.add(box(side, H, d, MAT.plaster, -(dh + side / 2), H / 2, 0));
+  g.add(box(side, H, d, MAT.plaster, dh + side / 2, H / 2, 0));
+  g.add(box(w.door, H - 0.16, d, MAT.plaster, 0, 0.16 + (H - 0.16) / 2, 0));
+  const roof = new THREE.Mesh(new THREE.ConeGeometry(hw * 1.25, 0.8, 4), MAT.roof);
+  roof.position.y = H + 0.4; roof.rotation.y = Math.PI / 4; roof.castShadow = true;
+  g.add(roof);
+  const doorDark = new THREE.Mesh(new THREE.PlaneGeometry(w.door, 0.16), MAT.dark);
+  doorDark.position.set(0, 0.08, 0); g.add(doorDark);
+  // timber trim and windows on both faces
+  for (const f of [-1, 1]) {
+    const z = f * (d / 2 + 0.006);
+    g.add(box(w.door + 0.06, 0.03, 0.012, MAT.wood, 0, 0.175, z));
+    for (const x of [-hw * 0.55, hw * 0.55]) {
+      const win = new THREE.Mesh(new THREE.PlaneGeometry(0.16, 0.2), MAT.dark);
+      win.position.set(x, 0.62, z + f * 0.001);
+      if (f < 0) win.rotation.y = Math.PI;
+      g.add(win, box(0.2, 0.025, 0.014, MAT.wood, x, 0.51, z), box(0.2, 0.025, 0.014, MAT.wood, x, 0.73, z));
+    }
+  }
+  g.add(box(hw * 2 + 0.04, 0.05, d + 0.04, MAT.wood, 0, H, 0));
+  // blades: hub on the front face; blade k points along (cos a, sin a) in the (across, up) plane
+  const hubY = 0.95, len = 0.9;
+  const rotor = new THREE.Group();
+  rotor.position.set(0, hubY, w.front * (d / 2 + 0.06));
+  for (let k = 0; k < 4; k++) {
+    const arm = new THREE.Group();
+    arm.rotation.z = (k * Math.PI) / 2;
+    arm.add(box(len, 0.03, 0.03, MAT.wood, len / 2, 0, 0));
+    const sail = new THREE.Mesh(new THREE.PlaneGeometry(len * 0.75, 0.16), MAT.sail);
+    sail.position.set(len * 0.55, 0.09, 0); sail.castShadow = true;
+    arm.add(sail);
+    rotor.add(arm);
+  }
+  rotor.add(box(0.1, 0.1, 0.08, MAT.wood, 0, 0, 0));
+  g.add(rotor);
+  // local +x is "across" (v) for a z-lane; for an x-lane the group is turned so local x is −world z
+  anim.windmills.push({ w, rotor, flip: along ? 1 : -1 });
+  holeGroup.add(g);
+}
+
+function addTunnelModel(hole, tn) {
+  // a hollow log pipe that leaves each mouth through the back wall and arcs between them
+  const mouthPt = (m, back) => new THREE.Vector3(m.x - m.out[0] * back, (groundHeight(hole, m.x, m.z) || 0) + 0.09, m.z - m.out[1] * back);
+  const a0 = mouthPt(tn.a, 0.05), a1 = mouthPt(tn.a, 0.6), b0 = mouthPt(tn.b, 0.05), b1 = mouthPt(tn.b, 0.6);
+  const mid = a1.clone().add(b1).multiplyScalar(0.5);
+  mid.y += 0.25;
+  const away = new THREE.Vector3(-tn.a.out[0] - tn.b.out[0], 0, -tn.a.out[1] - tn.b.out[1]);
+  mid.add(away.multiplyScalar(0.4));
+  const curve = new THREE.CatmullRomCurve3([a0, a1, mid, b1, b0]);
+  const tube = new THREE.Mesh(new THREE.TubeGeometry(curve, 64, 0.1, 16, false), MAT.bark);
+  tube.castShadow = true; tube.receiveShadow = true;
+  holeGroup.add(tube);
+  for (const m of [tn.a, tn.b]) {
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.1, 0.025, 8, 20), MAT.wood);
+    const p = mouthPt(m, 0.03);
+    ring.position.copy(p);
+    ring.lookAt(p.x + m.out[0], p.y, p.z + m.out[1]);
+    ring.castShadow = true;
+    const inner = new THREE.Mesh(new THREE.CircleGeometry(0.095, 20), MAT.dark);
+    inner.position.copy(mouthPt(m, 0.08));
+    inner.lookAt(inner.position.x + m.out[0], inner.position.y, inner.position.z + m.out[1]);
+    holeGroup.add(ring, inner);
+  }
+}
+
+function holeBounds(hole) {
+  return { x0: 0, z0: 0, x1: hole.cols * C, z1: hole.rows * C };
+}
+
+function addScenery(hole) {
+  const b = holeBounds(hole);
+  const cx = (b.x0 + b.x1) / 2, cz = (b.z0 + b.z1) / 2;
+  const inBand = (x, z, m0, m1) => {
+    const dx = Math.max(b.x0 - x, 0, x - b.x1), dz = Math.max(b.z0 - z, 0, z - b.z1);
+    const d = Math.hypot(dx, dz);
+    return d > m0 && d < m1;
+  };
+  const pick = (m0, m1) => {
+    for (let i = 0; i < 40; i++) {
+      const x = b.x0 - m1 + rnd() * (b.x1 - b.x0 + 2 * m1), z = b.z0 - m1 + rnd() * (b.z1 - b.z0 + 2 * m1);
+      if (inBand(x, z, m0, m1)) return [x, z];
+    }
+    return [cx + m1, cz];
+  };
+
+  // trees
+  const trees = 26;
+  const trunk = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.08, 0.12, 1, 6), MAT.bark, trees);
+  const crownA = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 1), MAT.leaf, trees);
+  const crownB = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 1), MAT.leafDark, trees);
+  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), p = new THREE.Vector3();
+  for (let i = 0; i < trees; i++) {
+    const [x, z] = pick(2.2, 10);
+    const h = 1.6 + rnd() * 2.2, r = 0.7 + rnd() * 0.7;
+    m.compose(p.set(x, h / 2, z), q, s.set(1 + rnd() * 0.5, h, 1 + rnd() * 0.5)); trunk.setMatrixAt(i, m);
+    m.compose(p.set(x, h + r * 0.4, z), q, s.set(r, r * 0.9, r)); crownA.setMatrixAt(i, m);
+    m.compose(p.set(x + r * 0.35, h + r * 0.05, z - r * 0.2), q, s.set(r * 0.7, r * 0.65, r * 0.7)); crownB.setMatrixAt(i, m);
+  }
+  for (const im of [trunk, crownA, crownB]) { im.castShadow = true; im.receiveShadow = true; holeGroup.add(im); }
+
+  // bushes and rocks closer in
+  const bushes = 30;
+  const bush = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 1), MAT.leafDark, bushes);
+  for (let i = 0; i < bushes; i++) {
+    const [x, z] = pick(0.5, 2.2), r = 0.18 + rnd() * 0.25;
+    m.compose(p.set(x, r * 0.5, z), q, s.set(r, r * 0.8, r)); bush.setMatrixAt(i, m);
+  }
+  bush.castShadow = true; holeGroup.add(bush);
+  const rocks = 12;
+  const rock = new THREE.InstancedMesh(new THREE.DodecahedronGeometry(1, 0), MAT.rock, rocks);
+  for (let i = 0; i < rocks; i++) {
+    const [x, z] = pick(0.4, 3), r = 0.08 + rnd() * 0.18;
+    q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), rnd() * 6);
+    m.compose(p.set(x, r * 0.3, z), q, s.set(r * 1.3, r * 0.8, r)); rock.setMatrixAt(i, m);
+  }
+  q.identity();
+  rock.castShadow = true; rock.receiveShadow = true; holeGroup.add(rock);
+
+  // white picket fence around the hole's plot
+  const fx0 = b.x0 - 1.4, fx1 = b.x1 + 1.4, fz0 = b.z0 - 1.4, fz1 = b.z1 + 1.4;
+  const per = 2 * (fx1 - fx0 + fz1 - fz0), spacing = 0.22, count = Math.floor(per / spacing);
+  const picket = new THREE.InstancedMesh(new THREE.BoxGeometry(0.06, 0.5, 0.025), MAT.white, count);
+  for (let i = 0; i < count; i++) {
+    let d = i * spacing, x, z, rot = 0;
+    const w = fx1 - fx0, hgt = fz1 - fz0;
+    if (d < w) { x = fx0 + d; z = fz0; }
+    else if ((d -= w) < hgt) { x = fx1; z = fz0 + d; rot = Math.PI / 2; }
+    else if ((d -= hgt) < w) { x = fx1 - d; z = fz1; }
+    else { d -= w; x = fx0; z = fz1 - d; rot = Math.PI / 2; }
+    q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), rot);
+    m.compose(p.set(x, 0.25, z), q, s.set(1, 1, 1)); picket.setMatrixAt(i, m);
+  }
+  picket.castShadow = true; holeGroup.add(picket);
+  for (const [ax, az, bx, bz] of [[fx0, fz0, fx1, fz0], [fx1, fz0, fx1, fz1], [fx1, fz1, fx0, fz1], [fx0, fz1, fx0, fz0]]) {
+    const len = Math.hypot(bx - ax, bz - az);
+    for (const y of [0.15, 0.38]) {
+      const rail = box(len, 0.04, 0.02, MAT.white, (ax + bx) / 2, y, (az + bz) / 2);
+      rail.rotation.y = -Math.atan2(bz - az, bx - ax);
+      holeGroup.add(rail);
+    }
+  }
+}
+
+function fitSun(hole) {
+  const b = holeBounds(hole);
+  const cx = (b.x0 + b.x1) / 2, cz = (b.z0 + b.z1) / 2;
+  const r = Math.hypot(b.x1 - b.x0, b.z1 - b.z0) / 2 + 4;
+  sun.position.set(cx + 8, 16, cz + 5);
+  sun.target.position.set(cx, 0, cz);
+  const sc = sun.shadow.camera;
+  sc.left = -r; sc.right = r; sc.top = r; sc.bottom = -r; sc.near = 1; sc.far = 50;
+  sc.updateProjectionMatrix();
+}
+
+// ============================================================
+//  BALL, AIM LINE
+// ============================================================
+const PLAYER_COLOURS = ['#ffffff', '#ffd43b', '#ff8c42', '#ff6bd6'];
+const ballMat = new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.3 });
+const ballMesh = new THREE.Mesh(new THREE.SphereGeometry(CONFIG.ballR, 24, 16), ballMat);
+ballMesh.castShadow = true;
+scene.add(ballMesh);
+
+const AIM_SEGS = 24;
+const aimGeo = new THREE.BufferGeometry();
+aimGeo.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array((AIM_SEGS + 1) * 2 * 3), 3));
+const aimIdx = [];
+for (let i = 0; i < AIM_SEGS; i += 2) { const a = i * 2; aimIdx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
+aimGeo.setIndex(aimIdx);
+const aimMesh = new THREE.Mesh(aimGeo, MAT.aim);
+aimMesh.frustumCulled = false;
+scene.add(aimMesh);
+
+function updateAimLine(ball, angle, power, visible) {
+  aimMesh.visible = visible;
+  if (!visible) return;
+  const dx = Math.cos(angle), dz = Math.sin(angle);
+  const len = 0.35 + power * 1.4, w = 0.012;
+  const pos = aimGeo.attributes.position.array;
+  for (let i = 0; i <= AIM_SEGS; i++) {
+    const t = 0.06 + (i / AIM_SEGS) * len;
+    const x = ball.x + dx * t, z = ball.z + dz * t;
+    const y = (groundHeight(game.hole, x, z) ?? ball.y) + 0.006;
+    pos.set([x - dz * w, y, z + dx * w], i * 6);
+    pos.set([x + dz * w, y, z - dx * w], i * 6 + 3);
+  }
+  aimGeo.attributes.position.needsUpdate = true;
+}
+
+// ============================================================
+//  SOUND (Web Audio, synthesised)
+// ============================================================
+let actx = null;
+function audio() {
+  if (!actx) { try { actx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { actx = null; } }
+  if (actx && actx.state === 'suspended') actx.resume();
+  return actx;
+}
+function noiseBuffer(ac, secs) {
+  const b = ac.createBuffer(1, Math.floor(ac.sampleRate * secs), ac.sampleRate);
+  const d = b.getChannelData(0);
+  for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+  return b;
+}
+function tone(freq, dur, type, vol, when = 0, slide = 0) {
+  const ac = audio(); if (!ac) return;
+  const t = ac.currentTime + when;
+  const o = ac.createOscillator(), g = ac.createGain();
+  o.type = type; o.frequency.setValueAtTime(freq, t);
+  if (slide) o.frequency.exponentialRampToValueAtTime(Math.max(20, freq * slide), t + dur);
+  g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  o.connect(g).connect(ac.destination); o.start(t); o.stop(t + dur + 0.02);
+}
+function noise(dur, vol, filterType, freq, when = 0, q = 1) {
+  const ac = audio(); if (!ac) return;
+  const t = ac.currentTime + when;
+  const src = ac.createBufferSource(); src.buffer = noiseBuffer(ac, dur);
+  const f = ac.createBiquadFilter(); f.type = filterType; f.frequency.value = freq; f.Q.value = q;
+  const g = ac.createGain(); g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  src.connect(f).connect(g).connect(ac.destination); src.start(t);
+}
+const sfx = {
+  putt: p => { noise(0.05, 0.25 + p * 0.4, 'bandpass', 2500, 0, 2); tone(320, 0.08, 'sine', 0.12 + p * 0.2, 0, 0.5); },
+  wall: v => { const k = Math.min(1, v / 3); noise(0.06, 0.08 + k * 0.3, 'bandpass', 900, 0, 3); tone(170, 0.09, 'triangle', 0.06 + k * 0.2, 0, 0.7); },
+  cup: () => { [0, 0.07, 0.13, 0.18].forEach((w, i) => noise(0.04, 0.25 - i * 0.04, 'bandpass', 3200 - i * 300, w, 4)); tone(140, 0.25, 'sine', 0.25, 0.2, 0.6); },
+  cheer: () => { [523, 659, 784, 1047].forEach((f, i) => tone(f, 0.25, 'triangle', 0.1, 0.25 + i * 0.09)); },
+  lip: () => { noise(0.05, 0.2, 'bandpass', 3000, 0, 5); tone(600, 0.06, 'sine', 0.06, 0.02, 0.7); },
+  splash: () => { noise(0.6, 0.45, 'lowpass', 1400, 0, 0.7); noise(0.3, 0.2, 'highpass', 3000, 0.05); },
+  tunnel: () => { noise(0.9, 0.25, 'lowpass', 260, 0, 1); },
+};
+
+// ============================================================
+//  GAME STATE
+// ============================================================
+const game = {
+  screen: 'menu', theme: THEMES[0], roundLen: 15, players: [],
+  holeList: [], holeN: 0, hole: null, def: null, cur: 0, strokes: 0,
+  ball: null, phase: 'aim', aim: 0, power: 0, lastPos: null, simT: 0, acc: 0,
+  overview: false, timer: 0, after: null,
+};
+
+const $ = id => document.getElementById(id);
+const hud = $('hud'), cardEl = $('card'), menuEl = $('menu');
+
+function banner(big, small, secs = 1.8) {
+  const b = $('banner');
+  b.querySelector('.big').textContent = big;
+  b.querySelector('.small').textContent = small || '';
+  b.style.opacity = 1;
+  clearTimeout(banner.t);
+  banner.t = setTimeout(() => { b.style.opacity = 0; }, secs * 1000);
+}
+
+function scoreName(strokes, par) {
+  if (strokes === 1) return 'Hole in one!';
+  const d = strokes - par;
+  return { '-3': 'Albatross!', '-2': 'Eagle!', '-1': 'Birdie!', '0': 'Par', '1': 'Bogey', '2': 'Double bogey' }[d] || `+${d}`;
+}
+
+function startRound() {
+  const course = game.theme.course;
+  game.holeList = game.roundLen === 10 ? course.shortRound.slice() : course.holes.map((_, i) => i);
+  game.holeN = 0;
+  game.players.forEach(p => { p.scores = []; });
+  menuEl.classList.add('hidden');
+  cardEl.classList.add('hidden');
+  hud.classList.remove('hidden');
+  game.screen = 'play';
+  audio();
+  loadHole();
+}
+
+function loadHole() {
+  const idx = game.holeList[game.holeN];
+  game.def = game.theme.course.holes[idx];
+  game.hole = parseHole(game.def);
+  buildHole(game.hole);
+  game.cur = 0;
+  game.overview = false;
+  game.field = distanceField(game.hole);
+  const info = $('holeInfo');
+  info.querySelector('.num').textContent = `Hole ${game.holeN + 1} of ${game.holeList.length} · ${game.theme.name}`;
+  info.querySelector('.name').textContent = game.def.name;
+  info.querySelector('.par').textContent = `Par ${game.def.par}`;
+  startTurn(true);
+}
+
+function startTurn(firstOfHole) {
+  const h = game.hole;
+  game.strokes = 0;
+  game.ball = createBall(h.tee);
+  game.lastPos = { x: h.tee.x, y: h.tee.y, z: h.tee.z };
+  ballMat.color.set(PLAYER_COLOURS[game.cur]).convertSRGBToLinear();
+  ballMesh.visible = true;
+  game.aim = aimTowardPath(h.tee);
+  game.power = 0;
+  game.phase = 'aim';
+  snapCamera();
+  const p = game.players[game.cur];
+  if (firstOfHole) banner(`Hole ${game.holeN + 1}`, `${game.def.name} · Par ${game.def.par}${game.players.length > 1 ? ` · ${p.name} first` : ''}`, 2.2);
+  else banner(`${p.name}'s turn`, `Hole ${game.holeN + 1} · Par ${game.def.par}`, 1.6);
+  renderPlayers();
+}
+
+// Face down the course: follow the distance field a couple of metres from the ball.
+function aimTowardPath(pos) {
+  const h = game.hole, f = game.field;
+  let cell = cellAt(h, pos.x, pos.z);
+  for (let k = 0; k < 5; k++) {
+    let best = null;
+    for (const [dr, dc] of [[0, 1], [1, 0], [0, -1], [-1, 0]]) {
+      const n = cellOf(h, cell.r + dr, cell.c + dc);
+      if (n && f[n.r * h.cols + n.c] < f[(best || cell).r * h.cols + (best || cell).c]) best = n;
+    }
+    if (!best) break;
+    cell = best;
+  }
+  const tx = (cell.c + 0.5) * C, tz = (cell.r + 0.5) * C;
+  if (Math.hypot(tx - pos.x, tz - pos.z) < 0.01) return Math.atan2(h.cup.z - pos.z, h.cup.x - pos.x);
+  return Math.atan2(tz - pos.z, tx - pos.x);
+}
+
+function renderPlayers() {
+  $('players').innerHTML = game.players.map((p, i) => {
+    const total = p.scores.reduce((a, b) => a + b, 0);
+    const live = i === game.cur && game.screen === 'play' ? ` · ${game.strokes}` : '';
+    return `<div class="chip ${i === game.cur ? 'on' : ''}"><span class="dot" style="background:${PLAYER_COLOURS[i]}"></span>${escapeHtml(p.name)}<span class="s">${total}${live}</span></div>`;
+  }).join('');
+}
+
+function escapeHtml(s) { return s.replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch])); }
+
+function putt() {
+  if (game.phase !== 'aim' || game.overview || game.power < 0.02) return;
+  game.lastPos = { x: game.ball.x, y: game.ball.y, z: game.ball.z };
+  shoot(game.ball, game.aim, game.power);
+  sfx.putt(game.power);
+  game.strokes++;
+  game.phase = 'rolling';
+  game.power = 0;
+  renderPlayers();
+}
+
+function finishPlayer(score, label) {
+  game.players[game.cur].scores[game.holeN] = score;
+  game.phase = 'done';
+  renderPlayers();
+  later(label === 'cap' ? 1.6 : 2.0, () => {
+    if (game.cur < game.players.length - 1) { game.cur++; startTurn(false); }
+    else showHoleCard();
+  });
+}
+
+function later(secs, fn) { game.timer = secs; game.after = fn; }
+
+function handleEvents(events) {
+  const b = game.ball;
+  for (const ev of events) {
+    const sp = Math.hypot(b.vx, b.vz);
+    if (ev === 'wall') { if (sp > 0.15) sfx.wall(sp); }
+    else if (ev === 'lip') sfx.lip();
+    else if (ev === 'tunnel') { if (b.tunnel) sfx.tunnel(); }
+    else if (ev === 'holed') {
+      sfx.cup();
+      const name = scoreName(game.strokes, game.def.par);
+      if (game.strokes <= game.def.par) sfx.cheer();
+      banner(name, `${game.players[game.cur].name} · ${game.strokes} stroke${game.strokes === 1 ? '' : 's'}`);
+      finishPlayer(game.strokes, 'holed');
+      return;
+    } else if (ev === 'water' || ev === 'out') {
+      sfx.splash();
+      game.strokes++;
+      game.phase = 'penalty';
+      ballMesh.visible = ev !== 'water';
+      if (game.strokes >= CONFIG.maxStrokes) {
+        banner(ev === 'water' ? 'Splash!' : 'Out!', `Stroke limit — scores ${CONFIG.maxStrokes + 1}`);
+        finishPlayer(cappedScore(game.strokes, false), 'cap');
+        return;
+      }
+      banner(ev === 'water' ? 'Splash!' : 'Out of bounds', '+1 stroke — back to where you hit from', 1.5);
+      renderPlayers();
+      later(1.4, () => {
+        game.ball = createBall(game.lastPos);
+        ballMesh.visible = true;
+        game.phase = 'aim';
+        game.aim = aimTowardPath(game.ball);
+        snapCamera();
+      });
+      return;
+    } else if (ev === 'stopped') {
+      if (game.strokes >= CONFIG.maxStrokes) {
+        banner('Stroke limit', `${game.players[game.cur].name} scores ${CONFIG.maxStrokes + 1}`);
+        finishPlayer(cappedScore(game.strokes, false), 'cap');
+        return;
+      }
+      game.phase = 'aim';
+      game.aim = aimTowardPath(game.ball);
+      return;
+    }
+  }
+}
+
+// ============================================================
+//  SCORECARDS
+// ============================================================
+function scoreTable(upto) {
+  const holes = game.holeList.slice(0, upto);
+  const pars = holes.map(i => game.theme.course.holes[i].par);
+  const parTot = pars.reduce((a, b) => a + b, 0);
+  let html = '<table><tr><th>Hole</th>' + holes.map((_, i) => `<th>${i + 1}</th>`).join('') + '<th>Total</th><th>±</th></tr>';
+  html += '<tr class="par"><td>Par</td>' + pars.map(p => `<td>${p}</td>`).join('') + `<td class="tot">${parTot}</td><td></td></tr>`;
+  for (const [i, p] of game.players.entries()) {
+    const sc = p.scores.slice(0, upto);
+    const tot = sc.reduce((a, b) => a + b, 0), d = tot - parTot;
+    html += `<tr><td><span class="dot" style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${PLAYER_COLOURS[i]};border:1px solid #0003;margin-right:6px"></span>${escapeHtml(p.name)}</td>`
+      + sc.map((s, k) => `<td class="${s < pars[k] ? 'under' : s > pars[k] ? 'over' : ''}">${s}</td>`).join('')
+      + `<td class="tot">${tot}</td><td class="${d < 0 ? 'under' : d > 0 ? 'over' : ''}">${d === 0 ? 'E' : d > 0 ? '+' + d : d}</td></tr>`;
+  }
+  return html + '</table>';
+}
+
+function showHoleCard() {
+  game.screen = 'card';
+  const last = game.holeN === game.holeList.length - 1;
+  if (last) return showFinal();
+  cardEl.querySelector('.box').innerHTML = `<h3>Hole ${game.holeN + 1} done</h3><div class="sub">${escapeHtml(game.def.name)} · Par ${game.def.par}</div>${scoreTable(game.holeN + 1)}
+    <div class="actions"><button id="next">Next hole →</button></div>`;
+  cardEl.classList.remove('hidden');
+  $('next').onclick = () => { cardEl.classList.add('hidden'); game.holeN++; game.screen = 'play'; loadHole(); };
+}
+
+function showFinal() {
+  const totals = game.players.map(p => p.scores.reduce((a, b) => a + b, 0));
+  const best = Math.min(...totals);
+  const winners = game.players.filter((_, i) => totals[i] === best).map(p => p.name);
+  const title = game.players.length === 1 ? `Round complete — ${best} strokes` : winners.length > 1 ? `It's a tie! ${winners.join(' & ')}` : `${winners[0]} wins!`;
+  cardEl.querySelector('.box').innerHTML = `<h3>${escapeHtml(title)}</h3><div class="sub">${escapeHtml(game.theme.name)} · ${game.holeList.length} holes</div>${scoreTable(game.holeList.length)}
+    <div class="actions"><button id="again">Play again</button><button id="toMenu" class="alt">Menu</button></div>`;
+  cardEl.classList.remove('hidden');
+  $('again').onclick = startRound;
+  $('toMenu').onclick = showMenu;
+}
+
+// ============================================================
+//  MENU
+// ============================================================
+const menuState = { count: 1, names: ['Player 1', 'Player 2', 'Player 3', 'Player 4'], theme: 'sunny', len: 15 };
+try { Object.assign(menuState, JSON.parse(localStorage.getItem('minigolf-menu') || '{}')); } catch (e) { /* private mode */ }
+
+function renderMenu() {
+  $('countRow').innerHTML = [1, 2, 3, 4].map(n => `<button class="pill ${n === menuState.count ? 'on' : ''}" data-n="${n}">${n} player${n > 1 ? 's' : ''}</button>`).join('');
+  $('names').innerHTML = menuState.names.slice(0, menuState.count).map((nm, i) =>
+    `<label><span class="dot" style="background:${PLAYER_COLOURS[i]}"></span><input maxlength="14" data-i="${i}" value="${escapeHtml(nm)}"></label>`).join('');
+  $('themes').innerHTML = THEMES.map(t => `<button class="theme ${t.id === menuState.theme ? 'on' : ''}" data-id="${t.id}" ${t.course ? '' : 'disabled'}>
+      <span class="sw" style="background:${t.colour}"></span><b>${t.name}</b><small>${t.blurb}</small>${t.course ? '' : '<br><span class="soon">COMING SOON</span>'}</button>`).join('');
+  $('lenRow').innerHTML = [10, 15].map(n => `<button class="pill ${n === menuState.len ? 'on' : ''}" data-len="${n}">${n} holes</button>`).join('');
+  $('countRow').querySelectorAll('button').forEach(b => b.onclick = () => { menuState.count = +b.dataset.n; renderMenu(); });
+  $('names').querySelectorAll('input').forEach(inp => inp.oninput = () => { menuState.names[+inp.dataset.i] = inp.value; });
+  $('themes').querySelectorAll('button').forEach(b => b.onclick = () => { menuState.theme = b.dataset.id; renderMenu(); });
+  $('lenRow').querySelectorAll('button').forEach(b => b.onclick = () => { menuState.len = +b.dataset.len; renderMenu(); });
+}
+
+function showMenu() {
+  game.screen = 'menu';
+  cardEl.classList.add('hidden');
+  hud.classList.add('hidden');
+  menuEl.classList.remove('hidden');
+  ballMesh.visible = false;
+  aimMesh.visible = false;
+  renderMenu();
+}
+
+$('play').onclick = () => {
+  try { localStorage.setItem('minigolf-menu', JSON.stringify(menuState)); } catch (e) { /* private mode */ }
+  game.theme = THEMES.find(t => t.id === menuState.theme && t.course) || THEMES[0];
+  game.roundLen = menuState.len;
+  game.players = menuState.names.slice(0, menuState.count).map((n, i) => ({ name: n.trim() || `Player ${i + 1}`, scores: [] }));
+  startRound();
+};
+$('btnMenu').onclick = showMenu;
+$('btnView').onclick = () => toggleOverview();
+
+function toggleOverview() {
+  if (game.screen !== 'play') return;
+  game.overview = !game.overview;
+  $('btnView').classList.toggle('on', game.overview);
+}
+
+// ============================================================
+//  INPUT
+// ============================================================
+const drag = { active: false, id: null, sx: 0, sy: 0, startAim: 0 };
+canvas.addEventListener('pointerdown', e => {
+  if (game.screen !== 'play' || game.phase !== 'aim' || game.overview) return;
+  audio();
+  drag.active = true; drag.id = e.pointerId; drag.sx = e.clientX; drag.sy = e.clientY; drag.startAim = game.aim;
+  canvas.setPointerCapture(e.pointerId);
+  canvas.style.cursor = 'grabbing';
+});
+canvas.addEventListener('pointermove', e => {
+  if (!drag.active || e.pointerId !== drag.id) return;
+  const dx = e.clientX - drag.sx, dy = e.clientY - drag.sy;
+  game.aim = drag.startAim + dx * 0.004;
+  game.power = Math.min(1, Math.max(0, dy / (window.innerHeight * 0.38)));
+});
+function endDrag(e, cancel) {
+  if (!drag.active || e.pointerId !== drag.id) return;
+  drag.active = false;
+  canvas.style.cursor = 'grab';
+  if (!cancel) putt(); else game.power = 0;
+}
+canvas.addEventListener('pointerup', e => endDrag(e, false));
+canvas.addEventListener('pointercancel', e => endDrag(e, true));
+
+const keys = {};
+window.addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT') return;
+  keys[e.code] = true;
+  if (game.screen !== 'play') return;
+  if (e.code === 'Space') { e.preventDefault(); putt(); }
+  if (e.code === 'KeyV') toggleOverview();
+  if (e.code.startsWith('Arrow')) e.preventDefault();
+});
+window.addEventListener('keyup', e => { keys[e.code] = false; });
+
+function keyboardAim(dt) {
+  if (game.phase !== 'aim' || drag.active) return;
+  const fine = keys.ShiftLeft || keys.ShiftRight ? 0.25 : 1;
+  if (keys.ArrowLeft || keys.KeyA) game.aim -= 1.2 * fine * dt;
+  if (keys.ArrowRight || keys.KeyD) game.aim += 1.2 * fine * dt;
+  if (keys.ArrowUp || keys.KeyW) game.power = Math.min(1, game.power + 0.6 * fine * dt);
+  if (keys.ArrowDown || keys.KeyS) game.power = Math.max(0, game.power - 0.6 * fine * dt);
+}
+
+// ============================================================
+//  CAMERA
+// ============================================================
+const camPos = new THREE.Vector3(), camLook = new THREE.Vector3();
+let followDir = 0;
+
+function cameraTarget(out) {
+  const b = game.ball, h = game.hole;
+  if (game.overview) {
+    const bd = holeBounds(h), cx = (bd.x0 + bd.x1) / 2, cz = (bd.z0 + bd.z1) / 2;
+    const span = Math.max(bd.x1 - bd.x0, bd.z1 - bd.z0);
+    out.pos.set(cx, span * 0.95 + 1.5, cz + span * 0.35 + 1);
+    out.look.set(cx, 0, cz);
+    return;
+  }
+  let dir = game.aim, dist = 2.1, height = 1.0, ahead = 1.4;
+  if (game.phase !== 'aim') {
+    const sp = Math.hypot(b.vx, b.vz);
+    if (sp > 0.25) followDir = Math.atan2(b.vz, b.vx);
+    dir = followDir; dist = 2.4; height = 1.25; ahead = 0.8;
+  } else followDir = dir;
+  let tx = b.x, ty = b.y, tz = b.z;
+  if (b.tunnel) { tx = b.tunnel.exit.x; tz = b.tunnel.exit.z; ty = groundHeight(h, tx, tz) || 0; dir = Math.atan2(b.tunnel.exit.out[1], b.tunnel.exit.out[0]); }
+  const dx = Math.cos(dir), dz = Math.sin(dir);
+  out.pos.set(tx - dx * dist, ty + height, tz - dz * dist);
+  out.look.set(tx + dx * ahead, ty, tz + dz * ahead);
+}
+const camT = { pos: new THREE.Vector3(), look: new THREE.Vector3() };
+function snapCamera() { cameraTarget(camT); camPos.copy(camT.pos); camLook.copy(camT.look); }
+
+function updateCamera(dt) {
+  cameraTarget(camT);
+  const k = 1 - Math.exp(-dt * (game.overview ? 3 : game.phase === 'aim' ? 10 : 4));
+  camPos.lerp(camT.pos, k);
+  camLook.lerp(camT.look, k);
+  camera.position.copy(camPos);
+  camera.lookAt(camLook);
+}
+
+// ============================================================
+//  MAIN LOOP
+// ============================================================
+let lastT = performance.now();
+function frame(now) {
+  requestAnimationFrame(frame);
+  const dt = Math.min(0.05, (now - lastT) / 1000);
+  lastT = now;
+
+  if (game.screen === 'play' || game.screen === 'card') {
+    keyboardAim(dt);
+    game.acc += dt;
+    while (game.acc >= CONFIG.dt) {
+      game.acc -= CONFIG.dt;
+      if (game.phase === 'rolling') handleEvents(stepBall(game.hole, game.ball, game.simT, CONFIG.dt));
+      game.simT += CONFIG.dt;
+    }
+    if (game.after && (game.timer -= dt) <= 0) { const fn = game.after; game.after = null; fn(); }
+
+    const b = game.ball;
+    if (b) {
+      ballMesh.position.set(b.x, b.y + CONFIG.ballR, b.z);
+      if (b.tunnel) ballMesh.visible = false;
+      else if (game.phase === 'rolling' || game.phase === 'aim') ballMesh.visible = true;
+      const sp = Math.hypot(b.vx, b.vz);
+      if (sp > 0) ballMesh.rotateOnWorldAxis(new THREE.Vector3(b.vz, 0, -b.vx).normalize(), (sp * dt) / CONFIG.ballR);
+      updateAimLine(b, game.aim, game.power, game.phase === 'aim' && !game.overview);
+    }
+    for (const a of anim.windmills) a.rotor.rotation.z = a.flip * windmillAngle(a.w, game.simT);
+    if (anim.flag) anim.flag.rotation.y = Math.sin(now / 700) * 0.35;
+    TEX.water.offset.set(now / 30000, now / 45000);
+
+    $('power').querySelector('.fill').style.height = `${Math.round(game.power * 100)}%`;
+    const hint = game.overview ? 'Overview — press Overview (V) to return'
+      : game.phase === 'aim' ? 'Drag down for power, sideways to aim — release to putt · ←→ aim ↑↓ power Space putt'
+      : game.phase === 'rolling' ? `${game.players[game.cur].name} · stroke ${game.strokes}` : '';
+    const hintEl = $('hint');
+    if (hintEl.textContent !== hint) hintEl.textContent = hint;
+    hintEl.style.visibility = hint ? 'visible' : 'hidden';
+    updateCamera(dt);
+  } else {
+    // menu backdrop: slow orbit over the first hole
+    const t = now / 1000;
+    if (game.hole) {
+      const bd = holeBounds(game.hole), cx = (bd.x0 + bd.x1) / 2, cz = (bd.z0 + bd.z1) / 2;
+      camera.position.set(cx + Math.cos(t * 0.1) * 9, 4.5, cz + Math.sin(t * 0.1) * 9);
+      camera.lookAt(cx, 0, cz);
+      for (const a of anim.windmills) a.rotor.rotation.z = a.flip * windmillAngle(a.w, t);
+    }
+  }
+  renderer.render(scene, camera);
+}
+
+// Menu backdrop hole
+game.def = SUNNY_PARK.holes[3];
+game.hole = parseHole(game.def);
+buildHole(game.hole);
+ballMesh.visible = false;
+aimMesh.visible = false;
+renderMenu();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

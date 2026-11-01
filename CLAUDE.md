@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-A browser-based game portal hosting 7 HTML5 games. Each game is a self-contained single-file `index.html` — no build system, no bundler. The root `index.html` is the portal landing page with animated thumbnail cards linking to each game. Hosted via GitHub Pages from `tfanshteyn/games`.
+A browser-based game portal hosting HTML5 games. Each game is a self-contained single-file `index.html` — no build system, no bundler. The root `index.html` is the portal landing page with animated thumbnail cards linking to each game. Hosted via GitHub Pages from `tfanshteyn/games`.
 
 ## Running
 
@@ -21,7 +21,8 @@ Cascade/index.html      — Cascade: chain-reaction puzzle (Canvas 2D, ~1700 lin
 VoidArena/index.html    — Neon Clash: feudal arena brawler (Canvas 2D, ~2900 lines)
 escape-room/index.html  — Escape Room 3D: 20-level puzzle (Three.js via CDN, ~2400 lines)
 SpiderMan/index.html    — Spider-Man: Brand New Day: 3D web-swinging open city (Three.js via CDN, ~1150 lines)
-tests/                  — Node tests for the Spider-Man pure-logic block (`node --test "tests/**/*.test.mjs"`)
+MiniGolf/index.html     — Mini Golf 3D: realistic adventure mini golf, 6 themed courses (Three.js via CDN)
+tests/                  — Node tests for the pure-logic blocks of Spider-Man, Tesseract FC and Mini Golf (`node --test "tests/**/*.test.mjs"`)
 DinoDash/TODO.md        — Improvement ideas for Dino Dash
 ```
 
@@ -53,3 +54,13 @@ The flagship platformer, originally "Neon Runner". Most detailed game with ASCII
 - **Hero states**: ground / air / swing / crawl / zip in `stepHero`. Feel constants live in `CONFIG`.
 - **Missions**: `createMission` + `updateMission` step types `reach, collect, chase, webUp, interact`; Mission 1 geometry from `mission1Def(city)`.
 - **Controls**: WASD move, Shift sprint, Space jump (tap on landing = high jump), hold LMB swing, E zip/interact, Esc pause.
+
+## Mini Golf 3D (MiniGolf/) — Details
+
+Realistic 3D adventure mini golf. Spec: `docs/superpowers/specs/2026-10-31-mini-golf-3d-design.md`. Phase 1 = Sunny Park (15 holes); the other five themes show "Coming soon".
+
+- **Pure block**: physics, hole parsing and course data between the PURE markers; `tests/pure-minigolf.mjs` loads it. A brute-force bot (`botPlay`) proves every hole can be finished — run the course tests after editing any hole.
+- **Holes are ASCII grids of 0.5 m cells**: `g` green, `@` tee, `o` cup, `^v<>` ramp rising that way, `w` water, `=` bridge, `t` tunnel mouth, `.` scenery. Optional `levels` grid (digit × 0.25 m). `extras`: `hill`, `bumper`, `windmill` (`front` = side the blades face, toward the approaching ball), `tunnel`.
+- **Walls are generated**: borders where course meets scenery, rails between bridge and water, step faces between levels (they stop only the ball on the lower side).
+- **Colours**: r128 treats colour codes as linear; flat-colour materials are converted with `convertSRGBToLinear()` so they don't render washed out.
+- **Controls**: drag down for power, sideways to aim, release to putt; ←→ aim, ↑↓ power, Space putt, V overview.
