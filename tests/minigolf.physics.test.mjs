@@ -143,8 +143,8 @@ test('a tunnel swallows the ball and spits it out of the other mouth', () => {
   });
   const ball = createBall(hole.tee);
   shoot(ball, UP, 0.4);
-  const ev = runUntil(hole, ball, (b, e) => e.filter(x => x === 'tunnel').length >= 2);
-  assert.equal(ev.filter(x => x === 'tunnel').length, 2);
+  const ev = runUntil(hole, ball, (b, e) => e.includes('arrive'));
+  assert.deepEqual(ev.filter(x => x === 'tunnel' || x === 'arrive'), ['tunnel', 'arrive']);
   assert.ok(ball.x > 2.5 && ball.vz < 0, 'came out of the right lane heading north');
 });
 

@@ -130,6 +130,8 @@ const CONFIG = {
   gravity: 9.81,
   rollK: 5 / 7,         // rolling-sphere factor on slope acceleration
   rollDecel: 0.65,      // carpet rolling resistance, m/s²
+  sandDecel: 3.2,       // sand drags the ball to a stop
+  plankWidth: 0.28,     // a ship's plank is narrower than a cell; roll off it and you're in the sea
   maxSpeed: 5.5,        // full-power putt
   stopSpeed: 0.02,
   captureSpeed: 1.4,    // crosses the cup slower than this → holed
@@ -154,7 +156,8 @@ function parseHole(def) {
   const cols = Math.max(...def.map.map(r => r.length));
   const hole = {
     name: def.name, par: def.par, rows, cols, cells: [], tee: null, cup: null,
-    hills: [], windmills: [], tunnels: [], extraSegs: [], segments: [], cellSegs: [],
+    hills: [], windmills: [], tunnels: [], lifts: [], loops: [], cannons: [], ship: null, sliders: [], pendulums: [], posts: [],
+    extraSegs: [], segments: [], cellSegs: [],
   };
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
@@ -171,19 +174,39 @@ function parseHole(def) {
   if (!hole.tee || !hole.cup) throw new Error(`${def.name}: needs one tee (@) and one cup (o)`);
 
   computeRamps(hole);
+  // a plank runs along whichever axis has dry footing at an end
+  for (const cell of hole.cells) {
+    if (cell.ch !== 'p') continue;
+    const dry = n => n && isCourseChar(n.ch) && n.ch !== 'w';
+    cell.plankAxis = dry(cellOf(hole, cell.r - 1, cell.c)) || dry(cellOf(hole, cell.r + 1, cell.c)) ? 'z' : 'x';
+  }
 
+  const mouth = m => ({ c: m.c, r: m.r, x: (m.c + 0.5) * C, z: (m.r + 0.5) * C, out: OUT_DIRS[m.out] });
+  const lane = e => ({ x: e.c * C, z: e.r * C, axis: e.axis, halfWidth: e.halfWidth, period: e.period, phase: e.phase || 0 });
   for (const e of def.extras || []) {
     if (e.type === 'hill') hole.hills.push({ x: e.c * C, z: e.r * C, rad: e.rad * C, h: e.h });
     else if (e.type === 'bumper') hole.extraSegs.push(seg(e.a[0] * C, e.a[1] * C, e.b[0] * C, e.b[1] * C, 10, 'bumper'));
     else if (e.type === 'windmill') addWindmill(hole, e);
-    else if (e.type === 'tunnel') {
-      const mouth = m => ({ c: m.c, r: m.r, x: (m.c + 0.5) * C, z: (m.r + 0.5) * C, out: OUT_DIRS[m.out] });
-      hole.tunnels.push({ a: mouth(e.a), b: mouth(e.b), length: e.length });
-    } else throw new Error(`${def.name}: unknown extra ${e.type}`);
+    else if (e.type === 'tunnel') hole.tunnels.push({ a: mouth(e.a), b: mouth(e.b), length: e.length });
+    else if (e.type === 'lift') hole.lifts.push({ a: mouth(e.in), b: mouth(e.out), exitSpeed: e.exitSpeed || 1.1 });
+    else if (e.type === 'loop') {
+      const d = OUT_DIRS[e.dir];
+      const at = k => mouth({ c: e.c + d[0] * k, r: e.r + d[1] * k, out: e.dir });
+      hole.loops.push({ d, E: at(0), M: at(1), X: at(2), radius: e.radius || 0.25 });
+    } else if (e.type === 'slider') hole.sliders.push({ ...lane(e), gap: e.gap || 0.42, period: e.period || 3 });
+    else if (e.type === 'pendulum') hole.pendulums.push({ ...lane(e), length: e.length || 0.8, amp: e.amp || 0.95, period: e.period || 2.6, bobR: 0.11 });
+    else if (e.type === 'post') hole.posts.push({ x: e.c * C, z: e.r * C, rad: e.rad || 0.06 });
+    else if (e.type === 'cannon') hole.cannons.push({ a: mouth(e.in), target: { c: e.target.c, r: e.target.r, x: (e.target.c + 0.5) * C, z: (e.target.r + 0.5) * C }, apex: e.apex || 1, landSpeed: e.landSpeed || 1 });
+    else if (e.type === 'ship') hole.ship = { bow: e.bow };
+    else throw new Error(`${def.name}: unknown extra ${e.type}`);
   }
 
   hole.cup.y = groundHeight(hole, hole.cup.x, hole.cup.z);
   hole.tee.y = groundHeight(hole, hole.tee.x, hole.tee.z);
+  for (const o of [...hole.sliders, ...hole.pendulums]) o.y = groundHeight(hole, o.x + 1e-3, o.z + 1e-3) ?? 0;
+  for (const lp of hole.loops) for (const k of ['E', 'M', 'X']) lp[k].y = groundHeight(hole, lp[k].x, lp[k].z);
+  for (const m of [...hole.tunnels, ...hole.lifts].flatMap(t => [t.a, t.b])) m.y = groundHeight(hole, m.x, m.z);
+  for (const cn of hole.cannons) { cn.a.y = groundHeight(hole, cn.a.x, cn.a.z); cn.target.y = groundHeight(hole, cn.target.x, cn.target.z); }
   buildWalls(hole);
   return hole;
 }
@@ -226,8 +249,20 @@ function baseHeight(cell, x, z) {
     return lowH + (highH - lowH) * (idx + s) / n;
   }
   if (cell.ch === 'w') return cell.level * CONFIG.levelStep - CONFIG.waterDepth;
+  if (offPlank(cell, x, z)) return -CONFIG.waterDepth; // the sea under a plank is at ground level
   return cell.level * CONFIG.levelStep;
 }
+
+function offPlank(cell, x, z) {
+  if (cell.ch !== 'p') return false;
+  const C = CONFIG.cell;
+  const across = cell.plankAxis === 'z' ? x - (cell.c + 0.5) * C : z - (cell.r + 0.5) * C;
+  return Math.abs(across) > CONFIG.plankWidth / 2;
+}
+
+function isWet(cell, x, z) { return cell.ch === 'w' || offPlank(cell, x, z); }
+
+function surfaceDecel(cell) { return cell && cell.ch === 's' ? CONFIG.sandDecel : CONFIG.rollDecel; }
 
 function hillHeight(hole, x, z) {
   let h = 0;
@@ -243,7 +278,7 @@ function groundHeight(hole, x, z) {
   const cell = cellAt(hole, x, z);
   if (!cell || !isCourseChar(cell.ch)) return null;
   const h = baseHeight(cell, x, z);
-  return cell.ch === 'w' ? h : h + hillHeight(hole, x, z);
+  return isWet(cell, x, z) ? h : h + hillHeight(hole, x, z);
 }
 
 function seg(ax, az, bx, bz, top, kind) { return { ax, az, bx, bz, top, kind }; }
@@ -327,7 +362,134 @@ function windmillBlocked(w, t) {
 }
 
 function createBall(pos) {
-  return { x: pos.x, y: pos.y, z: pos.z, vx: 0, vy: 0, vz: 0, air: false, tunnel: null, lipLock: false, moving: false };
+  return { x: pos.x, y: pos.y, z: pos.z, vx: 0, vy: 0, vz: 0, air: false, transport: null, lipLock: false, moving: false };
+}
+
+// ---- Machines ----
+// Lane-relative coordinates: u runs along the lane, v across it.
+function laneXZ(o, u, v) { return o.axis === 'z' ? [o.x + v, o.z + u] : [o.x + u, o.z + v]; }
+function laneUV(o, x, z) { return o.axis === 'z' ? [z - o.z, x - o.x] : [x - o.x, z - o.z]; }
+
+// A sliding gate: a barrier across the lane with an opening that slides from side to side.
+function sliderPieces(s, t) {
+  const w = (2 * Math.PI) / s.period, A = s.halfWidth - s.gap / 2 - 0.04;
+  const o = A * Math.sin(w * t + s.phase), ov = A * w * Math.cos(w * t + s.phase);
+  const [vx, vz] = s.axis === 'z' ? [ov, 0] : [0, ov];
+  return [[-s.halfWidth, o - s.gap / 2], [o + s.gap / 2, s.halfWidth]].map(([v0, v1]) => {
+    const [ax, az] = laneXZ(s, 0, v0), [bx, bz] = laneXZ(s, 0, v1);
+    return { seg: seg(ax, az, bx, bz, 10, 'slider'), vx, vz, v0, v1 };
+  });
+}
+
+// A pendulum swinging across the lane. Its bob only reaches the ball near the bottom of the swing.
+function pendulumState(p, t) {
+  const w = (2 * Math.PI) / p.period;
+  const th = p.amp * Math.sin(w * t + p.phase), thd = p.amp * w * Math.cos(w * t + p.phase);
+  const [x, z] = laneXZ(p, 0, p.length * Math.sin(th));
+  const sv = p.length * Math.cos(th) * thd;
+  const [vx, vz] = p.axis === 'z' ? [sv, 0] : [0, sv];
+  return { th, x, z, vx, vz, lift: p.length * (1 - Math.cos(th)) };
+}
+
+// Position along a transport path (lift ride, loop, cannon flight) at time t.
+function transportPos(tr) {
+  const pts = tr.path;
+  let total = 0;
+  const lens = [];
+  for (let i = 1; i < pts.length; i++) { const l = Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y, pts[i].z - pts[i - 1].z); lens.push(l); total += l; }
+  let s = Math.min(1, tr.t / tr.dur) * total;
+  for (let i = 0; i < lens.length; i++) {
+    if (s <= lens[i] || i === lens.length - 1) {
+      const k = lens[i] ? Math.min(1, s / lens[i]) : 1, a = pts[i], b = pts[i + 1];
+      return { x: a.x + (b.x - a.x) * k, y: a.y + (b.y - a.y) * k, z: a.z + (b.z - a.z) * k };
+    }
+    s -= lens[i];
+  }
+  return pts[pts.length - 1];
+}
+
+function startTransport(ball, kind, path, dur, exit, visible) {
+  ball.transport = { kind, path, dur, t: 0, exit, visible };
+  ball.vx = ball.vy = ball.vz = 0;
+  ball.air = false;
+}
+
+const P3 = (m, y = m.y) => ({ x: m.x, y, z: m.z });
+
+function enterTunnel(ball, tn, m, other, sp) {
+  const s = Math.max(sp * 0.85, CONFIG.tunnelExitMin), C = CONFIG.cell;
+  startTransport(ball, 'tunnel', [P3(m), P3(other)], tn.length / Math.max(sp, 1),
+    { x: other.x + other.out[0] * C * 0.55, z: other.z + other.out[1] * C * 0.55, vx: other.out[0] * s, vz: other.out[1] * s }, false);
+}
+
+// The lift carries the ball up its tower at a steady pace and lets it roll down a short chute.
+function enterLift(ball, lf) {
+  const C = CONFIG.cell, a = lf.a, b = lf.b;
+  const top = Math.max(a.y, b.y) + 0.45;
+  const tower = { x: a.x - a.out[0] * 0.35, z: a.z - a.out[1] * 0.35 };
+  const chute = { x: b.x - b.out[0] * 0.35, z: b.z - b.out[1] * 0.35 };
+  const path = [P3(a), { ...tower, y: a.y + 0.03 }, { ...tower, y: top }, { ...chute, y: b.y + 0.12 }, P3(b)];
+  const dur = 0.4 + (top - a.y) / 0.35 + 0.7;
+  startTransport(ball, 'lift', path, dur,
+    { x: b.x + b.out[0] * C * 0.55, z: b.z + b.out[1] * C * 0.55, vx: b.out[0] * lf.exitSpeed, vz: b.out[1] * lf.exitSpeed }, true);
+}
+
+// The cannon takes the ball into its breech and fires it on a ballistic arc to a fixed landing spot.
+function cannonMuzzle(cn) {
+  return { x: cn.a.x - cn.a.out[0] * 0.3, y: cn.a.y + 0.22, z: cn.a.z - cn.a.out[1] * 0.3 };
+}
+
+function enterCannon(ball, cn) {
+  const G = CONFIG.gravity, m = cannonMuzzle(cn), tg = cn.target;
+  const vy0 = Math.sqrt(2 * G * cn.apex);
+  const fall = m.y + cn.apex - tg.y;
+  const flight = vy0 / G + Math.sqrt((2 * fall) / G);
+  const path = [P3(cn.a), m];
+  for (let i = 1; i <= 30; i++) {
+    const t = (i / 30) * flight;
+    path.push({ x: m.x + (tg.x - m.x) * (i / 30), y: m.y + vy0 * t - 0.5 * G * t * t, z: m.z + (tg.z - m.z) * (i / 30) });
+  }
+  const hd = Math.hypot(tg.x - m.x, tg.z - m.z) || 1;
+  startTransport(ball, 'cannon', path, 0.35 + flight,
+    { x: tg.x, z: tg.z, vx: ((tg.x - m.x) / hd) * cn.landSpeed, vz: ((tg.z - m.z) / hd) * cn.landSpeed }, true);
+  ball.transport.flightStart = 0.35 / (0.35 + flight);
+}
+
+// Speed a rolling ball needs at the bottom of a loop of radius R to stay on the track at the top:
+// v_top² ≥ gR and v_bottom² = v_top² + (10/7)·g·2R (rolling), plus a little for track friction.
+function loopSpeedNeeded(R) { return Math.sqrt((27 / 7) * CONFIG.gravity * R) * 1.06; }
+
+function enterLoop(ball, lp, sgn, sp) {
+  const C = CONFIG.cell, R = lp.radius, G = CONFIG.gravity;
+  const from = sgn > 0 ? lp.E : lp.X, to = sgn > 0 ? lp.X : lp.E;
+  const dx = lp.d[0] * sgn, dz = lp.d[1] * sgn, M = lp.M;
+  const at = phi => ({ x: M.x + dx * R * Math.sin(phi), y: M.y + R - R * Math.cos(phi), z: M.z + dz * R * Math.sin(phi) });
+  const arc = (p0, p1) => { const out = []; for (let i = 0; i <= 24; i++) out.push(at(p0 + ((p1 - p0) * i) / 24)); return out; };
+  if (sp >= loopSpeedNeeded(R)) {
+    const out = sp * 0.85;
+    startTransport(ball, 'loop', [P3(from), ...arc(0, 2 * Math.PI), P3(to)], (2 * C + 2 * Math.PI * R) / Math.max(sp * 0.75, 0.5),
+      { x: to.x + dx * C * 0.55, z: to.z + dz * C * 0.55, vx: dx * out, vz: dz * out }, true);
+  } else {
+    // climbs as high as its speed allows, then rolls back out the way it came
+    const h = (0.7 * sp * sp) / G;
+    const phiMax = h < R ? Math.acos(1 - h / R) : Math.min(Math.PI * 0.85, Math.PI / 2 + (h - R) / R);
+    const back = sp * 0.6;
+    startTransport(ball, 'loop', [P3(from), ...arc(0, phiMax), ...arc(phiMax, 0), P3(from)], (C + 2 * R * phiMax) / Math.max(sp * 0.6, 0.4),
+      { x: from.x - dx * C * 0.55, z: from.z - dz * C * 0.55, vx: -dx * back, vz: -dz * back }, true);
+  }
+}
+
+// A ball must never come to rest where a moving gate or pendulum sweeps; nudge it clear.
+function clearOfMachines(hole, ball) {
+  const R = CONFIG.ballR;
+  for (const o of [...hole.sliders, ...hole.pendulums]) {
+    const half = (o.bobR || 0) + R * 1.6;
+    const [u, v] = laneUV(o, ball.x, ball.z);
+    if (Math.abs(u) >= half || Math.abs(v) > (o.halfWidth || 1) + 0.1) continue;
+    const [x, z] = laneXZ(o, (u < 0 ? -1 : 1) * half * 1.05, v);
+    if (groundHeight(hole, x, z) === null) continue;
+    ball.x = x; ball.z = z; ball.y = groundHeight(hole, x, z);
+  }
 }
 
 function shoot(ball, angle, power) {
@@ -357,7 +519,8 @@ function gradient(hole, x, z) {
   };
 }
 
-function collideSegment(ball, s) {
+// (wvx, wvz) is the wall's own velocity, for moving gates; the bounce is worked out relative to it.
+function collideSegment(ball, s, wvx = 0, wvz = 0) {
   if (ball.y >= s.top - 0.001) return false;
   const R = CONFIG.ballR;
   const ex = s.bx - s.ax, ez = s.bz - s.az;
@@ -373,17 +536,37 @@ function collideSegment(ball, s) {
   const nx = dx / dl, nz = dz / dl;
   ball.x = px + nx * R;
   ball.z = pz + nz * R;
-  const vn = ball.vx * nx + ball.vz * nz;
-  if (vn < 0) {
-    const tx = ball.vx - vn * nx, tz = ball.vz - vn * nz;
-    ball.vx = tx * CONFIG.wallTangent - vn * CONFIG.restitution * nx;
-    ball.vz = tz * CONFIG.wallTangent - vn * CONFIG.restitution * nz;
-  }
+  bounce(ball, nx, nz, wvx, wvz, CONFIG.restitution, 0);
   return true;
 }
 
+function bounce(ball, nx, nz, wvx, wvz, e, kick) {
+  const rvx = ball.vx - wvx, rvz = ball.vz - wvz;
+  const vn = rvx * nx + rvz * nz;
+  if (vn >= 0) return;
+  const tx = rvx - vn * nx, tz = rvz - vn * nz, out = -vn * e + kick;
+  ball.vx = wvx + tx * CONFIG.wallTangent + out * nx;
+  ball.vz = wvz + tz * CONFIG.wallTangent + out * nz;
+}
+
+function collideCircle(ball, cx, cz, rad, wvx, wvz, e, kick) {
+  const dx = ball.x - cx, dz = ball.z - cz, d = Math.hypot(dx, dz), min = rad + CONFIG.ballR;
+  if (d >= min || d < 1e-9) return false;
+  const nx = dx / d, nz = dz / d;
+  ball.x = cx + nx * min; ball.z = cz + nz * min;
+  bounce(ball, nx, nz, wvx, wvz, e, kick);
+  return true;
+}
+
+// Returns 'post' for a pinball post, 'wall' for anything else hit, or null.
 function collideWalls(hole, ball, t) {
   let hit = false;
+  for (const p of hole.posts) if (collideCircle(ball, p.x, p.z, p.rad, 0, 0, 0.95, 0.5)) return 'post';
+  for (const s of hole.sliders) for (const pc of sliderPieces(s, t)) hit = collideSegment(ball, pc.seg, pc.vx, pc.vz) || hit;
+  for (const p of hole.pendulums) {
+    const st = pendulumState(p, t);
+    if (st.lift < 2 * CONFIG.ballR) hit = collideCircle(ball, st.x, st.z, p.bobR, st.vx, st.vz, 0.6, 0) || hit;
+  }
   const r0 = Math.floor(ball.z / CONFIG.cell), c0 = Math.floor(ball.x / CONFIG.cell);
   for (let r = r0 - 1; r <= r0 + 1; r++) {
     for (let c = c0 - 1; c <= c0 + 1; c++) {
@@ -394,22 +577,24 @@ function collideWalls(hole, ball, t) {
   }
   for (const s of hole.extraSegs) hit = collideSegment(ball, s) || hit;
   for (const w of hole.windmills) if (windmillBlocked(w, t)) hit = collideSegment(ball, w.gate) || hit;
-  return hit;
+  return hit ? 'wall' : null;
 }
 
-// One small step. Returns null, or an event: 'holed' | 'water' | 'out' | 'stopped' | 'wall' | 'tunnel' | 'lip'.
+// One small step. Returns null, or an event: 'holed' | 'water' | 'out' | 'stopped' | 'wall' | 'post' | 'lip'
+// | 'tunnel' | 'lift' | 'loop' (entering a machine) | 'arrive' (leaving one).
 function substep(hole, ball, t, h) {
   const K = CONFIG.rollK, G = CONFIG.gravity;
-  if (ball.tunnel) {
-    ball.tunnel.timer -= h;
-    if (ball.tunnel.timer > 0) return null;
-    const m = ball.tunnel.exit, sp = Math.max(ball.tunnel.speed * 0.85, CONFIG.tunnelExitMin);
-    ball.x = m.x + m.out[0] * CONFIG.cell * 0.55;
-    ball.z = m.z + m.out[1] * CONFIG.cell * 0.55;
+  const tr = ball.transport;
+  if (tr) {
+    tr.t += h;
+    const p = transportPos(tr);
+    ball.x = p.x; ball.y = p.y; ball.z = p.z;
+    if (tr.t < tr.dur) return null;
+    ball.x = tr.exit.x; ball.z = tr.exit.z;
     ball.y = groundHeight(hole, ball.x, ball.z);
-    ball.vx = m.out[0] * sp; ball.vz = m.out[1] * sp; ball.vy = 0;
-    ball.tunnel = null;
-    return 'tunnel';
+    ball.vx = tr.exit.vx; ball.vz = tr.exit.vz; ball.vy = 0;
+    ball.transport = null;
+    return 'arrive';
   }
 
   if (!ball.air) {
@@ -418,14 +603,15 @@ function substep(hole, ball, t, h) {
     ball.vz -= K * G * g.z * h;
     let sp = Math.hypot(ball.vx, ball.vz);
     if (sp > 0) {
-      const dec = Math.min(sp, CONFIG.rollDecel * h);
+      const dec = Math.min(sp, surfaceDecel(cellAt(hole, ball.x, ball.z)) * h);
       ball.vx -= (ball.vx / sp) * dec;
       ball.vz -= (ball.vz / sp) * dec;
     }
     sp = Math.hypot(ball.vx, ball.vz);
-    if (sp < CONFIG.stopSpeed && K * G * Math.hypot(g.x, g.z) < CONFIG.rollDecel) {
+    if (sp < CONFIG.stopSpeed && K * G * Math.hypot(g.x, g.z) < surfaceDecel(cellAt(hole, ball.x, ball.z))) {
       ball.vx = ball.vz = 0;
       ball.moving = false;
+      clearOfMachines(hole, ball);
       return 'stopped';
     }
     const px = ball.x, pz = ball.z;
@@ -455,16 +641,22 @@ function substep(hole, ball, t, h) {
 
   const cell = cellAt(hole, ball.x, ball.z);
   if (!cell || !isCourseChar(cell.ch)) return 'out';
-  if (cell.ch === 'w' && ball.y <= baseHeight(cell, ball.x, ball.z) + 0.02) return 'water';
+  if (isWet(cell, ball.x, ball.z) && ball.y <= baseHeight(cell, ball.x, ball.z) + 0.02) return 'water';
 
   if (!ball.air) {
+    const sp = Math.hypot(ball.vx, ball.vz);
+    const at = m => cell.r === m.r && cell.c === m.c;
+    const into = m => ball.vx * m.out[0] + ball.vz * m.out[1] < -0.05; // heading into a mouth that faces out
     for (const tn of hole.tunnels) {
       for (const [m, other] of [[tn.a, tn.b], [tn.b, tn.a]]) {
-        if (cell.r !== m.r || cell.c !== m.c) continue;
-        if (ball.vx * m.out[0] + ball.vz * m.out[1] > -0.05) continue;
-        const sp = Math.hypot(ball.vx, ball.vz);
-        ball.tunnel = { timer: tn.length / Math.max(sp, 1), exit: other, speed: sp };
-        return 'tunnel';
+        if (at(m) && into(m)) { enterTunnel(ball, tn, m, other, sp); return 'tunnel'; }
+      }
+    }
+    for (const lf of hole.lifts) if (at(lf.a) && into(lf.a)) { enterLift(ball, lf); return 'lift'; }
+    for (const cn of hole.cannons) if (at(cn.a) && into(cn.a)) { enterCannon(ball, cn); return 'cannon'; }
+    for (const lp of hole.loops) {
+      for (const [m, sgn] of [[lp.E, 1], [lp.X, -1]]) {
+        if (at(m) && (ball.vx * lp.d[0] + ball.vz * lp.d[1]) * sgn > 0.1) { enterLoop(ball, lp, sgn, sp); return 'loop'; }
       }
     }
   }
@@ -490,7 +682,7 @@ function substep(hole, ball, t, h) {
       return 'lip';
     }
   }
-  return hitWall ? 'wall' : null;
+  return hitWall;
 }
 
 // Advance dt seconds, sub-stepping so the ball never moves more than half its radius per step.
@@ -531,6 +723,8 @@ function distanceField(hole) {
   dist[startC.r * hole.cols + startC.c] = 0;
   const links = [];
   for (const tn of hole.tunnels) links.push([tn.a, tn.b], [tn.b, tn.a]);
+  for (const lf of hole.lifts) links.push([lf.b, lf.a]); // one-way: the lift only goes up
+  for (const cn of hole.cannons) links.push([cn.target, cn.a]);
   while (q.length) {
     const cell = q.shift();
     const d0 = dist[cell.r * hole.cols + cell.c];
@@ -579,30 +773,40 @@ const rep = (n, s) => Array(n).fill(s);
 
 const SUNNY_PARK = {
   id: 'sunny', name: 'Sunny Park',
-  shortRound: [0, 1, 3, 4, 5, 6, 7, 10, 13, 14],
+  shortRound: [0, 1, 3, 4, 5, 7, 9, 10, 13, 14],
   holes: [
     { name: 'First Putt', par: 2,
       map: ['ggg', 'gog', ...rep(13, 'ggg'), 'g@g', 'ggg'] },
 
-    { name: 'Dogleg', par: 2,
+    { name: 'Swing Corner', par: 3,
       map: ['gggggggggggg', 'ggggggggggog', 'gggggggggggg', ...rep(10, 'ggg.........'), 'g@g.........', 'ggg.........'],
-      extras: [{ type: 'bumper', a: [0, 1.5], b: [1.5, 0] }] },
+      extras: [
+        { type: 'bumper', a: [0, 1.5], b: [1.5, 0] },
+        { type: 'pendulum', c: 1.5, r: 8, axis: 'z', halfWidth: 0.75, period: 2.4 },
+        { type: 'post', c: 7, r: 1.5 },
+      ] },
 
-    { name: 'Little Hills', par: 2,
+    { name: 'Pinball Hill', par: 3,
       map: ['ggggg', 'ggggg', 'ggogg', ...rep(16, 'ggggg'), 'gg@gg', 'ggggg'],
       extras: [
         { type: 'hill', c: 2.5, r: 8, rad: 2, h: 0.07 },
-        { type: 'hill', c: 1, r: 13.5, rad: 1.5, h: 0.05 },
-        { type: 'hill', c: 4, r: 13.5, rad: 1.5, h: 0.05 },
+        { type: 'post', c: 2.5, r: 4.5 },
+        { type: 'post', c: 1.2, r: 11 }, { type: 'post', c: 3.8, r: 11 },
+        { type: 'post', c: 2.5, r: 14.5 },
+        { type: 'post', c: 0.9, r: 6.5 }, { type: 'post', c: 4.1, r: 6.5 },
       ] },
 
     { name: 'Windmill Lane', par: 3,
       map: ['ggg', 'gog', ...rep(19, 'ggg'), 'g@g', 'ggg'],
       extras: [{ type: 'windmill', c: 1.5, r: 11, axis: 'z', halfWidth: 0.75, period: 4, front: 1 }] },
 
-    { name: 'Up the Ramp', par: 3,
-      map: ['ggg', 'gog', ...rep(4, 'ggg'), ...rep(4, '^^^'), ...rep(8, 'ggg'), 'g@g', 'ggg'],
-      levels: [...rep(6, '111'), ...rep(14, '000')] },
+    { name: 'Lift Off', par: 3,
+      map: ['gtg.ggggg', 'ggg.tgggg', 'ggg.ggggg', 'ggg.ggogg', 'ggg.ggggg', ...rep(8, 'ggg......'), 'g@g......', 'ggg......'],
+      levels: [...rep(5, '000.22222'), ...rep(10, '000')],
+      extras: [
+        { type: 'lift', in: { c: 1, r: 0, out: 's' }, out: { c: 4, r: 1, out: 'e' } },
+        { type: 'post', c: 7.5, r: 1.5 },
+      ] },
 
     { name: 'Duck Pond', par: 3,
       map: ['ggggggg', 'gggoggg', 'ggggggg', 'gww=wwg', 'gww=wwg', 'gww=wwg', ...rep(7, 'ggggggg'), 'ggg@ggg', 'ggggggg'] },
@@ -622,17 +826,20 @@ const SUNNY_PARK = {
         { type: 'bumper', a: [0, 6.5], b: [1.5, 5] },
         { type: 'bumper', a: [7.5, 8], b: [9, 6.5] },
         { type: 'bumper', a: [7.5, 0], b: [9, 1.5] },
+        { type: 'post', c: 4.5, r: 6.5 }, { type: 'post', c: 2.5, r: 5.6 },
       ] },
 
-    { name: 'The Valley', par: 2,
-      map: ['ggggg', 'ggogg', ...rep(14, 'ggggg'), 'gg@gg', 'ggggg'],
+    { name: 'Loop de Loop', par: 3,
+      map: ['ggggg', 'ggggo', 'ggggg', 'ggggg', '.ggg.', '..g..', '..g..', '..g..', '.ggg.', ...rep(7, 'ggggg'), 'gg@gg', 'ggggg'],
       extras: [
-        { type: 'hill', c: 2.5, r: 9, rad: 3, h: -0.08 },
-        { type: 'hill', c: 2.5, r: 4, rad: 1.2, h: 0.04 },
+        { type: 'loop', c: 2, r: 7, dir: 'n', radius: 0.25 },
+        { type: 'bumper', a: [1, 9], b: [2, 8] }, { type: 'bumper', a: [4, 9], b: [3, 8] },
+        { type: 'hill', c: 2.5, r: 13, rad: 2.5, h: -0.06 },
       ] },
 
-    { name: 'Stream Crossing', par: 3,
-      map: ['ggggg', 'ggogg', ...rep(3, 'ggggg'), 'www=w', 'www=w', ...rep(8, 'ggggg'), 'gg@gg', 'ggggg'] },
+    { name: 'Lock Gate', par: 3,
+      map: ['ggggg', 'ggogg', ...rep(3, 'ggggg'), 'www=w', 'www=w', ...rep(8, 'ggggg'), 'gg@gg', 'ggggg'],
+      extras: [{ type: 'slider', c: 2.5, r: 11, axis: 'z', halfWidth: 1.25, gap: 0.45, period: 3.2 }] },
 
     { name: 'Windmill Corner', par: 3,
       map: ['ggggggggggg', 'gggggggggog', 'ggggggggggg', ...rep(12, 'ggg........'), 'g@g........', 'ggg........'],
@@ -649,18 +856,100 @@ const SUNNY_PARK = {
       map: ['wwwwwww', 'wgggggw', 'wggoggw', 'wgggggw', 'www=www', 'www=www', 'www=www', ...rep(6, 'ggggggg'), 'ggg@ggg', 'ggggggg'] },
 
     { name: 'Grand Finale', par: 4,
-      map: ['ggg', 'gog', ...rep(6, 'ggg'), ...rep(4, '^^^'), ...rep(19, 'ggg'), 'g@g', 'ggg'],
-      levels: [...rep(8, '111'), ...rep(25, '000')],
+      map: ['ggg', 'gog', ...rep(4, 'ggg'), ...rep(4, '^^^'), ...rep(11, 'ggg'), '.g.', '.g.', '.g.', ...rep(7, 'ggg'), 'g@g', 'ggg'],
+      levels: [...rep(6, '111'), ...rep(27, '000')],
       extras: [
-        { type: 'windmill', c: 1.5, r: 20, axis: 'z', halfWidth: 0.75, period: 4.5, front: 1 },
-        { type: 'hill', c: 1.5, r: 4, rad: 1.5, h: 0.04 },
+        { type: 'loop', c: 1, r: 23, dir: 'n', radius: 0.25 },
+        { type: 'bumper', a: [0, 24.6], b: [1, 24] }, { type: 'bumper', a: [3, 24.6], b: [2, 24] },
+        { type: 'windmill', c: 1.5, r: 15, axis: 'z', halfWidth: 0.75, period: 4.5, front: 1 },
+        { type: 'pendulum', c: 1.5, r: 3.5, axis: 'z', halfWidth: 0.75, period: 2.8 },
+      ] },
+  ],
+};
+
+// Pirate Cove adds: s sand, d ship's deck, p ship's plank (narrow, no rails). Extras: cannon, ship (decoration).
+const PIRATE_COVE = {
+  id: 'pirate', name: 'Pirate Cove', style: 'beach',
+  shortRound: [0, 2, 3, 4, 6, 8, 10, 11, 13, 14],
+  holes: [
+    { name: 'Beach Landing', par: 2,
+      map: ['sgggs', 'sgogs', 'sgggs', ...rep(4, 'ggggg'), 'gssgg', 'gssgg', ...rep(7, 'ggggg'), 'gg@gg', 'ggggg'] },
+
+    { name: 'Sandbar', par: 3,
+      map: ['ssggssssgg', 'sgggggggog', 'gggggggggg', ...rep(10, 'ggg.......'), 'g@g.......', 'ggg.......'] },
+
+    { name: 'Walk the Plank', par: 3,
+      map: ['sgggs', 'sgogs', 'ggggg', ...rep(3, 'wwpww'), ...rep(4, '.ddd.'), '.d@d.', '.ddd.'],
+      levels: [...rep(3, '00000'), ...rep(3, '00200'), ...rep(6, '02220')],
+      extras: [{ type: 'ship', bow: 'n' }] },
+
+    { name: 'Cannonball', par: 3,
+      map: ['wwwwwww', 'wgggggw', 'wggoggw', 'wgggggw', 'wwwwwww', 'wwwwwww', '..gtg..', ...rep(6, '..ggg..'), '..g@g..', '..ggg..'],
+      extras: [{ type: 'cannon', in: { c: 3, r: 6, out: 's' }, target: { c: 2, r: 3 }, apex: 1 }] },
+
+    { name: 'Sea Cave', par: 3,
+      map: ['ggg.gtg', 'gog.ggg', ...rep(4, 'ggg.ggg'), 'gss.ggg', 'gss.ggg', ...rep(4, 'ggg.ggg'), 'ggg.g@g', 'gtg.ggg'],
+      extras: [{ type: 'tunnel', a: { c: 5, r: 0, out: 's' }, b: { c: 1, r: 13, out: 'n' }, length: 6 }] },
+
+    { name: 'Treasure Island', par: 3,
+      map: ['wwwwwww', 'wsgggsw', 'wggoggw', 'wsgggsw', 'w=www=w', 'w=www=w', 'w=www=w', ...rep(6, 'ggggggg'), 'ggg@ggg', 'ggggggg'] },
+
+    { name: 'Shipwreck', par: 3,
+      map: ['sgggs', 'goggg', 'ggggg', 'ggggg', ...rep(6, '.ddd.'), ...rep(4, '.^^^.'), ...rep(5, 'ggggg'), 'gg@gg', 'ggggg'],
+      levels: [...rep(4, '00000'), ...rep(6, '02220'), ...rep(11, '00000')],
+      extras: [{ type: 'ship', bow: 'n' }] },
+
+    { name: 'Barrel Run', par: 3,
+      map: ['ggggggg', 'gggggog', ...rep(7, 'ggggggg'), 'sgggggs', 'sgggggs', ...rep(7, 'ggggggg'), 'g@ggggg', 'ggggggg'],
+      extras: [
+        { type: 'post', c: 1.5, r: 5, rad: 0.09 }, { type: 'post', c: 5.5, r: 5, rad: 0.09 },
+        { type: 'post', c: 3.5, r: 8, rad: 0.09 }, { type: 'post', c: 1.5, r: 12, rad: 0.09 },
+        { type: 'post', c: 5.5, r: 12, rad: 0.09 }, { type: 'post', c: 3.5, r: 15, rad: 0.09 },
+      ] },
+
+    { name: 'Dock Walk', par: 3,
+      map: ['wwwwgggg', 'wwwwggog', 'wwwwgggg', 'wwwww==w', 'wwwww==w', 'w======w', 'w======w', 'w==wwwww', 'w==wwwww', 'gggwwwww', 'g@gwwwww', 'gggwwwww'] },
+
+    { name: 'Bunker Hill', par: 3,
+      map: ['ggggg', 'ggogg', ...rep(4, 'ggggg'), 'ssgss', 'ssgss', ...rep(4, 'ggggg'), 'gsssg', 'gsssg', ...rep(4, 'ggggg'), 'gg@gg', 'ggggg'],
+      extras: [{ type: 'hill', c: 2.5, r: 10, rad: 2, h: 0.06 }, { type: 'hill', c: 2.5, r: 4, rad: 1.5, h: -0.04 }] },
+
+    { name: 'Cannon Cove', par: 3,
+      map: ['.ddddd.', '.ddodd.', '.ddddd.', '.ddddd.', 'wwwwwww', 'wwwwwww', 'ggtgggg', ...rep(5, 'ggggggg'), 'gggg@gg', 'ggggggg'],
+      levels: [...rep(4, '0222220'), ...rep(10, '0000000')],
+      extras: [
+        { type: 'cannon', in: { c: 2, r: 6, out: 's' }, target: { c: 4, r: 3 }, apex: 1.4 },
+        { type: 'ship', bow: 'e' },
+        { type: 'post', c: 2.5, r: 2.5, rad: 0.09 },
+      ] },
+
+    { name: 'Plank Bridge', par: 3,
+      map: ['ggggg', 'ggogg', 'ggggg', 'ggggg', ...rep(3, 'wwpw='), ...rep(8, 'ggggg'), 'gg@gg', 'ggggg'] },
+
+    { name: 'Skull Rock', par: 3,
+      map: ['ggggg', 'gggog', 'ggggg', 'ggggg', 'ggtgg', '.....', '.....', 'ggtgg', ...rep(5, 'ggggg'), 'gg@gg', 'ggggg'],
+      extras: [
+        { type: 'tunnel', a: { c: 2, r: 7, out: 's' }, b: { c: 2, r: 4, out: 'n' }, length: 2 },
+        { type: 'post', c: 1, r: 10.5, rad: 0.09 }, { type: 'post', c: 4, r: 10.5, rad: 0.09 },
+      ] },
+
+    { name: 'Tidal Gate', par: 3,
+      map: ['ggggg', 'ggogg', ...rep(4, 'ggggg'), 'sgggs', 'sgggs', ...rep(10, 'ggggg'), 'gg@gg', 'ggggg'],
+      extras: [{ type: 'slider', c: 2.5, r: 11, axis: 'z', halfWidth: 1.25, gap: 0.45, period: 3 }] },
+
+    { name: "Captain's Treasure", par: 4,
+      map: ['sgggs', 'sgogs', 'ggggg', ...rep(3, 'wwpww'), ...rep(4, '.ddd.'), ...rep(4, '.^^^.'), ...rep(7, 'ggggg'), 'gg@gg', 'ggggg'],
+      levels: [...rep(3, '00000'), ...rep(3, '00200'), ...rep(4, '02220'), ...rep(13, '00000')],
+      extras: [
+        { type: 'ship', bow: 'n' },
+        { type: 'pendulum', c: 2.5, r: 8, axis: 'z', halfWidth: 0.75, period: 2.6 },
       ] },
   ],
 };
 
 const THEMES = [
-  { id: 'sunny', name: 'Sunny Park', blurb: 'Flowers, a windmill, ponds and bridges', course: SUNNY_PARK, colour: '#5cc46a' },
-  { id: 'pirate', name: 'Pirate Cove', blurb: 'Shipwrecks, sand and a ball cannon', course: null, colour: '#e0b45a' },
+  { id: 'sunny', name: 'Sunny Park', blurb: 'Windmill, ball lift, loop-the-loop and ponds', course: SUNNY_PARK, colour: '#5cc46a' },
+  { id: 'pirate', name: 'Pirate Cove', blurb: 'Shipwrecks, sand, a plank and a ball cannon', course: PIRATE_COVE, colour: '#e0b45a' },
   { id: 'volcano', name: 'Volcano Island', blurb: 'Putt up into a smoking volcano', course: null, colour: '#e0573a' },
   { id: 'castle', name: 'Castle Kingdom', blurb: 'Drawbridge, moat and swinging gates', course: null, colour: '#9aa0b5' },
   { id: 'frozen', name: 'Frozen Peaks', blurb: 'Ice, snow and marble-run chutes', course: null, colour: '#8fd3f0' },
@@ -668,9 +957,10 @@ const THEMES = [
 ];
 
 const PURE = {
-  SUNNY_PARK, THEMES,
+  SUNNY_PARK, PIRATE_COVE, THEMES,
   CONFIG, parseHole, cellAt, cellOf, baseHeight, groundHeight, gradient, createBall, shoot, stepBall, simulateShot,
   windmillBlocked, windmillAngle, distanceField, botPlay, cappedScore, isCourseChar,
+  sliderPieces, pendulumState, transportPos, loopSpeedNeeded, laneXZ, offPlank, isWet, cannonMuzzle,
 };
 // ==== PURE END ====
 </script>
@@ -798,7 +1088,61 @@ const TEX = {
     g.fillStyle = '#5a3d26'; g.fillRect(0, 0, w, h);
     speckle(g, w, h, 1800, ['#6b4a30', '#4a311e', '#73553a'], 2);
   }),
+  sand: canvasTex(256, 256, (g, w, h) => {
+    g.fillStyle = '#e6cf9c'; g.fillRect(0, 0, w, h);
+    speckle(g, w, h, 7000, ['#d9bf88', '#f0dcae', '#cdb07a', '#efe2c0', '#c9a873'], 1.5);
+    for (let i = 0; i < 30; i++) { // ripples left by the wind
+      g.strokeStyle = 'rgba(160,125,70,.18)'; g.lineWidth = 2;
+      const y = Math.random() * h;
+      g.beginPath(); g.moveTo(0, y); g.bezierCurveTo(w / 3, y - 6, (2 * w) / 3, y + 6, w, y); g.stroke();
+    }
+  }),
+  bunker: canvasTex(256, 256, (g, w, h) => {
+    g.fillStyle = '#f2e3bd'; g.fillRect(0, 0, w, h);
+    speckle(g, w, h, 9000, ['#e8d5a6', '#fbf0d2', '#dcc493', '#f6e8c4'], 1.3);
+  }),
+  deck: canvasTex(256, 256, (g, w, h) => {
+    g.fillStyle = '#8a6440'; g.fillRect(0, 0, w, h);
+    for (let y = 0; y < h; y += 32) {
+      g.fillStyle = `rgba(${Math.random() < 0.5 ? '255,235,200' : '30,15,5'},${0.05 + Math.random() * 0.1})`; g.fillRect(0, y, w, 32);
+      g.fillStyle = 'rgba(30,15,5,.75)'; g.fillRect(0, y, w, 2);
+      for (let x = (y / 32) % 2 ? 0 : 96; x < w; x += 192) { g.fillRect(x, y, 2, 32); g.fillStyle = '#2b2118'; g.fillRect(x + 6, y + 8, 3, 3); g.fillRect(x + 6, y + 22, 3, 3); g.fillStyle = 'rgba(30,15,5,.75)'; }
+      for (let i = 0; i < 10; i++) {
+        g.strokeStyle = `rgba(50,25,8,${0.12 + Math.random() * 0.15})`;
+        const yy = y + 4 + Math.random() * 24;
+        g.beginPath(); g.moveTo(0, yy); g.bezierCurveTo(w / 3, yy + 2, (2 * w) / 3, yy - 2, w, yy + 1); g.stroke();
+      }
+    }
+  }),
+  hull: canvasTex(256, 128, (g, w, h) => {
+    g.fillStyle = '#4a3020'; g.fillRect(0, 0, w, h);
+    for (let y = 0; y < h; y += 16) {
+      g.fillStyle = `rgba(0,0,0,${0.1 + Math.random() * 0.2})`; g.fillRect(0, y, w, 16);
+      g.fillStyle = 'rgba(0,0,0,.6)'; g.fillRect(0, y, w, 1.5);
+    }
+    speckle(g, w, h, 400, ['rgba(120,140,110,.35)', 'rgba(200,200,190,.25)'], 3); // barnacles and salt
+  }),
+  lagoon: canvasTex(256, 256, (g, w, h) => {
+    g.fillStyle = '#1aa3b8'; g.fillRect(0, 0, w, h);
+    for (let i = 0; i < 160; i++) {
+      g.strokeStyle = `rgba(210,255,250,${0.15 + Math.random() * 0.3})`;
+      g.lineWidth = 1 + Math.random() * 2;
+      const x = Math.random() * w, y = Math.random() * h, l = 8 + Math.random() * 26;
+      g.beginPath(); g.moveTo(x, y); g.quadraticCurveTo(x + l / 2, y - 3, x + l, y); g.stroke();
+    }
+  }),
+  skull: canvasTex(256, 160, (g, w, h) => {
+    g.fillStyle = '#111'; g.fillRect(0, 0, w, h);
+    g.fillStyle = '#f1ece0'; g.strokeStyle = '#f1ece0'; g.lineWidth = 14; g.lineCap = 'round';
+    g.beginPath(); g.moveTo(70, 40); g.lineTo(186, 130); g.moveTo(186, 40); g.lineTo(70, 130); g.stroke();
+    g.beginPath(); g.arc(128, 72, 38, 0, Math.PI * 2); g.fill();
+    g.fillRect(104, 92, 48, 26);
+    g.fillStyle = '#111';
+    g.beginPath(); g.arc(114, 70, 10, 0, Math.PI * 2); g.arc(142, 70, 10, 0, Math.PI * 2); g.fill();
+    g.fillRect(110, 106, 4, 12); g.fillRect(122, 106, 4, 12); g.fillRect(134, 106, 4, 12); g.fillRect(146, 106, 4, 12);
+  }),
 };
+TEX.sea = TEX.lagoon.clone(); TEX.sea.needsUpdate = true; TEX.sea.repeat.set(60, 60);
 TEX.grass.repeat.set(1, 1);
 
 const MAT = {
@@ -824,7 +1168,25 @@ const MAT = {
   sail: new THREE.MeshStandardMaterial({ color: '#f4efe2', roughness: 0.8, side: THREE.DoubleSide }),
   dark: new THREE.MeshBasicMaterial({ color: '#120d08' }),
   aim: new THREE.MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0.85, depthWrite: false, side: THREE.DoubleSide }),
+  // Pirate Cove
+  sand: new THREE.MeshStandardMaterial({ map: TEX.sand, roughness: 1 }),
+  bunker: new THREE.MeshStandardMaterial({ map: TEX.bunker, roughness: 1 }),
+  deck: new THREE.MeshStandardMaterial({ map: TEX.deck, roughness: 0.85, side: THREE.DoubleSide }),
+  hull: new THREE.MeshStandardMaterial({ map: TEX.hull, roughness: 0.9, side: THREE.DoubleSide }),
+  lagoon: new THREE.MeshStandardMaterial({ map: TEX.lagoon, roughness: 0.1, metalness: 0.1, transparent: true, opacity: 0.8 }),
+  sea: new THREE.MeshStandardMaterial({ map: TEX.sea, roughness: 0.15, metalness: 0.1 }),
+  shallows: new THREE.MeshStandardMaterial({ color: '#c8b27c', roughness: 1 }),
+  skull: new THREE.MeshStandardMaterial({ map: TEX.skull, roughness: 0.8, side: THREE.DoubleSide }),
+  iron: new THREE.MeshStandardMaterial({ color: '#2a2a2e', roughness: 0.45, metalness: 0.7 }),
+  gold: new THREE.MeshStandardMaterial({ color: '#ffcc33', roughness: 0.3, metalness: 0.9, emissive: '#5a3c00' }),
+  rope: new THREE.MeshStandardMaterial({ color: '#c2a372', roughness: 1 }),
+  canvas: new THREE.MeshStandardMaterial({ color: '#e8dcc0', roughness: 0.9, side: THREE.DoubleSide }),
+  palm: new THREE.MeshStandardMaterial({ color: '#8a6a45', roughness: 1, flatShading: true }),
+  frond: new THREE.MeshStandardMaterial({ color: '#3d9a3a', roughness: 0.8, side: THREE.DoubleSide, flatShading: true }),
+  dune: new THREE.MeshStandardMaterial({ color: '#9ab65a', roughness: 1, flatShading: true }),
+  smoke: new THREE.MeshStandardMaterial({ color: '#cfcfcf', roughness: 1, transparent: true, opacity: 0.8, depthWrite: false }),
 };
+TEX.sand.repeat.set(0.4, 0.4);
 
 // Colour codes are sRGB but r128 treats them as linear; convert so they don't render washed out.
 for (const m of Object.values(MAT)) if (m.color && !m.map) m.color.convertSRGBToLinear();
@@ -833,21 +1195,32 @@ TEX.grass.repeat.set(0.25, 0.25); // UVs are in metres: one tile per 4 m
 
 // The park lawn, with the hole's plot cut out so ponds below green level aren't covered.
 // Inside the plot every non-course cell gets its own grass or flower-bed square.
-let ground = null;
+let ground = null, sea = null;
 function buildGround(hole) {
   if (ground) { ground.geometry.dispose(); scene.remove(ground); }
+  if (sea) { scene.remove(sea); sea = null; }
   const W = hole.cols * C, D = hole.rows * C;
   const shape = new THREE.Shape();
-  shape.moveTo(-200, -200); shape.lineTo(200, -200); shape.lineTo(200, 200); shape.lineTo(-200, 200); shape.lineTo(-200, -200);
+  // the park lawn runs to the horizon; the beach is a sandy island in the sea
+  const m = STYLE === 'beach' ? 11 : 200;
+  const x0 = STYLE === 'beach' ? -m : -200, x1 = STYLE === 'beach' ? W + m : 200;
+  const y0 = STYLE === 'beach' ? -D - m : -200, y1 = STYLE === 'beach' ? m : 200;
+  shape.moveTo(x0, y0); shape.lineTo(x1, y0); shape.lineTo(x1, y1); shape.lineTo(x0, y1); shape.lineTo(x0, y0);
   // shape y maps to world −z after the rotation below
   const cut = new THREE.Path();
   cut.moveTo(0, 0); cut.lineTo(0, -D); cut.lineTo(W, -D); cut.lineTo(W, 0); cut.lineTo(0, 0);
   shape.holes.push(cut);
-  ground = new THREE.Mesh(new THREE.ShapeGeometry(shape), MAT.grass);
+  ground = new THREE.Mesh(new THREE.ShapeGeometry(shape), STYLE === 'beach' ? MAT.sand : MAT.grass);
   ground.rotation.x = -Math.PI / 2;
   ground.position.y = -0.02;
   ground.receiveShadow = true;
   scene.add(ground);
+  if (STYLE === 'beach') {
+    sea = new THREE.Mesh(new THREE.PlaneGeometry(400, 400), MAT.sea);
+    sea.rotation.x = -Math.PI / 2; sea.position.set(W / 2, -0.1, D / 2);
+    sea.receiveShadow = true;
+    scene.add(sea);
+  }
 }
 
 // ============================================================
@@ -910,34 +1283,197 @@ function box(w, h, d, mat, x, y, z) {
 // ============================================================
 const C = CONFIG.cell;
 let holeGroup = null;
-const anim = { windmills: [], flag: null, water: [] };
+const anim = { windmills: [], flag: null, water: [], sliders: [], pendulums: [] };
+
+const stripeTex = canvasTex(128, 32, (g, w, h) => {
+  for (let x = -h; x < w + h; x += 32) {
+    g.fillStyle = (x / 32) % 2 ? '#f4f4f0' : '#d8342c';
+    g.beginPath(); g.moveTo(x, 0); g.lineTo(x + 16, 0); g.lineTo(x + 16 - h, h); g.lineTo(x - h, h); g.fill();
+    g.fillStyle = (x / 32) % 2 ? '#d8342c' : '#f4f4f0';
+    g.beginPath(); g.moveTo(x + 16, 0); g.lineTo(x + 32, 0); g.lineTo(x + 32 - h, h); g.lineTo(x + 16 - h, h); g.fill();
+  }
+});
+const MACH = {
+  steel: new THREE.MeshStandardMaterial({ color: '#c9ced6', roughness: 0.3, metalness: 0.8 }),
+  yellow: new THREE.MeshStandardMaterial({ color: '#f2b705', roughness: 0.45, metalness: 0.3 }),
+  red: new THREE.MeshStandardMaterial({ color: '#d8342c', roughness: 0.5 }),
+  rubber: new THREE.MeshStandardMaterial({ color: '#e8322f', roughness: 0.6 }),
+  stripes: new THREE.MeshStandardMaterial({ map: stripeTex, roughness: 0.5 }),
+  glass: new THREE.MeshStandardMaterial({ color: '#bfe6ff', roughness: 0.05, metalness: 0.1, transparent: true, opacity: 0.25, depthWrite: false }),
+};
+for (const m of Object.values(MACH)) if (m.color && !m.map) m.color.convertSRGBToLinear();
+
+function rails(points, side, radius, mat) {
+  // two thin rails following `points`, offset ±side along the horizontal normal of each segment
+  const g = new THREE.Group();
+  for (const s of [-1, 1]) {
+    const pts = points.map((p, i) => {
+      const q = points[Math.min(i + 1, points.length - 1)], o = points[Math.max(i - 1, 0)];
+      let dx = q.x - o.x, dz = q.z - o.z;
+      const l = Math.hypot(dx, dz) || 1;
+      return new THREE.Vector3(p.x - (dz / l) * side * s, p.y, p.z + (dx / l) * side * s);
+    });
+    const tube = new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), Math.max(8, pts.length * 3), radius, 6, false), mat);
+    tube.castShadow = true;
+    g.add(tube);
+  }
+  return g;
+}
+
+function addLiftModel(hole, lf) {
+  const a = lf.a, b = lf.b;
+  const top = Math.max(a.y, b.y) + 0.45;
+  const tx = a.x - a.out[0] * 0.35, tz = a.z - a.out[1] * 0.35;
+  const g = new THREE.Group();
+  const H = top + 0.2 - a.y, s = 0.11;
+  for (const [ox, oz] of [[-s, -s], [s, -s], [-s, s], [s, s]]) g.add(box(0.03, H, 0.03, MACH.yellow, tx + ox, a.y + H / 2, tz + oz));
+  for (let y = a.y + 0.15; y < top + 0.15; y += 0.22) {
+    g.add(box(2 * s + 0.03, 0.02, 0.02, MACH.yellow, tx, y, tz - s), box(2 * s + 0.03, 0.02, 0.02, MACH.yellow, tx, y, tz + s));
+  }
+  g.add(box(2 * s + 0.08, 0.05, 2 * s + 0.08, MACH.red, tx, a.y + H + 0.025, tz));
+  const tubeGlass = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, H, 16, 1, true), MACH.glass);
+  tubeGlass.position.set(tx, a.y + H / 2, tz);
+  g.add(tubeGlass);
+  // feed ramp from the mouth into the tower, and the chute down to the upper green
+  g.add(rails([{ x: a.x, y: a.y + 0.01, z: a.z }, { x: tx, y: a.y + 0.03, z: tz }], 0.025, 0.006, MACH.steel));
+  const cx = b.x - b.out[0] * 0.35, cz = b.z - b.out[1] * 0.35;
+  g.add(rails([{ x: tx, y: top, z: tz }, { x: (tx + cx) / 2, y: (top + b.y + 0.12) / 2 + 0.02, z: (tz + cz) / 2 }, { x: cx, y: b.y + 0.12, z: cz }, { x: b.x, y: b.y + 0.01, z: b.z }], 0.025, 0.006, MACH.steel));
+  const sign = box(0.3, 0.12, 0.02, MACH.stripes, tx, a.y + H + 0.14, tz);
+  g.add(sign);
+  holeGroup.add(g);
+}
+
+function addLoopModel(hole, lp) {
+  const R = lp.radius, M = lp.M, dx = lp.d[0], dz = lp.d[1];
+  const pts = [];
+  pts.push({ x: lp.E.x, y: M.y + 0.006, z: lp.E.z });
+  for (let i = 0; i <= 48; i++) {
+    const phi = (i / 48) * Math.PI * 2;
+    // drift sideways through the loop so the track can cross itself, like a real one
+    const side = (i / 48 - 0.5) * 0.09;
+    pts.push({ x: M.x + dx * R * Math.sin(phi) - dz * side, y: M.y + R - R * Math.cos(phi) + 0.006, z: M.z + dz * R * Math.sin(phi) + dx * side });
+  }
+  pts.push({ x: lp.X.x, y: M.y + 0.006, z: lp.X.z });
+  holeGroup.add(rails(pts, 0.026, 0.006, MACH.steel));
+  // A-frame supports either side of the loop
+  for (const s of [-1, 1]) {
+    const px = M.x - dz * s * 0.12, pz = M.z + dx * s * 0.12;
+    holeGroup.add(box(0.03, 2 * R + 0.12, 0.03, MACH.red, px, M.y + R + 0.06, pz));
+  }
+  const beam = box(Math.abs(dz) ? 0.27 : 0.03, 0.03, Math.abs(dx) ? 0.27 : 0.03, MACH.red, M.x, M.y + 2 * R + 0.1, M.z);
+  holeGroup.add(beam);
+}
+
+function addSliderModel(hole, s) {
+  const hw = s.halfWidth;
+  for (const v of [-(hw + 0.06), hw + 0.06]) {
+    const [x, z] = laneXZ(s, 0, v);
+    holeGroup.add(box(0.06, 0.32, 0.06, MAT.wood, x, s.y + 0.16, z));
+  }
+  const [cx, cz] = laneXZ(s, 0, 0);
+  const beam = box(s.axis === 'z' ? 2 * hw + 0.18 : 0.06, 0.06, s.axis === 'z' ? 0.06 : 2 * hw + 0.18, MAT.wood, cx, s.y + 0.32, cz);
+  holeGroup.add(beam);
+  const pieces = [0, 1].map(() => { const m = box(1, 0.09, 0.035, STYLE === 'beach' ? MAT.deck : MACH.stripes, 0, 0, 0); holeGroup.add(m); return m; });
+  anim.sliders.push({ s, pieces });
+}
+
+function addPendulumModel(hole, p) {
+  const pivotY = p.y + p.length + p.bobR + 0.005, hw = p.halfWidth + 0.1;
+  for (const v of [-hw, hw]) {
+    const [x, z] = laneXZ(p, 0, v);
+    holeGroup.add(box(0.07, pivotY + 0.05 - p.y, 0.07, MAT.wood, x, p.y + (pivotY + 0.05 - p.y) / 2, z));
+  }
+  const [cx, cz] = laneXZ(p, 0, 0);
+  holeGroup.add(box(p.axis === 'z' ? 2 * hw + 0.07 : 0.07, 0.07, p.axis === 'z' ? 0.07 : 2 * hw + 0.07, MAT.wood, cx, pivotY + 0.05, cz));
+  const arm = new THREE.Group();
+  arm.position.set(cx, pivotY, cz);
+  const rod = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, p.length, 8), MACH.steel);
+  rod.position.y = -p.length / 2; rod.castShadow = true;
+  // in Pirate Cove the pendulum swings a cannonball on a chain
+  const bob = new THREE.Mesh(new THREE.SphereGeometry(p.bobR, 24, 16), STYLE === 'beach' ? MAT.iron : MACH.stripes);
+  bob.position.y = -p.length; bob.castShadow = true;
+  arm.add(rod, bob);
+  holeGroup.add(arm);
+  anim.pendulums.push({ p, arm });
+}
+
+function addPostModel(hole, p) {
+  const y = groundHeight(hole, p.x, p.z) ?? 0;
+  if (STYLE === 'beach') {
+    // a rum barrel: staves with iron hoops
+    const barrel = new THREE.Mesh(new THREE.CylinderGeometry(p.rad * 0.92, p.rad * 0.92, 0.22, 16), MAT.wood);
+    barrel.position.set(p.x, y + 0.11, p.z); barrel.castShadow = true;
+    holeGroup.add(barrel);
+    for (const hy of [0.04, 0.18]) {
+      const hoop = new THREE.Mesh(new THREE.TorusGeometry(p.rad * 0.95, 0.008, 6, 20), MAT.iron);
+      hoop.rotation.x = Math.PI / 2; hoop.position.set(p.x, y + hy, p.z);
+      holeGroup.add(hoop);
+    }
+    return;
+  }
+  const post = new THREE.Mesh(new THREE.CylinderGeometry(p.rad * 0.8, p.rad * 0.8, 0.16, 20), MAT.white);
+  post.position.set(p.x, y + 0.08, p.z); post.castShadow = true;
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(p.rad * 0.92, p.rad * 0.22, 10, 24), MACH.rubber);
+  ring.rotation.x = Math.PI / 2; ring.position.set(p.x, y + 0.03, p.z); ring.castShadow = true;
+  const cap = new THREE.Mesh(new THREE.SphereGeometry(p.rad * 0.8, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2), MACH.red);
+  cap.position.set(p.x, y + 0.16, p.z);
+  holeGroup.add(post, ring, cap);
+}
+
+function animateMachines(t) {
+  for (const a of anim.windmills) a.rotor.rotation.z = a.flip * windmillAngle(a.w, t);
+  for (const { s, pieces } of anim.sliders) {
+    sliderPieces(s, t).forEach((pc, i) => {
+      const m = pieces[i], len = Math.max(0.001, pc.v1 - pc.v0);
+      const [x, z] = laneXZ(s, 0, (pc.v0 + pc.v1) / 2);
+      m.position.set(x, s.y + 0.05, z);
+      m.scale.set(len, 1, 1);
+      m.rotation.y = s.axis === 'z' ? 0 : Math.PI / 2;
+    });
+  }
+  for (const { p, arm } of anim.pendulums) {
+    const th = pendulumState(p, t).th;
+    if (p.axis === 'z') arm.rotation.z = th; else arm.rotation.x = -th;
+  }
+}
 
 function disposeGroup(g) {
   g.traverse(o => { if (o.geometry) o.geometry.dispose(); });
   scene.remove(g);
 }
 
-function buildHole(hole) {
+let STYLE = 'park';
+
+function buildHole(hole, style = 'park') {
+  STYLE = style;
+  const beach = style === 'beach';
   if (holeGroup) disposeGroup(holeGroup);
   holeGroup = new THREE.Group();
-  anim.windmills = []; anim.water = [];
+  anim.windmills = []; anim.water = []; anim.sliders = []; anim.pendulums = []; anim.flags = []; anim.ship = null;
   seed = 1 + hole.rows * 131 + hole.cols * 17;
 
   const carpet = new GeoBuilder(), bridge = new GeoBuilder(), water = new GeoBuilder(), basin = new GeoBuilder();
   const brick = new GeoBuilder(), wood = new GeoBuilder(), stone = new GeoBuilder(), soil = new GeoBuilder();
+  const bunker = new GeoBuilder(), deck = new GeoBuilder(), hull = new GeoBuilder();
   const N = 4;
 
   for (const cell of hole.cells) {
     if (!isCourseChar(cell.ch)) continue;
     const x0 = cell.c * C, z0 = cell.r * C;
-    if (cell.ch === 'w') {
-      const y = baseHeight(cell, x0 + C / 2, z0 + C / 2);
+    if (cell.ch === 'w' || cell.ch === 'p') {
+      const y = cell.ch === 'w' ? baseHeight(cell, x0 + C / 2, z0 + C / 2) : -CONFIG.waterDepth;
+      if (cell.ch === 'p') {
+        // the plank itself: a narrow board over the water
+        const top = cell.level * CONFIG.levelStep, hw = CONFIG.plankWidth / 2, cx = x0 + C / 2, cz = z0 + C / 2;
+        if (cell.plankAxis === 'z') prism(deck, cx - hw, z0, cx - hw, z0 + C, 1, 0, 2 * hw, top - 0.05, top, top);
+        else prism(deck, x0, cz - hw, x0 + C, cz - hw, 0, 1, 2 * hw, top - 0.05, top, top);
+      }
       water.quad([x0, y, z0 + C], [x0 + C, y, z0 + C], [x0 + C, y, z0], [x0, y, z0], [x0, z0 + C], [x0 + C, z0 + C], [x0 + C, z0], [x0, z0]);
       const by = y - 0.12;
       basin.quad([x0, by, z0 + C], [x0 + C, by, z0 + C], [x0 + C, by, z0], [x0, by, z0], [0, 1], [1, 1], [1, 0], [0, 0]);
       continue;
     }
-    const gb = cell.ch === '=' ? bridge : carpet;
+    const gb = cell.ch === '=' ? bridge : cell.ch === 's' ? bunker : cell.ch === 'd' ? deck : carpet;
     // sample just inside the cell so neighbouring levels don't bleed in
     const P = (i, j) => {
       const x = x0 + Math.min(Math.max(i / N, 1e-4), 1 - 1e-4) * C;
@@ -962,7 +1498,8 @@ function buildHole(hole) {
       const ha = baseHeight(cell, s.ax - s.nx * 1e-4, s.az - s.nz * 1e-4);
       const hb = baseHeight(cell, s.bx - s.nx * 1e-4, s.bz - s.nz * 1e-4);
       const low = cell.ch === 'w' ? ha - 0.12 : -0.05;
-      prism(cell.ch === 'w' ? stone : brick, s.ax, s.az, s.bx, s.bz, s.nx, s.nz, 0.07, Math.min(low, -0.05), ha + CONFIG.wallHeight, hb + CONFIG.wallHeight);
+      const edge = cell.ch === 'w' ? stone : cell.ch === 'd' ? hull : beach ? wood : brick;
+      prism(edge, s.ax, s.az, s.bx, s.bz, s.nx, s.nz, 0.07, Math.min(low, -0.05), ha + CONFIG.wallHeight, hb + CONFIG.wallHeight);
     } else if (s.kind === 'step') {
       const a = s.cellA, b = s.cellB;
       const mx = (s.ax + s.bx) / 2, mz = (s.az + s.bz) / 2;
@@ -970,7 +1507,8 @@ function buildHole(hole) {
       const hA = baseHeight(a, mx - nx * 1e-4, mz - nz * 1e-4), hB = baseHeight(b, mx + nx * 1e-4, mz + nz * 1e-4);
       const lowCell = hA < hB ? a : b;
       const bottom = lowCell.ch === 'w' ? Math.min(hA, hB) - 0.12 : Math.min(hA, hB);
-      prism(lowCell.ch === 'w' ? stone : wood, s.ax, s.az, s.bx, s.bz, 0, 0, 0, bottom, s.top, s.top);
+      const highCell = lowCell === a ? b : a;
+      prism(highCell.ch === 'd' ? hull : lowCell.ch === 'w' ? stone : wood, s.ax, s.az, s.bx, s.bz, 0, 0, 0, bottom, s.top, s.top);
     } else if (s.kind === 'rail') {
       const y = s.top - CONFIG.wallHeight;
       prism(wood, s.ax, s.az, s.bx, s.bz, 0, 0, 0, y - 0.15, s.top, s.top);
@@ -982,7 +1520,7 @@ function buildHole(hole) {
     const dx = s.bx - s.ax, dz = s.bz - s.az, l = Math.hypot(dx, dz);
     const cell = cellAt(hole, (s.ax + s.bx) / 2 + 0.01, (s.az + s.bz) / 2 + 0.01);
     const base = cell ? baseHeight(cell, (s.ax + s.bx) / 2, (s.az + s.bz) / 2) : 0;
-    prism(brick, s.ax, s.az, s.bx, s.bz, dz / l, -dx / l, 0.06, base - 0.05, base + CONFIG.wallHeight, base + CONFIG.wallHeight);
+    prism(beach ? wood : brick, s.ax, s.az, s.bx, s.bz, dz / l, -dx / l, 0.06, base - 0.05, base + CONFIG.wallHeight, base + CONFIG.wallHeight);
   }
 
   // scenery cells inside the plot: flower beds hugging the course, lawn elsewhere
@@ -995,8 +1533,9 @@ function buildHole(hole) {
       if (n && isCourseChar(n.ch)) near = true;
     }
     const x0 = cell.c * C, z0 = cell.r * C;
-    if (!near) {
-      const y = -0.02, u = v => v * 0.25;
+    if (!near || beach) {
+      const y = -0.02, u = v => v; // metres, like the lawn; the texture repeat does the scaling
+      if (beach && near) for (let k = 0; k < 2; k++) flowers.push([x0 + 0.06 + rnd() * (C - 0.12), z0 + 0.06 + rnd() * (C - 0.12)]);
       lawn.quad([x0, y, z0 + C], [x0 + C, y, z0 + C], [x0 + C, y, z0], [x0, y, z0], [u(x0), u(-z0 - C)], [u(x0 + C), u(-z0 - C)], [u(x0 + C), u(-z0)], [u(x0), u(-z0)]);
       continue;
     }
@@ -1004,19 +1543,28 @@ function buildHole(hole) {
     soil.quad([x0, y, z0 + C], [x0 + C, y, z0 + C], [x0 + C, y, z0], [x0, y, z0], [0, 1], [1, 1], [1, 0], [0, 0]);
     for (let k = 0; k < 5; k++) flowers.push([x0 + 0.06 + rnd() * (C - 0.12), z0 + 0.06 + rnd() * (C - 0.12)]);
   }
-  if (!lawn.empty) holeGroup.add(meshOf(lawn, MAT.grass, false));
+  if (!lawn.empty) holeGroup.add(meshOf(lawn, beach ? MAT.sand : MAT.grass, false));
 
   const add = (gb, mat, shadows) => { if (!gb.empty) holeGroup.add(meshOf(gb, mat, shadows)); };
-  add(carpet, MAT.carpet, false); add(bridge, MAT.wood, false); add(basin, MAT.basin, false);
+  add(carpet, MAT.carpet, false); add(bridge, beach ? MAT.deck : MAT.wood, false); add(basin, beach ? MAT.shallows : MAT.basin, false);
+  add(bunker, MAT.bunker, false); add(deck, MAT.deck, true); add(hull, MAT.hull, true);
   add(brick, MAT.brick, true); add(wood, MAT.wood, true); add(stone, MAT.stone, true); add(soil, MAT.soil, false);
-  if (!water.empty) { const wm = meshOf(water, MAT.water, false); wm.receiveShadow = true; holeGroup.add(wm); }
+  if (!water.empty) { const wm = meshOf(water, beach ? MAT.lagoon : MAT.water, false); wm.receiveShadow = true; holeGroup.add(wm); }
 
-  addFlowers(flowers);
+  if (beach) addDuneGrass(flowers); else addFlowers(flowers);
   addCupAndFlag(hole);
   addTee(hole);
   for (const w of hole.windmills) addWindmillModel(hole, w);
   for (const tn of hole.tunnels) addTunnelModel(hole, tn);
-  addScenery(hole);
+  for (const lf of hole.lifts) addLiftModel(hole, lf);
+  for (const lp of hole.loops) addLoopModel(hole, lp);
+  for (const s of hole.sliders) addSliderModel(hole, s);
+  for (const p of hole.pendulums) addPendulumModel(hole, p);
+  for (const p of hole.posts) addPostModel(hole, p);
+  for (const cn of hole.cannons) addCannonModel(hole, cn);
+  if (hole.ship) addShipModel(hole);
+  animateMachines(0);
+  if (beach) addBeachScenery(hole); else addScenery(hole);
 
   scene.add(holeGroup);
   buildGround(hole);
@@ -1050,7 +1598,7 @@ function addCupAndFlag(hole) {
   const fg = new THREE.BufferGeometry();
   fg.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0, 0.32, -0.1, 0, 0, -0.2, 0], 3));
   fg.computeVertexNormals();
-  const flag = new THREE.Mesh(fg, MAT.flag);
+  const flag = STYLE === 'beach' ? new THREE.Mesh(new THREE.PlaneGeometry(0.32, 0.2).translate(0.16, -0.1, 0), MAT.skull) : new THREE.Mesh(fg, MAT.flag);
   flag.position.set(x, y + 1.1, z); flag.castShadow = true;
   anim.flag = flag;
   holeGroup.add(hole3, rim, pole, flag);
@@ -1124,7 +1672,21 @@ function addTunnelModel(hole, tn) {
   const away = new THREE.Vector3(-tn.a.out[0] - tn.b.out[0], 0, -tn.a.out[1] - tn.b.out[1]);
   mid.add(away.multiplyScalar(0.4));
   const curve = new THREE.CatmullRomCurve3([a0, a1, mid, b1, b0]);
-  const tube = new THREE.Mesh(new THREE.TubeGeometry(curve, 64, 0.1, 16, false), MAT.bark);
+  const beach = STYLE === 'beach';
+  const tube = new THREE.Mesh(new THREE.TubeGeometry(curve, 64, beach ? 0.13 : 0.1, 16, false), beach ? MAT.rock : MAT.bark);
+  if (beach) {
+    // a sea-cave rock heaped over the pipe, with two dark hollows for eyes
+    const rockMid = curve.getPoint(0.5);
+    const mound = new THREE.Mesh(new THREE.DodecahedronGeometry(0.75, 1), MAT.rock);
+    mound.scale.set(1, 0.65, 0.8); mound.position.set(rockMid.x, 0.2, rockMid.z); mound.castShadow = true; mound.receiveShadow = true;
+    holeGroup.add(mound);
+    const toward = new THREE.Vector3(tn.a.x - rockMid.x, 0, tn.a.z - rockMid.z).normalize();
+    for (const side of [-1, 1]) {
+      const eye = new THREE.Mesh(new THREE.SphereGeometry(0.12, 10, 8), MAT.dark);
+      eye.position.set(rockMid.x + toward.x * 0.62 - toward.z * side * 0.22, 0.42, rockMid.z + toward.z * 0.62 + toward.x * side * 0.22);
+      holeGroup.add(eye);
+    }
+  }
   tube.castShadow = true; tube.receiveShadow = true;
   holeGroup.add(tube);
   for (const m of [tn.a, tn.b]) {
@@ -1218,6 +1780,291 @@ function addScenery(hole) {
   }
 }
 
+// ============================================================
+//  PIRATE COVE SET PIECES
+// ============================================================
+function addDuneGrass(spots) {
+  if (!spots.length) return;
+  const tufts = new THREE.InstancedMesh(new THREE.ConeGeometry(0.035, 0.16, 5), MAT.dune, spots.length * 3);
+  const shells = new THREE.InstancedMesh(new THREE.SphereGeometry(0.018, 8, 4, 0, Math.PI * 2, 0, Math.PI / 2), MAT.white, spots.length);
+  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), p = new THREE.Vector3(), ax = new THREE.Vector3();
+  let k = 0;
+  spots.forEach(([x, z], i) => {
+    for (let j = 0; j < 3; j++) {
+      ax.set(rnd() - 0.5, 0, rnd() - 0.5).normalize();
+      q.setFromAxisAngle(ax, (rnd() - 0.5) * 0.7);
+      const hgt = 0.7 + rnd() * 0.8;
+      m.compose(p.set(x + (rnd() - 0.5) * 0.06, 0.06 * hgt - 0.02, z + (rnd() - 0.5) * 0.06), q, s.set(1, hgt, 1));
+      tufts.setMatrixAt(k++, m);
+    }
+    q.identity();
+    m.compose(p.set(x + 0.08, -0.02, z - 0.05), q, s.set(1, 0.5, 0.7)); shells.setMatrixAt(i, m);
+  });
+  tufts.castShadow = true;
+  holeGroup.add(tufts, shells);
+}
+
+function addPalm(x, z, h, lean, turn) {
+  const g = new THREE.Group();
+  g.position.set(x, -0.02, z);
+  g.rotation.y = turn;
+  // a curving trunk built from tapering segments
+  let px = 0, py = 0;
+  const segs = 8;
+  for (let i = 0; i < segs; i++) {
+    const t = i / segs, len = h / segs;
+    const ang = lean * (0.3 + t);
+    const seg = new THREE.Mesh(new THREE.CylinderGeometry(0.07 - t * 0.03, 0.08 - t * 0.03, len * 1.05, 7), MAT.palm);
+    seg.position.set(px + Math.sin(ang) * len / 2, py + Math.cos(ang) * len / 2, 0);
+    seg.rotation.z = -ang; seg.castShadow = true;
+    g.add(seg);
+    px += Math.sin(ang) * len; py += Math.cos(ang) * len;
+  }
+  // fronds: long drooping leaves fanned round the crown
+  const frondGeo = new THREE.PlaneGeometry(1.1, 0.26, 6, 1);
+  const pos = frondGeo.attributes.position;
+  for (let i = 0; i < pos.count; i++) {
+    const u = (pos.getX(i) + 0.55) / 1.1;
+    pos.setX(i, u * 1.1); pos.setY(i, pos.getY(i) * (1 - u * 0.8)); pos.setZ(i, -u * u * 0.45);
+  }
+  frondGeo.computeVertexNormals();
+  for (let k = 0; k < 9; k++) {
+    const f = new THREE.Mesh(frondGeo, MAT.frond);
+    f.position.set(px, py, 0);
+    f.rotation.set(-Math.PI / 2 + 0.35, 0, (k / 9) * Math.PI * 2, 'YXZ');
+    f.rotation.y = (k / 9) * Math.PI * 2;
+    f.castShadow = true;
+    g.add(f);
+  }
+  for (let k = 0; k < 3; k++) {
+    const nut = new THREE.Mesh(new THREE.SphereGeometry(0.05, 8, 6), MAT.bark);
+    nut.position.set(px + Math.cos(k * 2.1) * 0.07, py - 0.06, Math.sin(k * 2.1) * 0.07);
+    g.add(nut);
+  }
+  holeGroup.add(g);
+}
+
+function addChest(x, z, turn, open) {
+  const g = new THREE.Group();
+  g.position.set(x, -0.02, z); g.rotation.y = turn;
+  g.add(box(0.36, 0.2, 0.24, MAT.wood, 0, 0.1, 0));
+  for (const bx of [-0.12, 0.12]) g.add(box(0.03, 0.205, 0.245, MAT.iron, bx, 0.1, 0));
+  if (open) {
+    g.add(box(0.33, 0.04, 0.21, MAT.gold, 0, 0.2, 0));
+    for (let i = 0; i < 7; i++) {
+      const coin = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.006, 12), MAT.gold);
+      coin.position.set((rnd() - 0.5) * 0.6, 0.004, 0.18 + rnd() * 0.25); coin.rotation.z = (rnd() - 0.5) * 0.3;
+      g.add(coin);
+    }
+    const lid = box(0.36, 0.06, 0.24, MAT.wood, 0, 0.32, -0.12);
+    lid.rotation.x = -1.1; lid.position.set(0, 0.29, -0.2);
+    g.add(lid);
+  } else {
+    const lid = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.36, 12, 1, false, 0, Math.PI), MAT.wood);
+    lid.rotation.z = Math.PI / 2; lid.position.y = 0.2; lid.castShadow = true;
+    g.add(lid);
+  }
+  holeGroup.add(g);
+}
+
+function addBarrel(x, z, lying) {
+  const b = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.13, 0.36, 14), MAT.wood);
+  b.castShadow = true; b.receiveShadow = true;
+  if (lying) { b.rotation.z = Math.PI / 2; b.rotation.y = rnd() * 6; b.position.set(x, 0.11, z); }
+  else b.position.set(x, 0.16, z);
+  holeGroup.add(b);
+}
+
+function addPirateFlag(x, z, h) {
+  holeGroup.add(box(0.04, h, 0.04, MAT.wood, x, h / 2 - 0.02, z));
+  const flag = new THREE.Mesh(new THREE.PlaneGeometry(0.5, 0.32), MAT.skull);
+  flag.position.set(x + 0.27, h - 0.2, z); flag.castShadow = true;
+  holeGroup.add(flag);
+  anim.flags = anim.flags || [];
+  anim.flags.push(flag);
+}
+
+// The wreck: a weathered hull under the deck cells, broken off at the bow, with a mast, sail and flag.
+function addShipModel(hole) {
+  const decks = hole.cells.filter(c => c.ch === 'd');
+  if (!decks.length) return;
+  const c0 = Math.min(...decks.map(c => c.c)), c1 = Math.max(...decks.map(c => c.c)) + 1;
+  const r0 = Math.min(...decks.map(c => c.r)), r1 = Math.max(...decks.map(c => c.r)) + 1;
+  const top = decks[0].level * CONFIG.levelStep;
+  const x0 = c0 * C - 0.1, x1 = c1 * C + 0.1, z0 = r0 * C - 0.1, z1 = r1 * C + 0.1;
+  const bow = hole.ship.bow, alongZ = bow === 'n' || bow === 's';
+  const g = new GeoBuilder();
+  // hull sides bulge outward below the deck line
+  const sides = alongZ ? [[x0, z0, x0, z1, -1, 0], [x1, z1, x1, z0, 1, 0]] : [[x1, z0, x0, z0, 0, -1], [x0, z1, x1, z1, 0, 1]];
+  for (const [ax, az, bx, bz, nx, nz] of sides) {
+    prism(g, ax + nx * 0.12, az + nz * 0.12, bx + nx * 0.12, bz + nz * 0.12, -nx, -nz, 0.12, -0.1, top * 0.55, top * 0.55);
+    prism(g, ax, az, bx, bz, -nx, -nz, 0.05, top * 0.5, top + 0.18, top + 0.18);
+  }
+  // the stern is closed off; the bow end is open and splintered — she ran aground
+  const stern = { n: [x0, z1, x1, z1, 0, 1], s: [x1, z0, x0, z0, 0, -1], e: [x0, z0, x0, z1, -1, 0], w: [x1, z1, x1, z0, 1, 0] }[bow];
+  prism(g, stern[0], stern[1], stern[2], stern[3], -stern[4], -stern[5], 0.1, -0.1, top + 0.18, top + 0.18);
+  holeGroup.add(meshOf(g, MAT.hull, true));
+  const bowEdge = { n: [x0, z0, x1, z0], s: [x0, z1, x1, z1], e: [x1, z0, x1, z1], w: [x0, z0, x0, z1] }[bow];
+  for (let i = 0; i < 6; i++) {
+    const t = (i + 0.5) / 6, len = 0.15 + rnd() * 0.3;
+    const px = bowEdge[0] + (bowEdge[2] - bowEdge[0]) * t, pz = bowEdge[1] + (bowEdge[3] - bowEdge[1]) * t;
+    const plank = box(alongZ ? 0.07 : len, 0.03, alongZ ? len : 0.07, MAT.hull, px, top * (0.2 + rnd() * 0.6), pz);
+    plank.rotation.set((rnd() - 0.5) * 0.6, 0, (rnd() - 0.5) * 0.6);
+    holeGroup.add(plank);
+  }
+  // mast stepped on the hull side, leaning a little, with a torn sail and the colours
+  const mx = alongZ ? x1 + 0.22 : (x0 + x1) / 2, mz = alongZ ? (z0 + z1) / 2 : z1 + 0.22;
+  const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.07, 3.2, 10), MAT.wood);
+  mast.position.set(mx, 1.6, mz); mast.rotation.z = alongZ ? -0.08 : 0; mast.rotation.x = alongZ ? 0 : 0.08; mast.castShadow = true;
+  holeGroup.add(mast);
+  const yard = box(alongZ ? 0.05 : 1.6, 0.05, alongZ ? 1.6 : 0.05, MAT.wood, mx + (alongZ ? 0.12 : 0), 2.6, mz + (alongZ ? 0 : 0.12));
+  holeGroup.add(yard);
+  const sailGeo = new THREE.PlaneGeometry(1.4, 1.2, 8, 6);
+  const sp = sailGeo.attributes.position;
+  for (let i = 0; i < sp.count; i++) {
+    const x = sp.getX(i), y = sp.getY(i);
+    sp.setZ(i, Math.cos((x / 1.4) * Math.PI) * 0.18 + (y < -0.3 && Math.abs(x) > 0.3 ? -0.1 : 0));
+    if (y < -0.45 && ((x * 7) | 0) % 2) sp.setY(i, y + 0.15); // ragged hem
+  }
+  sailGeo.computeVertexNormals();
+  const sail = new THREE.Mesh(sailGeo, MAT.canvas);
+  sail.position.set(mx + (alongZ ? 0.15 : 0), 1.95, mz + (alongZ ? 0 : 0.15));
+  sail.rotation.y = alongZ ? Math.PI / 2 : 0;
+  sail.castShadow = true;
+  holeGroup.add(sail);
+  const flag = new THREE.Mesh(new THREE.PlaneGeometry(0.55, 0.35), MAT.skull);
+  flag.position.set(mx + (alongZ ? 0 : 0.3), 3.05, mz + (alongZ ? 0.3 : 0));
+  flag.rotation.y = alongZ ? -Math.PI / 2 : 0;
+  holeGroup.add(flag);
+  anim.flags = anim.flags || [];
+  anim.flags.push(flag);
+  // rigging down to the hull
+  for (const [ex, ez] of [[x1 + 0.05, z0], [x1 + 0.05, z1], [x0, z1 + 0.05], [x1, z1 + 0.05]].slice(alongZ ? 0 : 2, alongZ ? 2 : 4)) {
+    const a = new THREE.Vector3(mx, 3.0, mz), b2 = new THREE.Vector3(ex, top + 0.18, ez);
+    const rope = new THREE.Mesh(new THREE.CylinderGeometry(0.006, 0.006, a.distanceTo(b2), 4), MAT.rope);
+    rope.position.copy(a).add(b2).multiplyScalar(0.5);
+    rope.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), b2.clone().sub(a).normalize());
+    holeGroup.add(rope);
+  }
+}
+
+// A deck cannon behind the mouth, aimed along the ball's flight.
+function addCannonModel(hole, cn) {
+  const m = cannonMuzzle(cn), a = cn.a;
+  const bx = a.x - a.out[0] * 0.55, bz = a.z - a.out[1] * 0.55;
+  const g = new THREE.Group();
+  g.position.set(bx, a.y, bz);
+  g.rotation.y = Math.atan2(cn.target.x - bx, cn.target.z - bz);
+  // a stone emplacement, so it never sits on the water
+  const plinth = box(0.5, a.y + 0.15, 0.6, MAT.stone, 0, -(a.y + 0.15) / 2 + 0.03, 0);
+  g.add(plinth);
+  g.add(box(0.3, 0.12, 0.42, MAT.wood, 0, 0.1, 0));
+  for (const sx of [-0.17, 0.17]) for (const sz of [-0.14, 0.14]) {
+    const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.04, 12), MAT.wood);
+    wheel.rotation.z = Math.PI / 2; wheel.position.set(sx, 0.07, sz); wheel.castShadow = true;
+    g.add(wheel);
+  }
+  const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.085, 0.6, 16), MAT.iron);
+  barrel.rotation.x = Math.PI / 2 - 0.6; barrel.position.set(0, 0.28, 0.08); barrel.castShadow = true;
+  const rim = new THREE.Mesh(new THREE.TorusGeometry(0.065, 0.015, 8, 16), MAT.iron);
+  rim.position.set(0, 0.28 + Math.cos(0.6) * 0.3, 0.08 + Math.sin(0.6) * 0.3); rim.rotation.x = -0.6;
+  g.add(barrel, rim);
+  holeGroup.add(g);
+  // the feed chute from the mouth into the breech
+  holeGroup.add(rails([{ x: a.x, y: a.y + 0.01, z: a.z }, { x: bx, y: a.y + 0.12, z: bz }], 0.025, 0.006, MACH.steel));
+}
+
+const puffs = [];
+function cannonSmoke(cn) {
+  const m = cannonMuzzle(cn);
+  for (let i = 0; i < 10; i++) {
+    const p = new THREE.Mesh(new THREE.SphereGeometry(0.08, 8, 6), MAT.smoke.clone());
+    p.position.set(m.x, m.y + 0.1, m.z);
+    p.userData = { vx: (Math.random() - 0.5) * 0.6, vy: 0.4 + Math.random() * 0.6, vz: (Math.random() - 0.5) * 0.6, life: 1.4 };
+    scene.add(p); puffs.push(p);
+  }
+}
+function updateSmoke(dt) {
+  for (let i = puffs.length - 1; i >= 0; i--) {
+    const p = puffs[i], u = p.userData;
+    u.life -= dt;
+    p.position.x += u.vx * dt; p.position.y += u.vy * dt; p.position.z += u.vz * dt;
+    p.scale.multiplyScalar(1 + dt * 1.5);
+    p.material.opacity = Math.max(0, u.life / 1.4) * 0.8;
+    if (u.life <= 0) { scene.remove(p); p.geometry.dispose(); p.material.dispose(); puffs.splice(i, 1); }
+  }
+}
+
+function addBeachScenery(hole) {
+  const b = holeBounds(hole);
+  const pick = (m0, m1) => {
+    for (let i = 0; i < 40; i++) {
+      const x = b.x0 - m1 + rnd() * (b.x1 - b.x0 + 2 * m1), z = b.z0 - m1 + rnd() * (b.z1 - b.z0 + 2 * m1);
+      const dx = Math.max(b.x0 - x, 0, x - b.x1), dz = Math.max(b.z0 - z, 0, z - b.z1);
+      const d = Math.hypot(dx, dz);
+      if (d > m0 && d < m1) return [x, z];
+    }
+    return [b.x1 + m1, b.z0];
+  };
+  for (let i = 0; i < 14; i++) { const [x, z] = pick(1.6, 8.5); addPalm(x, z, 2.4 + rnd() * 1.6, 0.25 + rnd() * 0.35, rnd() * 6.28); }
+  for (let i = 0; i < 6; i++) { const [x, z] = pick(0.5, 2.5); addBarrel(x, z, rnd() < 0.4); }
+  for (let i = 0; i < 3; i++) { const [x, z] = pick(0.6, 3); addChest(x, z, rnd() * 6.28, i === 0); }
+  for (let i = 0; i < 3; i++) { const [x, z] = pick(0.8, 2.6); addPirateFlag(x, z, 1.4 + rnd() * 0.5); }
+  const crates = 4;
+  for (let i = 0; i < crates; i++) {
+    const [x, z] = pick(0.5, 3), s = 0.22 + rnd() * 0.12;
+    const cr = box(s, s, s, MAT.wood, x, s / 2 - 0.02, z); cr.rotation.y = rnd() * 6;
+    holeGroup.add(cr);
+  }
+  const rocks = 14;
+  const rock = new THREE.InstancedMesh(new THREE.DodecahedronGeometry(1, 0), MAT.rock, rocks);
+  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), p = new THREE.Vector3();
+  for (let i = 0; i < rocks; i++) {
+    const [x, z] = pick(0.4, 6), r = 0.1 + rnd() * 0.35;
+    q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), rnd() * 6);
+    m.compose(p.set(x, r * 0.25, z), q, s.set(r * 1.4, r * 0.8, r)); rock.setMatrixAt(i, m);
+  }
+  rock.castShadow = true; rock.receiveShadow = true; holeGroup.add(rock);
+
+  // rope-and-post fence round the plot instead of a picket fence
+  const fx0 = b.x0 - 1.4, fx1 = b.x1 + 1.4, fz0 = b.z0 - 1.4, fz1 = b.z1 + 1.4;
+  const corners = [[fx0, fz0], [fx1, fz0], [fx1, fz1], [fx0, fz1], [fx0, fz0]];
+  for (let k = 0; k < 4; k++) {
+    const [ax, az] = corners[k], [bx, bz] = corners[k + 1];
+    const len = Math.hypot(bx - ax, bz - az), n = Math.max(1, Math.round(len / 1.2));
+    for (let i = 0; i < n; i++) {
+      const x = ax + ((bx - ax) * i) / n, z = az + ((bz - az) * i) / n;
+      const post = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.06, 0.6, 7), MAT.wood);
+      post.position.set(x, 0.28, z); post.castShadow = true;
+      holeGroup.add(post);
+      const x2 = ax + ((bx - ax) * (i + 1)) / n, z2 = az + ((bz - az) * (i + 1)) / n;
+      // the rope sags between posts
+      const pts = [];
+      for (let j = 0; j <= 8; j++) { const t = j / 8; pts.push(new THREE.Vector3(x + (x2 - x) * t, 0.5 - Math.sin(t * Math.PI) * 0.12, z + (z2 - z) * t)); }
+      holeGroup.add(new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 8, 0.012, 4, false), MAT.rope));
+    }
+  }
+
+  // a pirate ship riding at anchor offshore
+  const sx = b.x1 + 16, sz = (b.z0 + b.z1) / 2 - 6;
+  const ship = new THREE.Group();
+  ship.position.set(sx, -0.1, sz); ship.rotation.y = 0.6;
+  const hullG = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, 7, 16, 1, false, Math.PI / 2, Math.PI), MAT.hull);
+  hullG.rotation.x = Math.PI / 2; hullG.scale.set(1.4, 1, 0.9); hullG.position.y = 0.2;
+  ship.add(hullG);
+  ship.add(box(2.6, 0.08, 6.6, MAT.deck, 0, 0.22, 0));
+  for (const [z, h] of [[-1.5, 6], [1.5, 5]]) {
+    const mst = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.1, h, 8), MAT.wood);
+    mst.position.set(0, h / 2, z); ship.add(mst);
+    const sl = new THREE.Mesh(new THREE.PlaneGeometry(2.4, h * 0.45), MAT.canvas);
+    sl.position.set(0, h * 0.55, z); sl.rotation.y = Math.PI / 2; ship.add(sl);
+  }
+  const fl = new THREE.Mesh(new THREE.PlaneGeometry(1, 0.62), MAT.skull);
+  fl.position.set(0, 6.3, -1.5); fl.rotation.y = Math.PI / 2; ship.add(fl);
+  anim.ship = ship;
+  holeGroup.add(ship);
+}
+
 function fitSun(hole) {
   const b = holeBounds(hole);
   const cx = (b.x0 + b.x1) / 2, cz = (b.z0 + b.z1) / 2;
@@ -1304,6 +2151,10 @@ const sfx = {
   lip: () => { noise(0.05, 0.2, 'bandpass', 3000, 0, 5); tone(600, 0.06, 'sine', 0.06, 0.02, 0.7); },
   splash: () => { noise(0.6, 0.45, 'lowpass', 1400, 0, 0.7); noise(0.3, 0.2, 'highpass', 3000, 0.05); },
   tunnel: () => { noise(0.9, 0.25, 'lowpass', 260, 0, 1); },
+  lift: () => { for (let i = 0; i < 10; i++) noise(0.03, 0.12, 'bandpass', 1800, i * 0.16, 6); tone(90, 1.6, 'sawtooth', 0.03, 0, 1.3); },
+  cannon: () => { noise(0.9, 0.7, 'lowpass', 500, 0, 0.8); tone(70, 0.6, 'sine', 0.5, 0, 0.4); noise(1.4, 0.15, 'lowpass', 180, 0.1); },
+  loop: () => { noise(0.7, 0.18, 'bandpass', 700, 0, 1.5); tone(300, 0.6, 'sine', 0.05, 0, 2); },
+  post: v => { const k = Math.min(1, v / 3); tone(420, 0.18, 'sine', 0.12 + k * 0.15, 0, 1.8); noise(0.05, 0.12 + k * 0.2, 'bandpass', 1500, 0, 3); },
 };
 
 // ============================================================
@@ -1351,7 +2202,7 @@ function loadHole() {
   const idx = game.holeList[game.holeN];
   game.def = game.theme.course.holes[idx];
   game.hole = parseHole(game.def);
-  buildHole(game.hole);
+  buildHole(game.hole, game.theme.course.style);
   game.cur = 0;
   game.overview = false;
   game.field = distanceField(game.hole);
@@ -1436,7 +2287,11 @@ function handleEvents(events) {
     const sp = Math.hypot(b.vx, b.vz);
     if (ev === 'wall') { if (sp > 0.15) sfx.wall(sp); }
     else if (ev === 'lip') sfx.lip();
-    else if (ev === 'tunnel') { if (b.tunnel) sfx.tunnel(); }
+    else if (ev === 'post') sfx.post(sp);
+    else if (ev === 'tunnel') sfx.tunnel();
+    else if (ev === 'lift') sfx.lift();
+    else if (ev === 'loop') sfx.loop();
+    else if (ev === 'cannon') { sfx.cannon(); const cn = game.hole.cannons.find(c => Math.hypot(c.a.x - b.x, c.a.z - b.z) < 0.6) || game.hole.cannons[0]; cannonSmoke(cn); }
     else if (ev === 'holed') {
       sfx.cup();
       const name = scoreName(game.strokes, game.def.par);
@@ -1631,7 +2486,20 @@ function cameraTarget(out) {
     dir = followDir; dist = 2.4; height = 1.25; ahead = 0.8;
   } else followDir = dir;
   let tx = b.x, ty = b.y, tz = b.z;
-  if (b.tunnel) { tx = b.tunnel.exit.x; tz = b.tunnel.exit.z; ty = groundHeight(h, tx, tz) || 0; dir = Math.atan2(b.tunnel.exit.out[1], b.tunnel.exit.out[0]); }
+  const tr = b.transport;
+  if (tr && tr.kind === 'loop') {
+    // watch a loop from the side so its circle reads clearly
+    const lp = h.loops.reduce((best, l) => (Math.hypot(l.M.x - b.x, l.M.z - b.z) < Math.hypot(best.M.x - b.x, best.M.z - b.z) ? l : best));
+    out.pos.set(lp.M.x - lp.d[1] * 1.5, lp.M.y + 0.55, lp.M.z + lp.d[0] * 1.5);
+    out.look.set(lp.M.x, lp.M.y + lp.radius, lp.M.z);
+    return;
+  }
+  if (tr) {
+    // ride along with a visible machine; for a hidden tunnel, wait at the exit
+    dir = followDir = Math.atan2(tr.exit.vz, tr.exit.vx);
+    if (tr.visible) { dist = 2.6; height = 1.1; ahead = 0; }
+    else { tx = tr.exit.x; tz = tr.exit.z; ty = groundHeight(h, tx, tz) || 0; }
+  }
   const dx = Math.cos(dir), dz = Math.sin(dir);
   out.pos.set(tx - dx * dist, ty + height, tz - dz * dist);
   out.look.set(tx + dx * ahead, ty, tz + dz * ahead);
@@ -1670,15 +2538,20 @@ function frame(now) {
     const b = game.ball;
     if (b) {
       ballMesh.position.set(b.x, b.y + CONFIG.ballR, b.z);
-      if (b.tunnel) ballMesh.visible = false;
+      if (b.transport) ballMesh.visible = b.transport.visible;
       else if (game.phase === 'rolling' || game.phase === 'aim') ballMesh.visible = true;
       const sp = Math.hypot(b.vx, b.vz);
       if (sp > 0) ballMesh.rotateOnWorldAxis(new THREE.Vector3(b.vz, 0, -b.vx).normalize(), (sp * dt) / CONFIG.ballR);
       updateAimLine(b, game.aim, game.power, game.phase === 'aim' && !game.overview);
     }
-    for (const a of anim.windmills) a.rotor.rotation.z = a.flip * windmillAngle(a.w, game.simT);
+    animateMachines(game.simT);
     if (anim.flag) anim.flag.rotation.y = Math.sin(now / 700) * 0.35;
     TEX.water.offset.set(now / 30000, now / 45000);
+    TEX.lagoon.offset.set(now / 26000, now / 40000);
+    TEX.sea.offset.set(now / 60000, now / 90000);
+    for (const [i, f] of anim.flags.entries()) f.rotation.y = (f.userData.baseY ??= f.rotation.y) + Math.sin(now / 500 + i) * 0.25;
+    if (anim.ship) { anim.ship.rotation.z = Math.sin(now / 1800) * 0.03; anim.ship.position.y = -0.1 + Math.sin(now / 1300) * 0.05; }
+    updateSmoke(dt);
 
     $('power').querySelector('.fill').style.height = `${Math.round(game.power * 100)}%`;
     const hint = game.overview ? 'Overview — press Overview (V) to return'
@@ -1695,7 +2568,7 @@ function frame(now) {
       const bd = holeBounds(game.hole), cx = (bd.x0 + bd.x1) / 2, cz = (bd.z0 + bd.z1) / 2;
       camera.position.set(cx + Math.cos(t * 0.1) * 9, 4.5, cz + Math.sin(t * 0.1) * 9);
       camera.lookAt(cx, 0, cz);
-      for (const a of anim.windmills) a.rotor.rotation.z = a.flip * windmillAngle(a.w, t);
+      animateMachines(t);
     }
   }
   renderer.render(scene, camera);

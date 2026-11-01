@@ -182,3 +182,9 @@ Phases 2–3 are scoped when Phase 1 ships; the split above is a starting point.
 
 Exact tuning constants within the ranges above, hole layouts, scenery placement, texture recipes,
 UI styling (in keeping with the portal), and SFX design.
+
+## 11. Phase 2 (built 2026-10-31)
+
+- **Sunny Park made crazier** (user request): ball lift, loop-the-loop, swinging pendulums, a sliding gate and pinball posts added; six plain holes rebuilt as combo holes (Swing Corner, Pinball Hill, Lift Off, Loop de Loop, Lock Gate, Grand Finale).
+- **Pirate Cove**, with theming as the priority (user request): a beach island in a turquoise sea, palms, rope fence, pirate flags, barrels, chests, a shipwreck set piece and a ship at anchor offshore. Mechanisms: sand, a ship's plank, a ball cannon, a ship deck with a ramp up and a drop off, a sea-cave tunnel, barrel posts, a cannonball pendulum and a tidal gate.
+- Left for later themes: conveyors, trampolines, ice and marble-run chutes.

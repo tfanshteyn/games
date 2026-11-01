@@ -57,10 +57,11 @@ The flagship platformer, originally "Neon Runner". Most detailed game with ASCII
 
 ## Mini Golf 3D (MiniGolf/) — Details
 
-Realistic 3D adventure mini golf. Spec: `docs/superpowers/specs/2026-10-31-mini-golf-3d-design.md`. Phase 1 = Sunny Park (15 holes); the other five themes show "Coming soon".
+Realistic 3D adventure mini golf. Spec: `docs/superpowers/specs/2026-10-31-mini-golf-3d-design.md`. Playable: Sunny Park and Pirate Cove (15 holes each); the other four themes show "Coming soon". Each course has a `style` (`park` / `beach`) that picks ground, borders, props and scenery.
 
 - **Pure block**: physics, hole parsing and course data between the PURE markers; `tests/pure-minigolf.mjs` loads it. A brute-force bot (`botPlay`) proves every hole can be finished — run the course tests after editing any hole.
-- **Holes are ASCII grids of 0.5 m cells**: `g` green, `@` tee, `o` cup, `^v<>` ramp rising that way, `w` water, `=` bridge, `t` tunnel mouth, `.` scenery. Optional `levels` grid (digit × 0.25 m). `extras`: `hill`, `bumper`, `windmill` (`front` = side the blades face, toward the approaching ball), `tunnel`.
+- **Holes are ASCII grids of 0.5 m cells**: `g` green, `@` tee, `o` cup, `^v<>` ramp rising that way, `w` water, `=` bridge, `t` tunnel mouth, `.` scenery, plus Pirate Cove's `s` sand (slows the ball hard), `d` ship deck, `p` plank (narrow strip over water, no rails). Optional `levels` grid (digit × 0.25 m). `extras`: `hill`, `bumper`, `windmill` (`front` = side the blades face, toward the approaching ball), `tunnel`, `lift`, `loop` (needs a 1-cell channel), `slider`, `pendulum`, `post`, `cannon`, `ship` (decoration over the `d` cells).
+- **Machines that carry the ball** (tunnel, lift, loop, cannon) use `ball.transport`: a timed path the ball follows, then an exit position and velocity.
 - **Walls are generated**: borders where course meets scenery, rails between bridge and water, step faces between levels (they stop only the ball on the lower side).
 - **Colours**: r128 treats colour codes as linear; flat-colour materials are converted with `convertSRGBToLinear()` so they don't render washed out.
 - **Controls**: drag down for power, sideways to aim, release to putt; ←→ aim, ↑↓ power, Space putt, V overview.
