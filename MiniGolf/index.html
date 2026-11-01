@@ -131,6 +131,10 @@ const CONFIG = {
   rollK: 5 / 7,         // rolling-sphere factor on slope acceleration
   rollDecel: 0.65,      // carpet rolling resistance, m/s²
   sandDecel: 3.2,       // sand drags the ball to a stop
+  snowDecel: 2.4,       // fresh snow, nearly as draggy as sand
+  iceDecel: 0.14,       // ice barely slows the ball at all
+  beltSpeed: 0.7,       // conveyor belt surface speed
+  beltGrip: 1.2,        // rolling resistance against the moving belt (rubber grips a little more than carpet)
   plankWidth: 0.28,     // a ship's plank is narrower than a cell; roll off it and you're in the sea
   trampoline: 0.9,      // a trampoline pad sends a falling ball back up with this much of its speed
   maxSpeed: 5.5,        // full-power putt
@@ -148,6 +152,8 @@ const CONFIG = {
 
 const RAMP_DIRS = { '^': [0, -1], 'v': [0, 1], '>': [1, 0], '<': [-1, 0] };
 const OUT_DIRS = { n: [0, -1], s: [0, 1], e: [1, 0], w: [-1, 0] };
+// Robot Factory conveyor belts, by the way their surface runs
+const BELT_DIRS = { N: [0, -1], S: [0, 1], E: [1, 0], W: [-1, 0] };
 
 function isCourseChar(ch) { return ch !== undefined && ch !== '.' && ch !== ' '; }
 
@@ -157,7 +163,7 @@ function parseHole(def) {
   const cols = Math.max(...def.map.map(r => r.length));
   const hole = {
     name: def.name, par: def.par, rows, cols, cells: [], tee: null, cup: null,
-    hills: [], windmills: [], tunnels: [], lifts: [], loops: [], cannons: [], ship: null, volcano: null, drawbridge: null, portcullises: [], sliders: [], pendulums: [], posts: [],
+    hills: [], windmills: [], tunnels: [], lifts: [], loops: [], cannons: [], chutes: [], ship: null, volcano: null, drawbridge: null, portcullises: [], sliders: [], pendulums: [], posts: [],
     extraSegs: [], segments: [], cellSegs: [],
   };
   for (let r = 0; r < rows; r++) {
@@ -190,6 +196,7 @@ function parseHole(def) {
     else if (e.type === 'windmill') addWindmill(hole, e);
     else if (e.type === 'tunnel') hole.tunnels.push({ a: mouth(e.a), b: mouth(e.b), length: e.length });
     else if (e.type === 'lift') hole.lifts.push({ a: mouth(e.in), b: mouth(e.out), exitSpeed: e.exitSpeed || 1.1 });
+    else if (e.type === 'chute') hole.chutes.push({ a: mouth(e.in), b: mouth(e.out), via: (e.via || []).map(([c, r]) => ({ x: c * C, z: r * C })), exitSpeed: e.exitSpeed || 1.2 });
     else if (e.type === 'loop') {
       const d = OUT_DIRS[e.dir];
       const at = k => mouth({ c: e.c + d[0] * k, r: e.r + d[1] * k, out: e.dir });
@@ -205,6 +212,7 @@ function parseHole(def) {
       hole.drawbridge = { cells, hinge: e.hinge, d: OUT_DIRS[e.hinge], period: e.period || 5, phase: e.phase || 0, down: true };
       for (const c of cells) c.db = hole.drawbridge;
     } else if (e.type === 'portcullis') addGatehouse(hole, e);
+    else if (e.type === 'press') addGatehouse(hole, { ...e, press: true });
     else if (e.type === 'castlewall') hole.castleWalls = [...(hole.castleWalls || []), { a: [e.a[0] * C, e.a[1] * C], b: [e.b[0] * C, e.b[1] * C] }];
     else throw new Error(`${def.name}: unknown extra ${e.type}`);
   }
@@ -213,7 +221,8 @@ function parseHole(def) {
   hole.tee.y = groundHeight(hole, hole.tee.x, hole.tee.z);
   for (const o of [...hole.sliders, ...hole.pendulums]) o.y = groundHeight(hole, o.x + 1e-3, o.z + 1e-3) ?? 0;
   for (const lp of hole.loops) for (const k of ['E', 'M', 'X']) lp[k].y = groundHeight(hole, lp[k].x, lp[k].z);
-  for (const m of [...hole.tunnels, ...hole.lifts].flatMap(t => [t.a, t.b])) m.y = groundHeight(hole, m.x, m.z);
+  for (const m of [...hole.tunnels, ...hole.lifts, ...hole.chutes].flatMap(t => [t.a, t.b])) m.y = groundHeight(hole, m.x, m.z);
+  for (const ch of hole.chutes) chutePath(ch);
   for (const cn of hole.cannons) { cn.a.y = groundHeight(hole, cn.a.x, cn.a.z); cn.target.y = groundHeight(hole, cn.target.x, cn.target.z); }
   buildWalls(hole);
   return hole;
@@ -273,7 +282,11 @@ function offPlank(cell, x, z) {
 function isWet(cell, x, z) { return cell.ch === 'w' || cell.ch === 'L' || offPlank(cell, x, z) || (cell.db && !cell.db.down); }
 const isHazardChar = ch => ch === 'w' || ch === 'L';
 
-function surfaceDecel(cell) { return cell && cell.ch === 's' ? CONFIG.sandDecel : CONFIG.rollDecel; }
+function surfaceDecel(cell) {
+  if (!cell) return CONFIG.rollDecel;
+  return cell.ch === 's' ? CONFIG.sandDecel : cell.ch === 'n' ? CONFIG.snowDecel : cell.ch === 'i' ? CONFIG.iceDecel : CONFIG.rollDecel;
+}
+const beltOf = cell => (cell && BELT_DIRS[cell.ch]) || null;
 
 function hillHeight(hole, x, z) {
   let h = 0;
@@ -368,7 +381,7 @@ function addWindmill(hole, e) {
 // in the middle of it that rises and drops on a cycle. e.c/e.r are the passage centre in cell units.
 function addGatehouse(hole, e) {
   const C = CONFIG.cell;
-  const g = { x: e.c * C, z: e.r * C, axis: e.axis, halfWidth: e.halfWidth, door: 0.32, depth: 0.6, period: e.period || 4, phase: e.phase || 0 };
+  const g = { x: e.c * C, z: e.r * C, axis: e.axis, halfWidth: e.halfWidth, door: 0.32, depth: 0.6, period: e.period || 4, phase: e.phase || 0, press: !!e.press };
   const S = (u0, v0, u1, v1, kind) => { const [ax, az] = laneXZ(g, u0, v0), [bx, bz] = laneXZ(g, u1, v1); return seg(ax, az, bx, bz, 10, kind); };
   const hd = g.depth / 2, dd = g.door / 2, hw = g.halfWidth;
   for (const u of [-hd, hd]) hole.extraSegs.push(S(u, -hw, u, -dd, 'gatehouse'), S(u, dd, u, hw, 'gatehouse'));
@@ -476,6 +489,35 @@ function enterLift(ball, lf) {
   const dur = 0.4 + (top - a.y) / 0.35 + 0.7;
   startTransport(ball, 'lift', path, dur,
     { x: b.x + b.out[0] * C * 0.55, z: b.z + b.out[1] * C * 0.55, vx: b.out[0] * lf.exitSpeed, vz: b.out[1] * lf.exitSpeed }, true);
+}
+
+// A marble-run chute: the ball drops in at the upper mouth and runs down a winding track to the
+// lower one, dropping steadily all the way down.
+function chutePath(ch) {
+  const a = ch.a, b = ch.b, ctrl = [a, ...ch.via, b];
+  // a smooth Catmull-Rom line through the control points, so the ball follows the drawn track
+  const pts = [];
+  for (let i = 0; i < ctrl.length - 1; i++) {
+    const p0 = ctrl[Math.max(0, i - 1)], p1 = ctrl[i], p2 = ctrl[i + 1], p3 = ctrl[Math.min(ctrl.length - 1, i + 2)];
+    for (let k = 0; k < 12; k++) {
+      const t = k / 12, t2 = t * t, t3 = t2 * t;
+      const f = (q0, q1, q2, q3) => 0.5 * (2 * q1 + (q2 - q0) * t + (2 * q0 - 5 * q1 + 4 * q2 - q3) * t2 + (3 * q1 - q0 - 3 * q2 + q3) * t3);
+      pts.push({ x: f(p0.x, p1.x, p2.x, p3.x), z: f(p0.z, p1.z, p2.z, p3.z) });
+    }
+  }
+  pts.push({ x: b.x, z: b.z });
+  let total = 0;
+  const d = [0];
+  for (let i = 1; i < pts.length; i++) { total += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].z - pts[i - 1].z); d.push(total); }
+  pts.forEach((p, i) => { p.y = a.y + (b.y - a.y) * (d[i] / (total || 1)); });
+  ch.path = pts;
+  ch.length = total;
+}
+
+function enterChute(ball, ch, sp) {
+  const C = CONFIG.cell, b = ch.b;
+  startTransport(ball, 'chute', ch.path, ch.length / Math.max(2.8, sp),
+    { x: b.x + b.out[0] * C * 0.55, z: b.z + b.out[1] * C * 0.55, vx: b.out[0] * ch.exitSpeed, vz: b.out[1] * ch.exitSpeed }, true);
 }
 
 // The cannon takes the ball into its breech and fires it on a ballistic arc to a fixed landing spot.
@@ -672,14 +714,19 @@ function substep(hole, ball, t, h) {
     const g = gradient(hole, ball.x, ball.z);
     ball.vx -= K * G * g.x * h;
     ball.vz -= K * G * g.z * h;
-    let sp = Math.hypot(ball.vx, ball.vz);
-    if (sp > 0) {
-      const dec = Math.min(sp, surfaceDecel(cellAt(hole, ball.x, ball.z)) * h);
-      ball.vx -= (ball.vx / sp) * dec;
-      ball.vz -= (ball.vz / sp) * dec;
+    const here = cellAt(hole, ball.x, ball.z), belt = beltOf(here);
+    // on a belt the friction works against the ball's speed relative to the moving surface
+    const bvx = belt ? belt[0] * CONFIG.beltSpeed : 0, bvz = belt ? belt[1] * CONFIG.beltSpeed : 0;
+    const rvx = ball.vx - bvx, rvz = ball.vz - bvz, rs = Math.hypot(rvx, rvz);
+    if (rs > 0) {
+      const dec = Math.min(rs, (belt ? CONFIG.beltGrip : surfaceDecel(here)) * h);
+      ball.vx -= (rvx / rs) * dec;
+      ball.vz -= (rvz / rs) * dec;
     }
-    sp = Math.hypot(ball.vx, ball.vz);
-    if (sp < CONFIG.stopSpeed && K * G * Math.hypot(g.x, g.z) < surfaceDecel(cellAt(hole, ball.x, ball.z))) {
+    // a belt that pins the ball against something would carry it for ever; give up after a while
+    ball.beltT = belt ? (ball.beltT || 0) + h : 0;
+    let sp = Math.hypot(ball.vx, ball.vz);
+    if ((!belt || ball.beltT > 10) && sp < CONFIG.stopSpeed && K * G * Math.hypot(g.x, g.z) < surfaceDecel(here)) {
       ball.vx = ball.vz = 0;
       ball.moving = false;
       clearOfMachines(hole, ball);
@@ -732,6 +779,7 @@ function substep(hole, ball, t, h) {
     }
     for (const lf of hole.lifts) if (at(lf.a) && into(lf.a)) { enterLift(ball, lf); return 'lift'; }
     for (const cn of hole.cannons) if (at(cn.a) && into(cn.a)) { enterCannon(ball, cn); return 'cannon'; }
+    for (const ch of hole.chutes) if (at(ch.a) && into(ch.a)) { enterChute(ball, ch, sp); return 'chute'; }
     for (const lp of hole.loops) {
       for (const [m, sgn] of [[lp.E, 1], [lp.X, -1]]) {
         if (at(m) && (ball.vx * lp.d[0] + ball.vz * lp.d[1]) * sgn > 0.1) { enterLoop(ball, lp, sgn, sp); return 'loop'; }
@@ -803,6 +851,7 @@ function distanceField(hole) {
   for (const tn of hole.tunnels) links.push([tn.a, tn.b], [tn.b, tn.a]);
   for (const lf of hole.lifts) links.push([lf.b, lf.a]); // one-way: the lift only goes up
   for (const cn of hole.cannons) links.push([cn.target, cn.a]);
+  for (const ch of hole.chutes) links.push([ch.b, ch.a]);
   while (q.length) {
     const cell = q.shift();
     const d0 = dist[cell.r * hole.cols + cell.c];
@@ -1214,20 +1263,205 @@ const CASTLE_KINGDOM = {
   ],
 };
 
+// Frozen Peaks adds: i ice (the ball barely slows), n snow (drags it to a stop). Extras: chute (a
+// bobsled run). Lifts are dressed as ski lifts, cannons as snow cannons, posts as snowmen.
+const FROZEN_PEAKS = {
+  id: 'frozen', name: 'Frozen Peaks', style: 'ice',
+  shortRound: [0, 1, 2, 4, 5, 7, 9, 10, 13, 14],
+  holes: [
+    { name: 'First Tracks', par: 2,
+      map: ['ggggg', 'ggogg', ...rep(4, 'ggggg'), ...rep(6, 'giiig'), ...rep(5, 'ggggg'), 'gg@gg', 'ggggg'] },
+
+    { name: 'Frozen Pond', par: 3,
+      map: ['nnnnnnn', 'ngggggn', 'nggoggn', 'ggggggg', ...rep(7, 'iiiiiii'), ...rep(4, 'ggggggg'), 'ggg@ggg', 'ggggggg'] },
+
+    { name: 'Snowdrift', par: 3,
+      map: ['ggggg', 'ggogg', 'ggggg', ...rep(4, 'iiiii'), ...rep(3, 'nnnnn'), ...rep(6, 'ggggg'), 'gg@gg', 'ggggg'] },
+
+    { name: 'Ice Cave', par: 3,
+      map: ['gtg.ggg', 'ggg.ggg', 'ggg.ggg', 'iii.gog', ...rep(5, 'iii.ggg'), ...rep(4, 'ggg.ggg'), 'g@g.ggg', 'ggg.gtg'],
+      extras: [{ type: 'tunnel', a: { c: 1, r: 0, out: 's' }, b: { c: 5, r: 14, out: 'n' }, length: 6 }] },
+
+    { name: 'Ski Lift', par: 3,
+      map: ['gtg.ggggg', 'ggg.tgggg', 'ggg.iiiii', 'ggg.ggogg', 'ggg.nnnnn', ...rep(3, 'ggg......'), ...rep(3, 'nnn......'), ...rep(2, 'ggg......'), 'g@g......', 'ggg......'],
+      levels: [...rep(5, '000.33333'), ...rep(10, '000')],
+      extras: [{ type: 'lift', in: { c: 1, r: 0, out: 's' }, out: { c: 4, r: 1, out: 'e' } }] },
+
+    { name: 'Bobsled Run', par: 3,
+      map: ['ggg...ggg', 'gog...ggg', 'ggg...gtg', 'ggg...ggg', ...rep(8, 'iii...ggg'), 'ggg...ggg', 'ggg...ggg', 'ggg...g@g', 'ggg...ggg'],
+      levels: [...rep(16, '000...444')],
+      extras: [{ type: 'chute', in: { c: 7, r: 2, out: 's' }, out: { c: 1, r: 13, out: 'n' },
+        via: [[7.5, 0.4], [7.5, -1.4], [5.5, -2.4], [4, -1], [4.6, 2], [3.6, 4.5], [5.4, 7], [3.6, 9.5], [5, 12.5], [3.4, 15.2], [1.5, 15.6]] }] },
+
+    { name: 'Snowman Alley', par: 3,
+      map: ['ggggggg', 'gggggog', ...rep(5, 'ggggggg'), ...rep(3, 'iiiiiii'), ...rep(5, 'ggggggg'), ...rep(2, 'iiiiiii'), 'ggggggg', 'g@ggggg', 'ggggggg'],
+      extras: [
+        { type: 'post', c: 1.5, r: 5, rad: 0.09 }, { type: 'post', c: 5.5, r: 5, rad: 0.09 },
+        { type: 'post', c: 3.5, r: 8.5, rad: 0.09 }, { type: 'post', c: 1.5, r: 12, rad: 0.09 },
+        { type: 'post', c: 5.5, r: 12, rad: 0.09 }, { type: 'post', c: 3.5, r: 15.5, rad: 0.09 },
+      ] },
+
+    { name: 'Icicle Swing', par: 3,
+      map: ['ggg', 'gog', ...rep(5, 'ggg'), ...rep(7, 'iii'), ...rep(5, 'ggg'), 'g@g', 'ggg'],
+      extras: [
+        { type: 'pendulum', c: 1.5, r: 9, axis: 'z', halfWidth: 0.75, period: 2.4 },
+        { type: 'pendulum', c: 1.5, r: 12.5, axis: 'z', halfWidth: 0.75, period: 3.1, phase: 1.1 },
+      ] },
+
+    { name: 'Snowplough', par: 3,
+      map: ['ggggg', 'ggogg', ...rep(4, 'ggggg'), ...rep(3, 'nnnnn'), ...rep(4, 'ggggg'), ...rep(6, 'ggggg'), 'gg@gg', 'ggggg'],
+      extras: [
+        { type: 'slider', c: 2.5, r: 5.5, axis: 'z', halfWidth: 1.25, gap: 0.45, period: 3.2 },
+        { type: 'slider', c: 2.5, r: 14, axis: 'z', halfWidth: 1.25, gap: 0.45, period: 3.9, phase: 1.4 },
+      ] },
+
+    { name: 'Ice Rink', par: 3,
+      map: ['iiiiiiiii', 'iiiiiiioi', ...rep(7, 'iiiiiiiii'), ...rep(5, 'ggg......'), 'g@g......', 'ggg......'],
+      extras: [
+        { type: 'bumper', a: [0, 1.5], b: [1.5, 0] },
+        { type: 'bumper', a: [7.5, 0], b: [9, 1.5] },
+        { type: 'bumper', a: [7.5, 9], b: [9, 7.5] },
+        { type: 'post', c: 4.5, r: 4.5, rad: 0.09 },
+      ] },
+
+    { name: 'Snow Cannon', par: 3,
+      map: ['nnnnnnn', 'gggoggg', 'ggggggg', 'ggggggg', 'ggggggg', '.......', '.......', '..gtg..', ...rep(6, '..ggg..'), '..g@g..', '..ggg..'],
+      extras: [{ type: 'cannon', in: { c: 3, r: 7, out: 's' }, target: { c: 2, r: 3 }, apex: 1.5 }] },
+
+    { name: 'Crevasse', par: 3,
+      map: ['ggggggg', 'gggoggg', 'ggggggg', 'www=www', 'www=www', 'www=www', ...rep(5, 'iiiiiii'), ...rep(3, 'ggggggg'), 'ggg@ggg', 'ggggggg'] },
+
+    { name: 'Moguls', par: 3,
+      map: ['ggggg', 'ggogg', ...rep(18, 'ggggg'), 'gg@gg', 'ggggg'],
+      extras: [
+        { type: 'hill', c: 1.2, r: 6, rad: 1, h: 0.05 }, { type: 'hill', c: 3.8, r: 8.5, rad: 1, h: 0.05 },
+        { type: 'hill', c: 1.4, r: 11, rad: 1, h: 0.05 }, { type: 'hill', c: 3.6, r: 13.5, rad: 1, h: 0.05 },
+        { type: 'hill', c: 2.5, r: 16.5, rad: 1.2, h: 0.04 },
+      ] },
+
+    { name: 'Ski Jump', par: 3,
+      map: ['ggg', 'gog', ...rep(5, 'ggg'), ...rep(4, 'ggg'), ...rep(4, '^^^'), ...rep(5, 'ggg'), 'g@g', 'ggg'],
+      levels: [...rep(7, '000'), ...rep(4, '222'), ...rep(11, '000')] },
+
+    { name: 'The Summit', par: 4,
+      map: ['ggggg.gtg', 'ggogg.ggg', 'iiiii.ggg', 'iiiii.ggg', 'ggggg.ggg', 'ggtgg.ggg', '.....nnnn', '.....nnnn', '.....ggg.', '.....ggg.', '.....ggg.', '.....g@g.', '.....ggg.'],
+      levels: [...rep(6, '33333.000'), ...rep(7, '.....0000')],
+      extras: [
+        { type: 'lift', in: { c: 7, r: 0, out: 's' }, out: { c: 2, r: 5, out: 'n' } },
+        { type: 'pendulum', c: 2.5, r: 3, axis: 'x', halfWidth: 1.25, period: 2.8 },
+      ] },
+  ],
+};
+
+// Robot Factory adds belts: N S E W conveyor cells that run that way. L is molten metal here.
+// Extras: press (a hydraulic press across the lane). Windmills are dressed as gear gates, pendulums as
+// crane hooks, posts as bollards, tunnels as pipes, cannons as pneumatic launchers.
+const ROBOT_FACTORY = {
+  id: 'robot', name: 'Robot Factory', style: 'factory',
+  shortRound: [0, 1, 2, 3, 4, 7, 10, 12, 13, 14],
+  holes: [
+    { name: 'Assembly Line', par: 2,
+      map: ['ggggg', 'ggogg', 'ggggg', ...rep(10, 'gNNNg'), ...rep(3, 'ggggg'), 'gg@gg', 'ggggg'] },
+
+    { name: 'Wrong Way', par: 3,
+      map: ['ggg', 'gog', ...rep(3, 'ggg'), ...rep(6, 'SSS'), ...rep(6, 'ggg'), 'g@g', 'ggg'] },
+
+    { name: 'Cross Traffic', par: 3,
+      map: ['ggggggggg', 'ggggogggg', 'ggggggggg', ...rep(3, 'ggWWWWWgg'), ...rep(3, 'ggggggggg'), ...rep(3, 'ggEEEEEgg'), ...rep(4, 'ggggggggg'), 'gggg@gggg', 'ggggggggg'] },
+
+    { name: 'Hydraulic Press', par: 3,
+      map: ['ggg', 'gog', ...rep(17, 'ggg'), 'g@g', 'ggg'],
+      extras: [
+        { type: 'press', c: 1.5, r: 7, axis: 'z', halfWidth: 0.75, period: 3.4 },
+        { type: 'press', c: 1.5, r: 13, axis: 'z', halfWidth: 0.75, period: 4.2, phase: 0.35 },
+      ] },
+
+    { name: 'Ball Elevator', par: 3,
+      map: ['gtg.ggggg', 'gNg.tgggg', 'gNg.ggggg', 'gNg.ggogg', 'gNg.ggggg', ...rep(6, 'gNg......'), ...rep(2, 'ggg......'), 'g@g......', 'ggg......'],
+      levels: [...rep(5, '000.33333'), ...rep(10, '000')],
+      extras: [
+        { type: 'lift', in: { c: 1, r: 0, out: 's' }, out: { c: 4, r: 1, out: 'e' } },
+        { type: 'post', c: 7.5, r: 1.5, rad: 0.08 },
+      ] },
+
+    { name: 'Loop Line', par: 3,
+      map: ['ggggg', 'ggggo', 'ggggg', 'ggggg', '.ggg.', '..g..', '..g..', '..g..', '.ggg.', ...rep(4, 'gNNNg'), ...rep(3, 'ggggg'), 'gg@gg', 'ggggg'],
+      extras: [
+        { type: 'loop', c: 2, r: 7, dir: 'n', radius: 0.25 },
+        { type: 'bumper', a: [1, 9], b: [2, 8] }, { type: 'bumper', a: [4, 9], b: [3, 8] },
+      ] },
+
+    { name: 'Spring Pads', par: 3,
+      map: ['ggg', 'gog', 'ggg', 'LLL', 'jjj', 'jjj', 'LLL', ...rep(6, 'ggg'), 'g@g', 'ggg'],
+      levels: [...rep(3, '111'), ...rep(4, '000'), ...rep(8, '333')] },
+
+    { name: 'Pipe Works', par: 3,
+      map: ['gtg.ggg', 'ggg.gog', ...rep(4, 'ggg.ggg'), ...rep(4, 'ggg.SSS'), ...rep(2, 'ggg.ggg'), 'g@g.ggg', 'ggg.gtg'],
+      extras: [
+        { type: 'tunnel', a: { c: 1, r: 0, out: 's' }, b: { c: 5, r: 13, out: 'n' }, length: 6 },
+        { type: 'post', c: 5.5, r: 4, rad: 0.08 },
+      ] },
+
+    { name: 'Crane Hooks', par: 3,
+      map: ['ggg', 'gog', ...rep(18, 'ggg'), 'g@g', 'ggg'],
+      extras: [
+        { type: 'pendulum', c: 1.5, r: 7, axis: 'z', halfWidth: 0.75, period: 2.3 },
+        { type: 'pendulum', c: 1.5, r: 14, axis: 'z', halfWidth: 0.75, period: 2.9, phase: 0.6 },
+      ] },
+
+    { name: 'Blast Doors', par: 3,
+      map: ['ggggg', 'ggogg', ...rep(17, 'ggggg'), 'gg@gg', 'ggggg'],
+      extras: [
+        { type: 'slider', c: 2.5, r: 7, axis: 'z', halfWidth: 1.25, gap: 0.45, period: 3 },
+        { type: 'slider', c: 2.5, r: 13, axis: 'z', halfWidth: 1.25, gap: 0.45, period: 3.8, phase: 1.3 },
+      ] },
+
+    { name: 'Gear Gate', par: 3,
+      map: ['ggg', 'gog', ...rep(5, 'gNg'), ...rep(14, 'ggg'), 'g@g', 'ggg'],
+      extras: [{ type: 'windmill', c: 1.5, r: 12, axis: 'z', halfWidth: 0.75, period: 4, front: 1 }] },
+
+    { name: 'Launcher', par: 3,
+      map: ['ggggggg', 'gggoggg', 'ggggggg', 'LLLLLLL', 'LLLLLLL', 'LLLLLLL', '..gtg..', ...rep(6, '..ggg..'), '..g@g..', '..ggg..'],
+      extras: [{ type: 'cannon', in: { c: 3, r: 6, out: 's' }, target: { c: 5, r: 2 }, apex: 1.3 }] },
+
+    { name: 'Marble Run', par: 3,
+      map: ['ggg...ggg', 'ggo...ggg', 'gNg...gtg', 'gNg...ggg', ...rep(8, 'gNg...ggg'), 'ggg...ggg', 'ggg...ggg', 'ggg...g@g', 'ggg...ggg'],
+      levels: [...rep(16, '000...444')],
+      extras: [{ type: 'chute', in: { c: 7, r: 2, out: 's' }, out: { c: 1, r: 13, out: 'n' },
+        via: [[7.5, 0.4], [7.5, -1.2], [6, -2.2], [4.5, -1.6], [4.5, 0.4], [3.4, 2.5], [5.6, 4], [3.4, 5.5], [5.6, 7], [3.4, 8.5], [5.6, 10], [4.5, 12.5], [3.4, 15.2], [1.5, 15.6]] }] },
+
+    { name: 'Sorting Room', par: 3,
+      map: ['....ggggg', '....gggog', '....ggggg', '......ggg', '......ggg', 'ggggggggg', 'gEEEEEEgg', 'ggggggggg', ...rep(4, 'gNg......'), 'g@g......', 'ggg......'],
+      extras: [
+        { type: 'bumper', a: [0, 6.5], b: [1.5, 5] },
+        { type: 'bumper', a: [7.5, 0], b: [9, 1.5] },
+        { type: 'post', c: 7.5, r: 4, rad: 0.08 },
+      ] },
+
+    { name: 'Main Line', par: 4,
+      map: ['ggg', 'gog', ...rep(3, 'ggg'), ...rep(4, 'NNN'), ...rep(3, 'ggg'), ...rep(4, 'ggg'), ...rep(3, 'SSS'), ...rep(5, 'ggg'), 'g@g', 'ggg'],
+      extras: [
+        { type: 'press', c: 1.5, r: 11, axis: 'z', halfWidth: 0.75, period: 3.6 },
+        { type: 'pendulum', c: 1.5, r: 3.5, axis: 'z', halfWidth: 0.75, period: 2.7 },
+        { type: 'slider', c: 1.5, r: 24, axis: 'z', halfWidth: 0.75, gap: 0.4, period: 3 },
+      ] },
+  ],
+};
+
 const THEMES = [
   { id: 'sunny', name: 'Sunny Park', blurb: 'Windmill, ball lift, loop-the-loop and ponds', course: SUNNY_PARK, colour: '#5cc46a' },
   { id: 'pirate', name: 'Pirate Cove', blurb: 'Shipwrecks, sand, a plank and a ball cannon', course: PIRATE_COVE, colour: '#e0b45a' },
   { id: 'volcano', name: 'Volcano Island', blurb: 'Lava, trampolines and a smoking volcano', course: VOLCANO_ISLAND, colour: '#e0573a' },
   { id: 'castle', name: 'Castle Kingdom', blurb: 'Drawbridge, portcullis, catapult and maces', course: CASTLE_KINGDOM, colour: '#9aa0b5' },
-  { id: 'frozen', name: 'Frozen Peaks', blurb: 'Ice, snow and marble-run chutes', course: null, colour: '#8fd3f0' },
-  { id: 'robot', name: 'Robot Factory', blurb: 'Ball lift, conveyors and a loop', course: null, colour: '#c0c4cc' },
+  { id: 'frozen', name: 'Frozen Peaks', blurb: 'Ice rinks, snowdrifts, a ski lift and a bobsled run', course: FROZEN_PEAKS, colour: '#8fd3f0' },
+  { id: 'robot', name: 'Robot Factory', blurb: 'Conveyor belts, presses, a ball elevator and a marble run', course: ROBOT_FACTORY, colour: '#c0c4cc' },
 ];
 
 const PURE = {
-  SUNNY_PARK, PIRATE_COVE, VOLCANO_ISLAND, CASTLE_KINGDOM, THEMES,
+  SUNNY_PARK, PIRATE_COVE, VOLCANO_ISLAND, CASTLE_KINGDOM, FROZEN_PEAKS, ROBOT_FACTORY, THEMES,
   CONFIG, parseHole, cellAt, cellOf, baseHeight, groundHeight, gradient, createBall, shoot, stepBall, simulateShot,
   windmillBlocked, windmillAngle, portcullisLift, portcullisBlocked, drawbridgeRaise, distanceField, botPlay, cappedScore, isCourseChar,
-  sliderPieces, pendulumState, transportPos, loopSpeedNeeded, laneXZ, offPlank, isWet, cannonMuzzle,
+  sliderPieces, pendulumState, transportPos, loopSpeedNeeded, laneXZ, offPlank, isWet, cannonMuzzle, surfaceDecel, BELT_DIRS,
 };
 // ==== PURE END ====
 </script>
@@ -1237,7 +1471,7 @@ const PURE = {
 // ============================================================
 const canvas = document.getElementById('view');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setPixelRatio(Math.min(2, Math.max(window.devicePixelRatio, 1.25))); // a little supersampling on 1× screens
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.outputEncoding = THREE.sRGBEncoding;
@@ -1260,10 +1494,11 @@ const sky = new THREE.Mesh(
 );
 scene.add(sky);
 
-scene.add(new THREE.HemisphereLight(0xdcefff, 0x4d7a3a, 0.65));
+const hemi = new THREE.HemisphereLight(0xdcefff, 0x4d7a3a, 0.65);
+scene.add(hemi);
 const sun = new THREE.DirectionalLight(0xfff0d0, 1.25);
 sun.castShadow = true;
-sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.mapSize.set(4096, 4096);
 sun.shadow.bias = -0.0004;
 sun.shadow.normalBias = 0.01;
 scene.add(sun, sun.target);
@@ -1302,10 +1537,6 @@ function speckle(g, w, h, n, colours, size) {
 }
 
 const TEX = {
-  carpet: canvasTex(256, 256, (g, w, h) => {
-    g.fillStyle = '#2d8a3c'; g.fillRect(0, 0, w, h);
-    speckle(g, w, h, 9000, ['#3a9c48', '#24763a', '#33914a', '#1f6b33', '#46a855'], 1.6);
-  }),
   grass: canvasTex(256, 256, (g, w, h) => {
     g.fillStyle = '#5f9e46'; g.fillRect(0, 0, w, h);
     for (let i = 0; i < 2600; i++) {
@@ -1481,8 +1712,151 @@ Object.assign(TEX, {
 });
 TEX.grass.repeat.set(1, 1);
 
+// Draws something nine times, shifted by a tile in each direction, so it wraps seamlessly.
+function wrap9(g, w, h, draw) {
+  for (const dx of [-w, 0, w]) for (const dy of [-h, 0, h]) { g.save(); g.translate(dx, dy); draw(); g.restore(); }
+}
+function blobs(g, w, h, n, r0, r1, colours) {
+  for (let i = 0; i < n; i++) {
+    const x = Math.random() * w, y = Math.random() * h, r = r0 + Math.random() * (r1 - r0), col = colours[i % colours.length];
+    wrap9(g, w, h, () => {
+      const gr = g.createRadialGradient(x, y, 0, x, y, r);
+      gr.addColorStop(0, col); gr.addColorStop(1, 'rgba(0,0,0,0)');
+      g.fillStyle = gr; g.fillRect(x - r, y - r, 2 * r, 2 * r);
+    });
+  }
+}
+
+// Sharper carpet for every course: finer pile, with a bump map so it catches the light.
+TEX.carpet = canvasTex(512, 512, (g, w, h) => {
+  g.fillStyle = '#2d8a3c'; g.fillRect(0, 0, w, h);
+  blobs(g, w, h, 60, 20, 60, ['rgba(60,170,80,.18)', 'rgba(15,80,35,.18)']);
+  speckle(g, w, h, 42000, ['#3a9c48', '#24763a', '#33914a', '#1f6b33', '#46a855'], 1.3);
+});
+TEX.carpetBump = canvasTex(256, 256, (g, w, h) => {
+  g.fillStyle = '#808080'; g.fillRect(0, 0, w, h);
+  speckle(g, w, h, 16000, ['#5a5a5a', '#a8a8a8', '#707070', '#949494'], 1.2);
+}, false);
+
+// Frozen Peaks
+Object.assign(TEX, {
+  snow: canvasTex(512, 512, (g, w, h) => {
+    g.fillStyle = '#edf2f8'; g.fillRect(0, 0, w, h);
+    blobs(g, w, h, 60, 60, 160, ['rgba(175,195,225,.16)', 'rgba(255,255,255,.3)', 'rgba(195,210,232,.14)']);
+    speckle(g, w, h, 12000, ['#e4ebf4', '#ffffff', '#dae4f0'], 1.2);
+    speckle(g, w, h, 500, ['#ffffff', '#d8efff'], 0.8); // glints
+  }),
+  ice: canvasTex(512, 512, (g, w, h) => {
+    g.fillStyle = '#7fbfdd'; g.fillRect(0, 0, w, h);
+    blobs(g, w, h, 70, 30, 110, ['rgba(255,255,255,.3)', 'rgba(40,110,160,.3)', 'rgba(200,238,255,.3)']);
+    // skate scratches, then cracks frozen into the sheet
+    for (let i = 0; i < 60; i++) {
+      const cx = Math.random() * w, cy = Math.random() * h, R = 80 + Math.random() * 380, a0 = Math.random() * 6.3, lw = 0.6 + Math.random();
+      wrap9(g, w, h, () => { g.strokeStyle = 'rgba(255,255,255,.22)'; g.lineWidth = lw; g.beginPath(); g.arc(cx, cy, R, a0, a0 + 0.15 + Math.random() * 0.25); g.stroke(); });
+    }
+    for (let i = 0; i < 12; i++) {
+      const pts = [[Math.random() * w, Math.random() * h]];
+      let a = Math.random() * 6.3;
+      for (let k = 0; k < 9; k++) { a += (Math.random() - 0.5) * 1.2; const [x, y] = pts[pts.length - 1]; const l = 12 + Math.random() * 30; pts.push([x + Math.cos(a) * l, y + Math.sin(a) * l]); }
+      const lw = 0.8 + Math.random() * 1.2;
+      wrap9(g, w, h, () => {
+        g.strokeStyle = 'rgba(255,255,255,.6)'; g.lineWidth = lw; g.beginPath(); pts.forEach(([x, y], k) => k ? g.lineTo(x, y) : g.moveTo(x, y)); g.stroke();
+        g.strokeStyle = 'rgba(70,130,165,.25)'; g.lineWidth = lw * 0.6; g.beginPath(); pts.forEach(([x, y], k) => k ? g.lineTo(x + 1.5, y + 1.5) : g.moveTo(x + 1.5, y + 1.5)); g.stroke();
+      });
+    }
+  }),
+  iceBlock: canvasTex(256, 128, (g, w, h) => {
+    g.fillStyle = '#8fcbe4'; g.fillRect(0, 0, w, h);
+    const bw = 128, bh = 64;
+    for (let r = 0; r < h / bh; r++) for (let c = -1; c < w / bw + 1; c++) {
+      const x = c * bw + (r % 2) * bw / 2, y = r * bh;
+      const gr = g.createLinearGradient(x, y, x + bw, y + bh);
+      gr.addColorStop(0, '#d8f2fc'); gr.addColorStop(0.5, '#a8dcf0'); gr.addColorStop(1, '#c4e9f8');
+      g.fillStyle = gr; g.fillRect(x + 3, y + 3, bw - 6, bh - 6);
+      g.strokeStyle = 'rgba(255,255,255,.55)'; g.lineWidth = 1.5;
+      for (let k = 0; k < 3; k++) { const sx = x + 10 + Math.random() * (bw - 30); g.beginPath(); g.moveTo(sx, y + 6); g.lineTo(sx + 14, y + bh - 8); g.stroke(); }
+    }
+  }),
+});
+TEX.snow.repeat.set(0.3, 0.3);
+TEX.ice.repeat.set(0.35, 0.35);
+
+// Robot Factory
+Object.assign(TEX, {
+  concrete: canvasTex(512, 512, (g, w, h) => {
+    g.fillStyle = '#8f8e8a'; g.fillRect(0, 0, w, h);
+    blobs(g, w, h, 90, 20, 90, ['rgba(60,58,55,.14)', 'rgba(255,255,250,.12)', 'rgba(110,100,90,.12)']);
+    speckle(g, w, h, 14000, ['#9a9995', '#82817d', '#a5a49f', '#787773'], 1.2);
+    g.fillStyle = 'rgba(40,40,40,.55)'; g.fillRect(0, 0, w, 3); g.fillRect(0, 0, 3, h); // slab joints every 4 m
+  }),
+  carpetFactory: canvasTex(512, 512, (g, w, h) => {
+    g.fillStyle = '#2f5687'; g.fillRect(0, 0, w, h);
+    blobs(g, w, h, 60, 20, 60, ['rgba(90,140,200,.15)', 'rgba(10,30,60,.18)']);
+    speckle(g, w, h, 42000, ['#3a64a0', '#264a78', '#35609a', '#1f4170', '#4a74ae'], 1.3);
+  }),
+  hazard: canvasTex(256, 64, (g, w, h) => {
+    g.fillStyle = '#1c1c1c'; g.fillRect(0, 0, w, h);
+    g.fillStyle = '#f0bf0c';
+    for (let x = -h; x < w + h; x += 64) { g.beginPath(); g.moveTo(x, h); g.lineTo(x + 32, h); g.lineTo(x + 32 + h, 0); g.lineTo(x + h, 0); g.fill(); }
+    speckle(g, w, h, 900, ['rgba(0,0,0,.35)', 'rgba(255,255,255,.18)', 'rgba(120,90,40,.3)'], 2); // scuffs
+  }),
+  plate: canvasTex(256, 256, (g, w, h) => {
+    g.fillStyle = '#8b9199'; g.fillRect(0, 0, w, h);
+    blobs(g, w, h, 30, 20, 60, ['rgba(255,255,255,.12)', 'rgba(40,45,50,.15)']);
+    for (let y = 0; y < h; y += 32) for (let x = (y / 32) % 2 ? 16 : 0; x < w; x += 32) { // diamond tread
+      g.save(); g.translate(x + 8, y + 8); g.rotate((y / 32) % 2 ? 0.6 : -0.6);
+      g.fillStyle = 'rgba(30,34,38,.45)'; g.fillRect(-9, -2, 18, 5);
+      g.fillStyle = 'rgba(235,240,245,.55)'; g.fillRect(-9, -3, 18, 3);
+      g.restore();
+    }
+  }),
+  belt: canvasTex(128, 128, (g, w, h) => {
+    g.fillStyle = '#26282c'; g.fillRect(0, 0, w, h);
+    speckle(g, w, h, 1500, ['#2e3035', '#1e2024'], 1.5);
+    for (let y = 0; y < h; y += 16) { g.fillStyle = '#3a3d43'; g.fillRect(0, y, w, 4); g.fillStyle = '#16171a'; g.fillRect(0, y + 4, w, 2); }
+    // a painted chevron points the way the belt runs (canvas up = forward)
+    g.strokeStyle = 'rgba(240,190,12,.75)'; g.lineWidth = 10; g.lineJoin = 'miter';
+    g.beginPath(); g.moveTo(w * 0.22, h * 0.68); g.lineTo(w * 0.5, h * 0.36); g.lineTo(w * 0.78, h * 0.68); g.stroke();
+  }),
+  corrugated: canvasTex(256, 256, (g, w, h) => {
+    for (let x = 0; x < w; x += 16) {
+      const gr = g.createLinearGradient(x, 0, x + 16, 0);
+      gr.addColorStop(0, '#7d8792'); gr.addColorStop(0.5, '#b5bec8'); gr.addColorStop(1, '#6c7680');
+      g.fillStyle = gr; g.fillRect(x, 0, 16, h);
+    }
+    for (let i = 0; i < 14; i++) { // rust and grime streaking down the panels
+      const x = Math.random() * w, l = 30 + Math.random() * 140, y = Math.random() * h;
+      wrap9(g, w, h, () => { const gr = g.createLinearGradient(0, y, 0, y + l); gr.addColorStop(0, 'rgba(120,70,30,.35)'); gr.addColorStop(1, 'rgba(120,70,30,0)'); g.fillStyle = gr; g.fillRect(x, y, 3 + Math.random() * 6, l); });
+    }
+  }),
+  sign: canvasTex(1024, 256, (g, w, h) => {
+    g.fillStyle = '#1b2230'; g.fillRect(0, 0, w, h);
+    g.fillStyle = '#f0bf0c'; g.fillRect(0, 0, w, 14); g.fillRect(0, h - 14, w, 14);
+    g.font = '900 130px "Segoe UI", system-ui, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillStyle = '#f0bf0c'; g.fillText('ROBOT FACTORY', w / 2 + 4, h / 2 + 8);
+    g.fillStyle = '#ffffff'; g.fillText('ROBOT FACTORY', w / 2, h / 2 + 4);
+  }),
+  dimples: canvasTex(256, 128, (g, w, h) => {
+    g.fillStyle = '#9a9a9a'; g.fillRect(0, 0, w, h);
+    for (let r = 0; r < 12; r++) for (let c = 0; c < 24; c++) {
+      const x = (c + (r % 2) * 0.5) * (w / 24), y = (r + 0.5) * (h / 12);
+      const gr = g.createRadialGradient(x, y, 0, x, y, 5);
+      gr.addColorStop(0, '#3a3a3a'); gr.addColorStop(1, '#9a9a9a');
+      g.fillStyle = gr; g.beginPath(); g.arc(x, y, 5, 0, Math.PI * 2); g.fill();
+    }
+  }, false),
+  spark: canvasTex(64, 64, (g, w, h) => {
+    const gr = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+    gr.addColorStop(0, 'rgba(255,255,255,1)'); gr.addColorStop(0.4, 'rgba(255,255,255,.6)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = gr; g.fillRect(0, 0, w, h);
+  }),
+});
+TEX.concrete.repeat.set(0.25, 0.25);
+TEX.corrugated.repeat.set(0.5, 0.5);
+TEX.spark.wrapS = TEX.spark.wrapT = THREE.ClampToEdgeWrapping;
+
 const MAT = {
-  carpet: new THREE.MeshStandardMaterial({ map: TEX.carpet, roughness: 0.95 }),
+  carpet: new THREE.MeshStandardMaterial({ map: TEX.carpet, roughness: 0.95, bumpMap: TEX.carpetBump, bumpScale: 0.6 }),
   grass: new THREE.MeshStandardMaterial({ map: TEX.grass, roughness: 1 }),
   brick: new THREE.MeshStandardMaterial({ map: TEX.brick, roughness: 0.85, side: THREE.DoubleSide }),
   wood: new THREE.MeshStandardMaterial({ map: TEX.wood, roughness: 0.8, side: THREE.DoubleSide }),
@@ -1542,6 +1916,43 @@ const MAT = {
   armour: new THREE.MeshStandardMaterial({ color: '#b8bcc4', roughness: 0.25, metalness: 0.9 }),
   slate: new THREE.MeshStandardMaterial({ color: '#3d4a6b', roughness: 0.7, flatShading: true }),
   hedge: new THREE.MeshStandardMaterial({ color: '#2f6b2c', roughness: 1 }),
+  // Frozen Peaks
+  snow: new THREE.MeshStandardMaterial({ map: TEX.snow, roughness: 0.85 }),
+  ice: new THREE.MeshStandardMaterial({ map: TEX.ice, roughness: 0.12, metalness: 0 }),
+  iceBlock: new THREE.MeshStandardMaterial({ map: TEX.iceBlock, roughness: 0.1, metalness: 0.1, transparent: true, opacity: 0.9, side: THREE.DoubleSide }),
+  iceWater: new THREE.MeshStandardMaterial({ color: '#173c52', roughness: 0.03, metalness: 0.4, transparent: true, opacity: 0.94 }),
+  iceTrough: new THREE.MeshStandardMaterial({ color: '#e4f3fb', roughness: 0.08, metalness: 0.1, side: THREE.DoubleSide }),
+  snowCap: new THREE.MeshStandardMaterial({ color: '#f3f7fb', roughness: 0.9 }),
+  pine: new THREE.MeshStandardMaterial({ color: '#1d4a36', roughness: 0.95, flatShading: true }),
+  pineSnow: new THREE.MeshStandardMaterial({ color: '#f1f5fa', roughness: 0.9, flatShading: true }),
+  mountain: new THREE.MeshStandardMaterial({ color: '#66758c', roughness: 1, flatShading: true }),
+  carrot: new THREE.MeshStandardMaterial({ color: '#ff7a1a', roughness: 0.7 }),
+  coal: new THREE.MeshStandardMaterial({ color: '#141414', roughness: 0.6 }),
+  scarf: new THREE.MeshStandardMaterial({ color: '#d63340', roughness: 0.9 }),
+  scarfBlue: new THREE.MeshStandardMaterial({ color: '#2f6fd6', roughness: 0.9 }),
+  cabin: new THREE.MeshStandardMaterial({ color: '#7a4a2a', roughness: 0.95 }),
+  glow: new THREE.MeshBasicMaterial({ color: '#ffcf70' }),
+  // Robot Factory
+  concrete: new THREE.MeshStandardMaterial({ map: TEX.concrete, roughness: 0.75 }),
+  carpetFactory: new THREE.MeshStandardMaterial({ map: TEX.carpetFactory, roughness: 0.95, bumpMap: TEX.carpetBump, bumpScale: 0.6 }),
+  hazard: new THREE.MeshStandardMaterial({ map: TEX.hazard, roughness: 0.45, metalness: 0.4, side: THREE.DoubleSide }),
+  plate: new THREE.MeshStandardMaterial({ map: TEX.plate, roughness: 0.35, metalness: 0.75, side: THREE.DoubleSide }),
+  belt: new THREE.MeshStandardMaterial({ map: TEX.belt, roughness: 0.75 }),
+  corrugated: new THREE.MeshStandardMaterial({ map: TEX.corrugated, roughness: 0.5, metalness: 0.5, side: THREE.DoubleSide }),
+  sign: new THREE.MeshStandardMaterial({ map: TEX.sign, emissive: '#ffffff', emissiveMap: TEX.sign, emissiveIntensity: 0.35, roughness: 0.6 }),
+  molten: new THREE.MeshStandardMaterial({ map: TEX.lava, color: '#ffd27a', emissive: '#ffffff', emissiveMap: TEX.lava, emissiveIntensity: 1.1, roughness: 0.6 }),
+  robotOrange: new THREE.MeshStandardMaterial({ color: '#ff7417', roughness: 0.35, metalness: 0.35 }),
+  robotWhite: new THREE.MeshStandardMaterial({ color: '#e8ecf1', roughness: 0.3, metalness: 0.2 }),
+  robotDark: new THREE.MeshStandardMaterial({ color: '#2a2e35', roughness: 0.5, metalness: 0.5 }),
+  eye: new THREE.MeshBasicMaterial({ color: '#58f0ff' }),
+  ledRed: new THREE.MeshBasicMaterial({ color: '#ff3a30' }),
+  ledGreen: new THREE.MeshBasicMaterial({ color: '#3dff7a' }),
+  ledAmber: new THREE.MeshBasicMaterial({ color: '#ffb020' }),
+  pipe: new THREE.MeshStandardMaterial({ color: '#2f7a58', roughness: 0.4, metalness: 0.5 }),
+  pipeRed: new THREE.MeshStandardMaterial({ color: '#b83a2c', roughness: 0.4, metalness: 0.5 }),
+  barrelBlue: new THREE.MeshStandardMaterial({ color: '#2456a8', roughness: 0.4, metalness: 0.5 }),
+  acrylic: new THREE.MeshStandardMaterial({ color: '#dff3ff', roughness: 0.04, metalness: 0.1, transparent: true, opacity: 0.3, depthWrite: false, side: THREE.DoubleSide }),
+  windowPane: new THREE.MeshBasicMaterial({ color: '#ffd7a8' }),
 };
 TEX.lava.repeat.set(0.8, 0.8);
 TEX.sand.repeat.set(0.4, 0.4);
@@ -1569,7 +1980,7 @@ function buildGround(hole) {
   const cut = new THREE.Path();
   cut.moveTo(0, 0); cut.lineTo(0, -D); cut.lineTo(W, -D); cut.lineTo(W, 0); cut.lineTo(0, 0);
   shape.holes.push(cut);
-  ground = new THREE.Mesh(new THREE.ShapeGeometry(shape), { beach: MAT.sand, jungle: MAT.jungle }[STYLE] || MAT.grass);
+  ground = new THREE.Mesh(new THREE.ShapeGeometry(shape), { beach: MAT.sand, jungle: MAT.jungle, ice: MAT.snow, factory: MAT.concrete }[STYLE] || MAT.grass);
   ground.rotation.x = -Math.PI / 2;
   ground.position.y = -0.02;
   ground.receiveShadow = true;
@@ -1642,7 +2053,8 @@ function box(w, h, d, mat, x, y, z) {
 // ============================================================
 const C = CONFIG.cell;
 let holeGroup = null;
-const anim = { windmills: [], flag: null, water: [], sliders: [], pendulums: [], flags: [], ship: null, volcanoes: [], flames: [] };
+const anim = { windmills: [], flag: null, water: [], sliders: [], pendulums: [], flags: [], ship: null, volcanoes: [], flames: [], drawbridge: null, gates: [],
+  fans: [], chairs: [], robots: [], heads: [], leds: [], crates: [], chimneys: [], snow: null, sparks: null };
 
 const stripeTex = canvasTex(128, 32, (g, w, h) => {
   for (let x = -h; x < w + h; x += 32) {
@@ -1681,6 +2093,7 @@ function rails(points, side, radius, mat) {
 
 function addLiftModel(hole, lf) {
   if (STYLE === 'castle') addWinchTower(lf);
+  if (STYLE === 'ice') addSkiLiftPylon(lf);
   const a = lf.a, b = lf.b;
   const top = Math.max(a.y, b.y) + 0.45;
   const tx = a.x - a.out[0] * 0.35, tz = a.z - a.out[1] * 0.35;
@@ -1725,34 +2138,41 @@ function addLoopModel(hole, lp) {
 }
 
 function addSliderModel(hole, s) {
-  const hw = s.halfWidth;
+  const hw = s.halfWidth, frame = STYLE === 'factory' ? MACH.yellow : MAT.wood;
   for (const v of [-(hw + 0.06), hw + 0.06]) {
     const [x, z] = laneXZ(s, 0, v);
-    holeGroup.add(box(0.06, 0.32, 0.06, MAT.wood, x, s.y + 0.16, z));
+    holeGroup.add(box(0.06, 0.32, 0.06, frame, x, s.y + 0.16, z));
   }
   const [cx, cz] = laneXZ(s, 0, 0);
-  const beam = box(s.axis === 'z' ? 2 * hw + 0.18 : 0.06, 0.06, s.axis === 'z' ? 0.06 : 2 * hw + 0.18, MAT.wood, cx, s.y + 0.32, cz);
+  const beam = box(s.axis === 'z' ? 2 * hw + 0.18 : 0.06, 0.06, s.axis === 'z' ? 0.06 : 2 * hw + 0.18, frame, cx, s.y + 0.32, cz);
   holeGroup.add(beam);
-  const pieces = [0, 1].map(() => { const m = box(1, 0.09, 0.035, { beach: MAT.deck, jungle: MAT.bamboo, castle: MAT.castle }[STYLE] || MACH.stripes, 0, 0, 0); holeGroup.add(m); return m; });
+  const pieces = [0, 1].map(() => { const m = box(1, 0.09, 0.035, { beach: MAT.deck, jungle: MAT.bamboo, castle: MAT.castle, ice: MAT.iceBlock, factory: MAT.hazard }[STYLE] || MACH.stripes, 0, 0, 0); holeGroup.add(m); return m; });
   anim.sliders.push({ s, pieces });
 }
 
 function addPendulumModel(hole, p) {
-  const pivotY = p.y + p.length + p.bobR + 0.005, hw = p.halfWidth + 0.1;
+  const pivotY = p.y + p.length + p.bobR + 0.005, hw = p.halfWidth + 0.1, frame = STYLE === 'factory' ? MACH.yellow : MAT.wood;
   for (const v of [-hw, hw]) {
     const [x, z] = laneXZ(p, 0, v);
-    holeGroup.add(box(0.07, pivotY + 0.05 - p.y, 0.07, MAT.wood, x, p.y + (pivotY + 0.05 - p.y) / 2, z));
+    holeGroup.add(box(0.07, pivotY + 0.05 - p.y, 0.07, frame, x, p.y + (pivotY + 0.05 - p.y) / 2, z));
   }
   const [cx, cz] = laneXZ(p, 0, 0);
-  holeGroup.add(box(p.axis === 'z' ? 2 * hw + 0.07 : 0.07, 0.07, p.axis === 'z' ? 0.07 : 2 * hw + 0.07, MAT.wood, cx, pivotY + 0.05, cz));
+  holeGroup.add(box(p.axis === 'z' ? 2 * hw + 0.07 : 0.07, 0.07, p.axis === 'z' ? 0.07 : 2 * hw + 0.07, frame, cx, pivotY + 0.05, cz));
   const arm = new THREE.Group();
   arm.position.set(cx, pivotY, cz);
   const rod = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, p.length, 8), MACH.steel);
   rod.position.y = -p.length / 2; rod.castShadow = true;
   // in Pirate Cove the pendulum swings a cannonball on a chain
-  const bob = new THREE.Mesh(new THREE.SphereGeometry(p.bobR, 24, 16), { beach: MAT.iron, jungle: MAT.basaltRock }[STYLE] || MACH.stripes);
+  const bob = new THREE.Mesh(new THREE.SphereGeometry(p.bobR, 24, 16), { beach: MAT.iron, jungle: MAT.basaltRock, ice: MAT.snow, factory: MAT.iron }[STYLE] || MACH.stripes);
   bob.position.y = -p.length; bob.castShadow = true;
   arm.add(rod, bob);
+  if (STYLE === 'factory') {
+    // a wrecking ball with a striped band, hung from a hook block
+    const band = new THREE.Mesh(new THREE.TorusGeometry(p.bobR * 1.0, 0.014, 8, 24), MACH.yellow);
+    band.position.y = -p.length; band.rotation.y = Math.PI / 2;
+    const hook = box(0.08, 0.07, 0.05, MACH.yellow, 0, -p.length + p.bobR + 0.04, 0);
+    arm.add(band, hook);
+  }
   if (STYLE === 'castle') {
     // a mace: spikes all round the iron ball
     bob.material = MAT.iron;
@@ -1772,6 +2192,8 @@ function addPostModel(hole, p) {
   const y = groundHeight(hole, p.x, p.z) ?? 0;
   if (STYLE === 'jungle') { addTiki(p.x, y, p.z, p.rad, 0.32); return; }
   if (STYLE === 'castle') { addArmour(p.x, y, p.z, p.rad); return; }
+  if (STYLE === 'ice') { addSnowman(p.x, y, p.z, p.rad); return; }
+  if (STYLE === 'factory') { addRobot(p.x, y, p.z, p.rad); return; }
   if (STYLE === 'beach') {
     // a rum barrel: staves with iron hoops
     const barrel = new THREE.Mesh(new THREE.CylinderGeometry(p.rad * 0.92, p.rad * 0.92, 0.22, 16), MAT.wood);
@@ -1823,24 +2245,32 @@ const SKIES = {
   beach: { top: '#2f8fe0', bottom: '#dff3ff' },
   jungle: { top: '#4a78b8', bottom: '#f3d2ad' }, // hazy, warmed by the volcano
   castle: { top: '#3a74c4', bottom: '#e4ecf5' },
+  ice: { top: '#3f86dc', bottom: '#eef5fc' },
+  factory: { top: '#26375e', bottom: '#f1b78a' }, // evening sky through the open roof
 };
 
 function buildHole(hole, style = 'park') {
   STYLE = style;
-  const beach = style === 'beach', jungle = style === 'jungle', castle = style === 'castle';
+  const beach = style === 'beach', jungle = style === 'jungle', castle = style === 'castle', ice = style === 'ice', factory = style === 'factory';
   const sk = SKIES[style] || SKIES.park;
   sky.material.uniforms.top.value.set(sk.top);
   sky.material.uniforms.bottom.value.set(sk.bottom);
   scene.fog.color.set(sk.bottom);
+  applyLights(style);
+  updateEnvironment();
   if (holeGroup) disposeGroup(holeGroup);
   holeGroup = new THREE.Group();
   anim.windmills = []; anim.water = []; anim.sliders = []; anim.pendulums = []; anim.flags = []; anim.ship = null; anim.volcanoes = []; anim.flames = []; anim.drawbridge = null; anim.gates = [];
+  anim.fans = []; anim.chairs = []; anim.robots = []; anim.heads = []; anim.leds = []; anim.crates = []; anim.chimneys = []; anim.snow = null; anim.sparks = null;
   seed = 1 + hole.rows * 131 + hole.cols * 17;
 
   const carpet = new GeoBuilder(), bridge = new GeoBuilder(), water = new GeoBuilder(), basin = new GeoBuilder();
   const brick = new GeoBuilder(), wood = new GeoBuilder(), stone = new GeoBuilder(), soil = new GeoBuilder();
   const bunker = new GeoBuilder(), deck = new GeoBuilder(), hull = new GeoBuilder();
   const lava = new GeoBuilder(), tramp = new GeoBuilder(), basalt = new GeoBuilder(), stoneBlocks = new GeoBuilder();
+  const iceSheet = new GeoBuilder(), snowCells = new GeoBuilder(), belts = new GeoBuilder(), iceBlocks = new GeoBuilder(), hazard = new GeoBuilder(), plate = new GeoBuilder(), snowCaps = new GeoBuilder();
+  // fresh snow is heaped a little, except where it meets something else
+  const allSnow = (x, z) => [[-0.01, -0.01], [0.01, -0.01], [-0.01, 0.01], [0.01, 0.01]].every(([dx, dz]) => cellAt(hole, x + dx, z + dz)?.ch === 'n');
   const N = 4;
 
   for (const cell of hole.cells) {
@@ -1863,7 +2293,9 @@ function buildHole(hole, style = 'park') {
       basin.quad([x0, by, z0 + C], [x0 + C, by, z0 + C], [x0 + C, by, z0], [x0, by, z0], [0, 1], [1, 1], [1, 0], [0, 0]);
       continue;
     }
-    const gb = cell.ch === '=' ? bridge : cell.ch === 's' ? bunker : cell.ch === 'd' ? deck : cell.ch === 'j' ? tramp : carpet;
+    const bd = beltOf(cell);
+    const gb = cell.ch === '=' ? bridge : cell.ch === 's' ? bunker : cell.ch === 'd' ? deck : cell.ch === 'j' ? tramp
+      : cell.ch === 'i' ? iceSheet : cell.ch === 'n' ? snowCells : bd ? belts : carpet;
     // sample just inside the cell so neighbouring levels don't bleed in
     const P = (i, j) => {
       const x = x0 + Math.min(Math.max(i / N, 1e-4), 1 - 1e-4) * C;
@@ -1871,7 +2303,11 @@ function buildHole(hole, style = 'park') {
       const y = groundHeight(hole, x, z);
       const g = gradient(hole, x, z);
       const l = Math.hypot(g.x, 1, g.z);
-      return { p: [x0 + (i / N) * C, y, z0 + (j / N) * C], n: [-g.x / l, 1 / l, -g.z / l], uv: [(x0 + (i / N) * C) * 1.2, (z0 + (j / N) * C) * 1.2] };
+      const wx = x0 + (i / N) * C, wz = z0 + (j / N) * C;
+      // belt UVs run along the belt so one scrolling texture moves every belt its own way
+      const uv = bd ? [(wx * bd[1] - wz * bd[0]) * 2, (wx * bd[0] + wz * bd[1]) * 2] : [wx * 1.2, wz * 1.2];
+      const heap = cell.ch === 'n' && allSnow(wx, wz) ? 0.006 + 0.005 * Math.sin(wx * 23) * Math.sin(wz * 19) : 0;
+      return { p: [wx, y + heap, wz], n: [-g.x / l, 1 / l, -g.z / l], uv };
     };
     for (let i = 0; i < N; i++) {
       for (let j = 0; j < N; j++) {
@@ -1888,8 +2324,9 @@ function buildHole(hole, style = 'park') {
       const ha = baseHeight(cell, s.ax - s.nx * 1e-4, s.az - s.nz * 1e-4);
       const hb = baseHeight(cell, s.bx - s.nx * 1e-4, s.bz - s.nz * 1e-4);
       const low = isHazardChar(cell.ch) ? ha - 0.12 : -0.05;
-      const edge = jungle ? basalt : castle ? stoneBlocks : cell.ch === 'w' ? stone : cell.ch === 'd' ? hull : beach ? wood : brick;
+      const edge = jungle ? basalt : castle ? stoneBlocks : ice ? iceBlocks : factory ? hazard : cell.ch === 'w' ? stone : cell.ch === 'd' ? hull : beach ? wood : brick;
       prism(edge, s.ax, s.az, s.bx, s.bz, s.nx, s.nz, 0.07, Math.min(low, -0.05), ha + CONFIG.wallHeight, hb + CONFIG.wallHeight);
+      if (ice) prism(snowCaps, s.ax, s.az, s.bx, s.bz, s.nx, s.nz, 0.085, ha + CONFIG.wallHeight - 0.004, ha + CONFIG.wallHeight + 0.022, hb + CONFIG.wallHeight + 0.022);
     } else if (s.kind === 'step') {
       const a = s.cellA, b = s.cellB;
       const mx = (s.ax + s.bx) / 2, mz = (s.az + s.bz) / 2;
@@ -1898,7 +2335,7 @@ function buildHole(hole, style = 'park') {
       const lowCell = hA < hB ? a : b;
       const bottom = isHazardChar(lowCell.ch) ? Math.min(hA, hB) - 0.12 : Math.min(hA, hB);
       const highCell = lowCell === a ? b : a;
-      prism(highCell.ch === 'd' ? hull : jungle ? basalt : castle ? stoneBlocks : lowCell.ch === 'w' ? stone : wood, s.ax, s.az, s.bx, s.bz, 0, 0, 0, bottom, s.top, s.top);
+      prism(highCell.ch === 'd' ? hull : jungle ? basalt : castle ? stoneBlocks : ice ? iceBlocks : factory ? plate : lowCell.ch === 'w' ? stone : wood, s.ax, s.az, s.bx, s.bz, 0, 0, 0, bottom, s.top, s.top);
     } else if (s.kind === 'rail' && jungle) {
       // a rope bridge: posts and a sagging hand-rope instead of a timber rail
       const y = s.top - CONFIG.wallHeight;
@@ -1917,7 +2354,7 @@ function buildHole(hole, style = 'park') {
     const dx = s.bx - s.ax, dz = s.bz - s.az, l = Math.hypot(dx, dz);
     const cell = cellAt(hole, (s.ax + s.bx) / 2 + 0.01, (s.az + s.bz) / 2 + 0.01);
     const base = cell ? baseHeight(cell, (s.ax + s.bx) / 2, (s.az + s.bz) / 2) : 0;
-    prism(jungle ? basalt : castle ? stoneBlocks : beach ? wood : brick, s.ax, s.az, s.bx, s.bz, dz / l, -dx / l, 0.06, base - 0.05, base + CONFIG.wallHeight, base + CONFIG.wallHeight);
+    prism(jungle ? basalt : castle ? stoneBlocks : ice ? iceBlocks : factory ? hazard : beach ? wood : brick, s.ax, s.az, s.bx, s.bz, dz / l, -dx / l, 0.06, base - 0.05, base + CONFIG.wallHeight, base + CONFIG.wallHeight);
   }
 
   // scenery cells inside the plot: flower beds hugging the course, lawn elsewhere
@@ -1940,17 +2377,20 @@ function buildHole(hole, style = 'park') {
     soil.quad([x0, y, z0 + C], [x0 + C, y, z0 + C], [x0 + C, y, z0], [x0, y, z0], [0, 1], [1, 1], [1, 0], [0, 0]);
     for (let k = 0; k < 5; k++) flowers.push([x0 + 0.06 + rnd() * (C - 0.12), z0 + 0.06 + rnd() * (C - 0.12)]);
   }
-  if (!lawn.empty) holeGroup.add(meshOf(lawn, beach ? MAT.sand : jungle ? MAT.jungle : MAT.grass, false));
+  if (!lawn.empty) holeGroup.add(meshOf(lawn, beach ? MAT.sand : jungle ? MAT.jungle : ice ? MAT.snow : factory ? MAT.concrete : MAT.grass, false));
 
   const add = (gb, mat, shadows) => { if (!gb.empty) holeGroup.add(meshOf(gb, mat, shadows)); };
-  add(carpet, MAT.carpet, false); add(bridge, beach ? MAT.deck : MAT.wood, false); add(basin, beach ? MAT.shallows : MAT.basin, false);
+  add(carpet, factory ? MAT.carpetFactory : MAT.carpet, false); add(bridge, beach ? MAT.deck : factory ? MAT.plate : MAT.wood, false); add(basin, beach ? MAT.shallows : MAT.basin, false);
   add(bunker, MAT.bunker, false); add(deck, MAT.deck, true); add(hull, MAT.hull, true);
   add(tramp, MAT.tramp, false); add(basalt, MAT.basalt, true); add(stoneBlocks, MAT.castle, true);
-  if (!lava.empty) holeGroup.add(meshOf(lava, MAT.lava, false));
+  add(iceSheet, MAT.ice, false); add(snowCells, MAT.snow, false); add(belts, MAT.belt, false);
+  add(iceBlocks, MAT.iceBlock, true); add(hazard, MAT.hazard, true); add(plate, MAT.plate, true); add(snowCaps, MAT.snowCap, true);
+  if (!lava.empty) holeGroup.add(meshOf(lava, factory ? MAT.molten : MAT.lava, false));
   add(brick, MAT.brick, true); add(wood, MAT.wood, true); add(stone, MAT.stone, true); add(soil, MAT.soil, false);
-  if (!water.empty) { const wm = meshOf(water, beach ? MAT.lagoon : castle ? MAT.moat : MAT.water, false); wm.receiveShadow = true; holeGroup.add(wm); }
+  if (!water.empty) { const wm = meshOf(water, beach ? MAT.lagoon : castle ? MAT.moat : ice ? MAT.iceWater : MAT.water, false); wm.receiveShadow = true; holeGroup.add(wm); }
 
-  if (beach) addDuneGrass(flowers); else if (jungle) addFerns(flowers); else if (castle) addHedges(flowers); else addFlowers(flowers);
+  if (beach) addDuneGrass(flowers); else if (jungle) addFerns(flowers); else if (castle) addHedges(flowers);
+  else if (ice) addSnowMounds(flowers); else if (factory) addFloorClutter(flowers); else addFlowers(flowers);
   addCupAndFlag(hole);
   addTee(hole);
   for (const w of hole.windmills) addWindmillModel(hole, w);
@@ -1963,12 +2403,14 @@ function buildHole(hole, style = 'park') {
   for (const cn of hole.cannons) addCannonModel(hole, cn);
   if (hole.ship) addShipModel(hole);
   if (hole.volcano) addVolcanoModel(hole.volcano);
-  if (jungle) addTrampolineFrames(hole);
+  if (jungle || factory) addTrampolineFrames(hole);
+  for (const ch of hole.chutes) addChuteModel(hole, ch);
   if (hole.drawbridge) addDrawbridgeModel(hole);
   for (const p of hole.portcullises) addGatehouseModel(hole, p);
   for (const w of hole.castleWalls || []) addCastleWall(w.a[0], w.a[1], w.b[0], w.b[1], 1.1);
   animateMachines(0);
-  if (beach) addBeachScenery(hole); else if (jungle) addJungleScenery(hole); else if (castle) addCastleScenery(hole); else addScenery(hole);
+  if (beach) addBeachScenery(hole); else if (jungle) addJungleScenery(hole); else if (castle) addCastleScenery(hole);
+  else if (ice) addIceScenery(hole); else if (factory) addFactoryScenery(hole); else addScenery(hole);
 
   scene.add(holeGroup);
   buildGround(hole);
@@ -2019,6 +2461,7 @@ function addTee(hole) {
 }
 
 function addWindmillModel(hole, w) {
+  if (STYLE === 'factory') return addGearGateModel(hole, w);
   const g = new THREE.Group();
   const along = w.axis === 'z';
   const y0 = groundHeight(hole, w.x, w.z) || 0;
@@ -2076,8 +2519,25 @@ function addTunnelModel(hole, tn) {
   const away = new THREE.Vector3(-tn.a.out[0] - tn.b.out[0], 0, -tn.a.out[1] - tn.b.out[1]);
   mid.add(away.multiplyScalar(0.4));
   const curve = new THREE.CatmullRomCurve3([a0, a1, mid, b1, b0]);
-  const beach = STYLE === 'beach', jungle = STYLE === 'jungle';
-  const tube = new THREE.Mesh(new THREE.TubeGeometry(curve, 64, beach || jungle || STYLE === 'castle' ? 0.13 : 0.1, 16, false), jungle ? MAT.basaltRock : beach ? MAT.rock : STYLE === 'castle' ? MAT.castle : MAT.bark);
+  const beach = STYLE === 'beach', jungle = STYLE === 'jungle', ice = STYLE === 'ice', factory = STYLE === 'factory';
+  const tube = new THREE.Mesh(new THREE.TubeGeometry(curve, 64, factory ? 0.11 : beach || jungle || ice || STYLE === 'castle' ? 0.13 : 0.1, 16, false),
+    jungle ? MAT.basaltRock : beach ? MAT.rock : STYLE === 'castle' ? MAT.castle : ice ? MAT.iceBlock : factory ? MAT.pipe : MAT.bark);
+  if (ice) {
+    // an ice cave: a snowdrift heaped over the pipe
+    const mid = curve.getPoint(0.5);
+    const drift = new THREE.Mesh(new THREE.SphereGeometry(0.8, 18, 10, 0, Math.PI * 2, 0, Math.PI / 2), MAT.snow);
+    drift.scale.set(1, 0.55, 0.85); drift.position.set(mid.x, -0.02, mid.z); drift.castShadow = true; drift.receiveShadow = true;
+    holeGroup.add(drift);
+  }
+  if (factory) {
+    // bolted flanges along the pipe
+    for (let k = 1; k < 8; k++) {
+      const q = curve.getPointAt(k / 8), tan = curve.getTangentAt(k / 8);
+      const fl = new THREE.Mesh(new THREE.TorusGeometry(0.115, 0.018, 6, 20), MACH.steel);
+      fl.position.copy(q); fl.lookAt(q.clone().add(tan));
+      holeGroup.add(fl);
+    }
+  }
   if (beach) {
     // a sea-cave rock heaped over the pipe, with two dark hollows for eyes
     const rockMid = curve.getPoint(0.5);
@@ -2094,7 +2554,7 @@ function addTunnelModel(hole, tn) {
   tube.castShadow = true; tube.receiveShadow = true;
   holeGroup.add(tube);
   for (const m of [tn.a, tn.b]) {
-    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.1, 0.025, 8, 20), MAT.wood);
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.1, 0.025, 8, 20), STYLE === 'factory' ? MACH.yellow : STYLE === 'ice' ? MAT.iceBlock : MAT.wood);
     const p = mouthPt(m, 0.03);
     ring.position.copy(p);
     ring.lookAt(p.x + m.out[0], p.y, p.z + m.out[1]);
@@ -2355,6 +2815,8 @@ function addShipModel(hole) {
 // A deck cannon behind the mouth, aimed along the ball's flight.
 function addCannonModel(hole, cn) {
   if (STYLE === 'castle') return addCatapultModel(hole, cn);
+  if (STYLE === 'ice') return addSnowCannonModel(hole, cn);
+  if (STYLE === 'factory') return addLauncherModel(hole, cn);
   const m = cannonMuzzle(cn), a = cn.a;
   const bx = a.x - a.out[0] * 0.55, bz = a.z - a.out[1] * 0.55;
   const g = new THREE.Group();
@@ -2521,7 +2983,7 @@ function addTrampolineFrames(hole) {
   for (const [ax, az, bx, bz, nx, nz] of [[x0, z0, x1, z0, 0, -1], [x1, z0, x1, z1, 1, 0], [x1, z1, x0, z1, 0, 1], [x0, z1, x0, z0, -1, 0]]) {
     prism(g, ax, az, bx, bz, nx, nz, 0.06, y - 0.25, y + 0.015, y + 0.015);
   }
-  holeGroup.add(meshOf(g, MACH.steel, true));
+  holeGroup.add(meshOf(g, STYLE === 'factory' ? MAT.hazard : MACH.steel, true));
   for (let x = x0 + 0.1; x < x1; x += 0.2) for (const z of [z0 - 0.03, z1 + 0.03]) {
     const spring = new THREE.Mesh(new THREE.TorusGeometry(0.02, 0.004, 4, 8), MACH.steel);
     spring.position.set(x, y + 0.015, z); spring.rotation.y = Math.PI / 2;
@@ -2779,6 +3241,7 @@ function addDrawbridgeModel(hole) {
 
 // A gatehouse: a stone block with battlements and two turrets, an arched passage, and an iron portcullis.
 function addGatehouseModel(hole, p) {
+  if (p.press) return addPressModel(hole, p);
   const g = new THREE.Group();
   const y0 = groundHeight(hole, p.x, p.z) || 0;
   g.position.set(p.x, y0, p.z);
@@ -2928,6 +3391,781 @@ function animateCastle(t) {
   for (const { p, grid } of anim.gates) grid.position.y = portcullisLift(p, t) * 0.22;
 }
 
+// ============================================================
+//  LIGHTING AND REFLECTIONS PER COURSE
+// ============================================================
+const LIGHTS = {
+  park: { hemi: ['#dcefff', '#4d7a3a', 0.65], sun: ['#fff0d0', 1.25] },
+  ice: { hemi: ['#e4f0ff', '#a6b8cc', 0.55], sun: ['#fff4e6', 1.1] },
+  factory: { hemi: ['#dfe6ff', '#4a4440', 0.8], sun: ['#ffd9b0', 1.05] },
+};
+function applyLights(style) {
+  const L = LIGHTS[style] || LIGHTS.park;
+  hemi.color.set(L.hemi[0]); hemi.groundColor.set(L.hemi[1]); hemi.intensity = L.hemi[2];
+  sun.color.set(L.sun[0]); sun.intensity = L.sun[1];
+}
+
+// Shiny materials reflect the current sky, rendered into a prefiltered environment map.
+const pmrem = new THREE.PMREMGenerator(renderer);
+let envRT = null;
+MAT.ice.userData.env = 0.5;
+for (const m of [MAT.water, MAT.lagoon, MAT.moat, MAT.sea, MAT.iceWater]) m.userData.env = 0.3;
+const SHINY = [MACH.steel, MACH.yellow, MAT.iron, MAT.armour, MAT.gold, MAT.water, MAT.lagoon, MAT.moat, MAT.sea,
+  MAT.ice, MAT.iceBlock, MAT.iceWater, MAT.iceTrough, MAT.plate, MAT.hazard, MAT.corrugated, MAT.robotOrange, MAT.robotWhite,
+  MAT.robotDark, MAT.pipe, MAT.pipeRed, MAT.barrelBlue, MAT.acrylic];
+const ENV_GROUND = { park: '#5f8f48', beach: '#e6cf9c', jungle: '#3d5a2a', castle: '#5f8f48', ice: '#e8eef5', factory: '#7a7975' };
+function updateEnvironment() {
+  // a painted panorama: sky above, a bright sun, the course's ground below
+  const sk = SKIES[STYLE] || SKIES.park;
+  const pano = canvasTex(512, 256, (g, w, h) => {
+    const gr = g.createLinearGradient(0, 0, 0, h);
+    gr.addColorStop(0, sk.top); gr.addColorStop(0.48, sk.bottom); gr.addColorStop(0.52, ENV_GROUND[STYLE] || ENV_GROUND.park); gr.addColorStop(1, ENV_GROUND[STYLE] || ENV_GROUND.park);
+    g.fillStyle = gr; g.fillRect(0, 0, w, h);
+    const sun = g.createRadialGradient(w * 0.62, h * 0.2, 0, w * 0.62, h * 0.2, 40);
+    sun.addColorStop(0, 'rgba(255,255,240,1)'); sun.addColorStop(1, 'rgba(255,255,240,0)');
+    g.fillStyle = sun; g.fillRect(0, 0, w, h);
+  });
+  pano.mapping = THREE.EquirectangularReflectionMapping;
+  if (envRT) envRT.dispose();
+  envRT = pmrem.fromEquirectangular(pano);
+  pano.dispose();
+  for (const m of SHINY) { m.envMap = envRT.texture; m.envMapIntensity = m.userData.env ?? 1; m.needsUpdate = true; }
+}
+
+// Random spots in a band m0..m1 metres outside the plot, never near the tee so its camera stays clear.
+function scatterPicker(hole) {
+  const b = holeBounds(hole);
+  return (m0, m1) => {
+    for (let i = 0; i < 60; i++) {
+      const x = b.x0 - m1 + rnd() * (b.x1 - b.x0 + 2 * m1), z = b.z0 - m1 + rnd() * (b.z1 - b.z0 + 2 * m1);
+      const d = Math.hypot(Math.max(b.x0 - x, 0, x - b.x1), Math.max(b.z0 - z, 0, z - b.z1));
+      if (d > m0 && d < m1 && Math.hypot(x - hole.tee.x, z - hole.tee.z) > 2.8) return [x, z];
+    }
+    return [b.x1 + m1, b.z0];
+  };
+}
+
+// ============================================================
+//  CHUTES (bobsled run / marble run)
+// ============================================================
+// An open half-pipe swept along a curve; its bottom runs along the ball's path.
+function troughGeometry(curve, n, R) {
+  const pos = [], nor = [], uv = [], idx = [], segs = 12, up = new THREE.Vector3(0, 1, 0);
+  const side = new THREE.Vector3(), upish = new THREE.Vector3(), centre = new THREE.Vector3(), p = new THREE.Vector3();
+  let dist = 0, prev = null;
+  for (let i = 0; i <= n; i++) {
+    const t = i / n, q = curve.getPointAt(t), tan = curve.getTangentAt(t);
+    if (prev) dist += q.distanceTo(prev);
+    prev = q;
+    side.crossVectors(tan, up).normalize();
+    upish.crossVectors(side, tan).normalize();
+    centre.copy(q).addScaledVector(upish, R);
+    for (let k = 0; k <= segs; k++) {
+      const a = -0.15 * Math.PI + (k / segs) * 1.3 * Math.PI;
+      p.copy(centre).addScaledVector(side, Math.cos(a) * R).addScaledVector(upish, -Math.sin(a) * R);
+      pos.push(p.x, p.y, p.z);
+      const nn = centre.clone().sub(p).normalize();
+      nor.push(nn.x, nn.y, nn.z);
+      uv.push(k / segs, dist * 2);
+    }
+  }
+  for (let i = 0; i < n; i++) for (let k = 0; k < segs; k++) {
+    const a = i * (segs + 1) + k, b = a + segs + 1;
+    idx.push(a, b, a + 1, a + 1, b, b + 1);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  g.setIndex(idx);
+  return g;
+}
+
+function addChuteModel(hole, ch) {
+  const factory = STYLE === 'factory';
+  const curve = new THREE.CatmullRomCurve3(ch.path.map(p => new THREE.Vector3(p.x, p.y, p.z)));
+  const n = Math.max(60, Math.round(ch.length * 16));
+  const R = factory ? 0.034 : 0.055;
+  if (factory) {
+    // a clear acrylic tube with steel collars
+    const tube = new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(ch.path.map(p => new THREE.Vector3(p.x, p.y + CONFIG.ballR, p.z))), n, R, 14, false), MAT.acrylic);
+    tube.renderOrder = 2;
+    holeGroup.add(tube);
+    for (let s = 0.25; s < ch.length; s += 0.5) {
+      const t = s / ch.length, q = curve.getPointAt(t), tan = curve.getTangentAt(t);
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(R + 0.006, 0.006, 6, 18), MACH.steel);
+      ring.position.set(q.x, q.y + CONFIG.ballR, q.z);
+      ring.lookAt(q.x + tan.x, q.y + CONFIG.ballR + tan.y, q.z + tan.z);
+      holeGroup.add(ring);
+    }
+  } else {
+    // a bobsled run: an icy half-pipe with red and blue lips
+    const trough = new THREE.Mesh(troughGeometry(curve, n, R), MAT.iceTrough);
+    trough.castShadow = true; trough.receiveShadow = true;
+    holeGroup.add(trough);
+    for (const [s, mat] of [[1, MAT.scarf], [-1, MAT.scarfBlue]]) {
+      const lip = [];
+      for (let i = 0; i <= 80; i++) {
+        const t = i / 80, q = curve.getPointAt(t), tan = curve.getTangentAt(t);
+        const side = new THREE.Vector3().crossVectors(tan, new THREE.Vector3(0, 1, 0)).normalize();
+        lip.push(q.clone().addScaledVector(side, s * R * 1.02).add(new THREE.Vector3(0, R * 1.05, 0)));
+      }
+      const tube = new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(lip), 160, 0.007, 6, false), mat);
+      holeGroup.add(tube);
+    }
+  }
+  // supports down to the ground every so often
+  for (let s = 0.5; s < ch.length - 0.3; s += factory ? 0.9 : 1.1) {
+    const q = curve.getPointAt(s / ch.length);
+    const gy = groundHeight(hole, q.x, q.z) ?? -0.02;
+    const h = q.y - 0.01 - gy;
+    if (h < 0.05) continue;
+    holeGroup.add(box(0.025, h, 0.025, factory ? MACH.steel : MAT.wood, q.x, gy + h / 2, q.z));
+  }
+  // a funnel at the top and a collar at the bottom
+  for (const [m, funnel] of [[ch.a, true], [ch.b, false]]) {
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(funnel ? 0.09 : 0.06, 0.014, 8, 20), factory ? MACH.yellow : MAT.scarf);
+    ring.position.set(m.x - m.out[0] * 0.1, m.y + 0.03, m.z - m.out[1] * 0.1);
+    ring.rotation.x = Math.PI / 2;
+    holeGroup.add(ring);
+  }
+}
+
+// ============================================================
+//  FROZEN PEAKS SET PIECES
+// ============================================================
+function addSnowman(x, y, z, rad) {
+  const g = new THREE.Group();
+  g.position.set(x, y, z);
+  g.rotation.y = rnd() * 6.28;
+  const ball = (r, yy) => { const m = new THREE.Mesh(new THREE.SphereGeometry(r, 20, 14), MAT.snow); m.position.y = yy; m.castShadow = true; m.receiveShadow = true; g.add(m); return yy; };
+  const b = ball(rad, rad * 0.85), m = ball(rad * 0.74, b + rad * 1.3), h = ball(rad * 0.52, m + rad * 1.05);
+  for (const s of [-1, 1]) {
+    const eye = new THREE.Mesh(new THREE.SphereGeometry(rad * 0.07, 6, 4), MAT.coal);
+    eye.position.set(s * rad * 0.18, h + rad * 0.12, rad * 0.46); g.add(eye);
+    const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.004, 0.006, rad * 1.8, 5), MAT.bark);
+    arm.position.set(s * rad * 1.3, m + rad * 0.25, 0); arm.rotation.z = s * -1.0; g.add(arm);
+  }
+  for (const yy of [m + rad * 0.3, m - rad * 0.1, b + rad * 0.5]) { const btn = new THREE.Mesh(new THREE.SphereGeometry(rad * 0.07, 6, 4), MAT.coal); btn.position.set(0, yy, rad * 0.7); g.add(btn); }
+  const nose = new THREE.Mesh(new THREE.ConeGeometry(rad * 0.09, rad * 0.5, 8), MAT.carrot);
+  nose.rotation.x = Math.PI / 2; nose.position.set(0, h, rad * 0.7); g.add(nose);
+  const scarf = new THREE.Mesh(new THREE.TorusGeometry(rad * 0.5, rad * 0.1, 6, 16), rnd() < 0.5 ? MAT.scarf : MAT.scarfBlue);
+  scarf.rotation.x = Math.PI / 2; scarf.position.y = m + rad * 0.62; g.add(scarf);
+  const brim = new THREE.Mesh(new THREE.CylinderGeometry(rad * 0.55, rad * 0.55, rad * 0.05, 16), MAT.coal);
+  brim.position.y = h + rad * 0.42;
+  const hat = new THREE.Mesh(new THREE.CylinderGeometry(rad * 0.36, rad * 0.38, rad * 0.55, 16), MAT.coal);
+  hat.position.y = h + rad * 0.7;
+  g.add(brim, hat);
+  holeGroup.add(g);
+}
+
+function addSnowMounds(spots) {
+  if (!spots.length) return;
+  const mound = new THREE.InstancedMesh(new THREE.SphereGeometry(1, 12, 6, 0, Math.PI * 2, 0, Math.PI / 2), MAT.snowCap, spots.length);
+  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), p = new THREE.Vector3();
+  spots.forEach(([x, z], i) => {
+    const r = i % 2 ? 0 : 0.05 + rnd() * 0.07; // drifts heaped against every other spot
+    m.compose(p.set(x, -0.02, z), q, s.set(r * (1 + rnd() * 0.5), r * 0.8, r)); mound.setMatrixAt(i, m);
+  });
+  mound.castShadow = true; mound.receiveShadow = true;
+  holeGroup.add(mound);
+}
+
+// Snowy pines, instanced: a trunk, three tiers of branches and snow on each tier.
+function addPines(hole, pick, count, m0, m1) {
+  const trunk = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.06, 0.1, 1, 6), MAT.bark, count);
+  const tiers = [0, 1, 2].map(() => new THREE.InstancedMesh(new THREE.ConeGeometry(1, 1, 8), MAT.pine, count));
+  const caps = [0, 1, 2].map(() => new THREE.InstancedMesh(new THREE.ConeGeometry(1, 1, 8), MAT.pineSnow, count));
+  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), p = new THREE.Vector3();
+  for (let i = 0; i < count; i++) {
+    const [x, z] = pick(m0, m1), h = 1.8 + rnd() * 2.6, w = h * (0.32 + rnd() * 0.08);
+    q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), rnd() * 6);
+    m.compose(p.set(x, h * 0.12, z), q, s.set(1, h * 0.25, 1)); trunk.setMatrixAt(i, m);
+    for (let k = 0; k < 3; k++) {
+      const ty = h * (0.3 + k * 0.22), tw = w * (1 - k * 0.27), th = h * 0.42;
+      m.compose(p.set(x, ty + th / 2, z), q, s.set(tw, th, tw)); tiers[k].setMatrixAt(i, m);
+      m.compose(p.set(x, ty + th * 0.62, z), q, s.set(tw * 0.78, th * 0.6, tw * 0.78)); caps[k].setMatrixAt(i, m);
+    }
+  }
+  for (const im of [trunk, ...tiers, ...caps]) { im.castShadow = true; im.receiveShadow = true; holeGroup.add(im); }
+}
+
+function addCabin(x, z, turn) {
+  const g = new THREE.Group();
+  g.position.set(x, -0.02, z); g.rotation.y = turn;
+  const W = 2.4, D = 1.9, H = 1.3;
+  for (let y = 0.1; y < H; y += 0.17) for (const [lx, lz, len, rot] of [[0, -D / 2, W + 0.2, 0], [0, D / 2, W + 0.2, 0], [-W / 2, 0, D + 0.2, Math.PI / 2], [W / 2, 0, D + 0.2, Math.PI / 2]]) {
+    const log = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, len, 8), MAT.cabin);
+    log.rotation.z = Math.PI / 2; log.rotation.y = rot; log.position.set(lx, y, lz); log.castShadow = true; log.receiveShadow = true;
+    g.add(log);
+  }
+  g.add(box(W, H, D, MAT.cabin, 0, H / 2, 0));
+  for (const s of [-1, 1]) { // a steep roof thick with snow
+    const slab = box(W + 0.5, 0.12, D * 0.62, MAT.roof, 0, H + 0.42, s * D * 0.27);
+    slab.rotation.x = s * 0.75;
+    const snow = box(W + 0.55, 0.12, D * 0.62, MAT.snowCap, 0, H + 0.5, s * D * 0.3);
+    snow.rotation.x = s * 0.75;
+    g.add(slab, snow);
+  }
+  g.add(box(0.28, 0.9, 0.28, MAT.stone, W * 0.3, H + 0.75, -D * 0.15));
+  for (const wx of [-0.6, 0.6]) {
+    const win = box(0.42, 0.36, 0.02, MAT.glow, wx, 0.75, D / 2 + 0.1);
+    g.add(win, box(0.48, 0.04, 0.04, MAT.wood, wx, 0.55, D / 2 + 0.12), box(0.04, 0.42, 0.03, MAT.wood, wx, 0.75, D / 2 + 0.12));
+  }
+  g.add(box(0.5, 0.85, 0.03, MAT.wood, 0, 0.43, D / 2 + 0.1));
+  holeGroup.add(g);
+  const chimney = new THREE.Vector3(W * 0.3, H + 1.25, -D * 0.15).applyAxisAngle(new THREE.Vector3(0, 1, 0), turn).add(g.position);
+  anim.chimneys.push({ x: chimney.x, y: chimney.y, z: chimney.z, timer: 0 });
+}
+
+// The lift dressed as a ski lift: a steel pylon beside the tower with a cable and a chair.
+function addSkiLiftPylon(lf) {
+  const a = lf.a, top = Math.max(a.y, lf.b.y) + 0.45;
+  const px = a.x - a.out[0] * 0.35 + a.out[1] * 0.42, pz = a.z - a.out[1] * 0.35 - a.out[0] * 0.42;
+  const H = top + 0.9 - a.y;
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.06, H, 10), MACH.steel);
+  pole.position.set(px, a.y + H / 2, pz); pole.castShadow = true;
+  holeGroup.add(pole);
+  const arm = box(0.7, 0.05, 0.06, MACH.steel, px, a.y + H, pz);
+  arm.rotation.y = Math.atan2(a.out[0], a.out[1]);
+  holeGroup.add(arm);
+  for (const s of [-1, 1]) {
+    const wx = px + Math.cos(arm.rotation.y) * s * 0.32, wz = pz - Math.sin(arm.rotation.y) * s * 0.32;
+    const wheel = new THREE.Mesh(new THREE.TorusGeometry(0.06, 0.012, 6, 14), MACH.yellow);
+    wheel.position.set(wx, a.y + H - 0.05, wz); wheel.rotation.y = arm.rotation.y + Math.PI / 2;
+    holeGroup.add(wheel);
+    // the cable runs away from the course, up the mountain
+    const far = new THREE.Vector3(wx - a.out[0] * 14, a.y + H + 4, wz - a.out[1] * 14), near = new THREE.Vector3(wx, a.y + H - 0.1, wz);
+    const cable = new THREE.Mesh(new THREE.CylinderGeometry(0.005, 0.005, near.distanceTo(far), 4), MAT.coal);
+    cable.position.copy(near).add(far).multiplyScalar(0.5);
+    cable.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), far.clone().sub(near).normalize());
+    holeGroup.add(cable);
+    if (s > 0) {
+      const at = near.clone().lerp(far, 0.18), chair = new THREE.Group();
+      chair.position.copy(at);
+      chair.add(box(0.012, 0.42, 0.012, MACH.steel, 0, -0.21, 0), box(0.42, 0.04, 0.2, MACH.red, 0, -0.42, 0.05), box(0.42, 0.2, 0.03, MACH.red, 0, -0.32, -0.05));
+      chair.rotation.y = arm.rotation.y;
+      holeGroup.add(chair);
+    }
+  }
+}
+
+// A fan snow-gun on a tripod: the ball goes into its intake and is blown over the gap.
+function addSnowCannonModel(hole, cn) {
+  const a = cn.a;
+  const bx = a.x - a.out[0] * 0.55, bz = a.z - a.out[1] * 0.55;
+  const g = new THREE.Group();
+  g.position.set(bx, a.y, bz);
+  g.rotation.y = Math.atan2(cn.target.x - bx, cn.target.z - bz);
+  for (let k = 0; k < 3; k++) {
+    const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.42, 6), MACH.steel);
+    const ang = (k / 3) * Math.PI * 2;
+    leg.position.set(Math.sin(ang) * 0.12, 0.18, Math.cos(ang) * 0.12 - 0.05);
+    leg.rotation.set(Math.cos(ang) * 0.45, 0, -Math.sin(ang) * 0.45);
+    g.add(leg);
+  }
+  const head = new THREE.Group();
+  head.position.set(0, 0.36, 0.02); head.rotation.x = -0.6;
+  const drum = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.15, 0.32, 24, 1, true), MAT.robotWhite);
+  drum.rotation.x = Math.PI / 2; drum.castShadow = true;
+  const band = new THREE.Mesh(new THREE.TorusGeometry(0.152, 0.012, 6, 24), MAT.scarfBlue);
+  band.position.z = 0.1;
+  const back = new THREE.Mesh(new THREE.CircleGeometry(0.15, 24), MAT.robotDark);
+  back.position.z = -0.16; back.rotation.y = Math.PI;
+  const grille = new THREE.Mesh(new THREE.TorusGeometry(0.15, 0.014, 6, 24), MACH.steel);
+  grille.position.z = 0.16;
+  const fan = new THREE.Group();
+  fan.position.z = 0.02;
+  for (let k = 0; k < 5; k++) { const blade = box(0.02, 0.13, 0.01, MACH.steel, 0, 0.07, 0); const arm = new THREE.Group(); arm.rotation.z = (k / 5) * Math.PI * 2; blade.rotation.y = 0.5; arm.add(blade); fan.add(arm); }
+  const ringNozzles = new THREE.Mesh(new THREE.TorusGeometry(0.17, 0.008, 4, 24), MACH.steel);
+  ringNozzles.position.z = 0.17;
+  head.add(drum, band, back, grille, fan, ringNozzles);
+  g.add(head);
+  anim.fans.push(fan);
+  holeGroup.add(g);
+  holeGroup.add(rails([{ x: a.x, y: a.y + 0.01, z: a.z }, { x: bx, y: a.y + 0.12, z: bz }], 0.025, 0.006, MACH.steel));
+}
+
+function addIceScenery(hole) {
+  const b = holeBounds(hole), pick = scatterPicker(hole);
+  addPines(hole, pick, 44, 2.4, 14);
+  // snow-capped boulders
+  for (let i = 0; i < 10; i++) {
+    const [x, z] = pick(0.6, 4), r = 0.15 + rnd() * 0.3;
+    const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(r, 0), MAT.rock);
+    rock.position.set(x, r * 0.3, z); rock.rotation.y = rnd() * 6; rock.castShadow = true;
+    const cap = new THREE.Mesh(new THREE.SphereGeometry(r * 0.85, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2), MAT.snowCap);
+    cap.scale.y = 0.45; cap.position.set(x, r * 0.62, z);
+    holeGroup.add(rock, cap);
+  }
+  for (let i = 0; i < 3; i++) { const [x, z] = pick(0.8, 3); addSnowman(x, -0.02, z, 0.22 + rnd() * 0.1); }
+  // skis and poles planted in the snow
+  for (let i = 0; i < 3; i++) {
+    const [x, z] = pick(0.7, 2.5), turn = rnd() * 6;
+    for (const s of [-1, 1]) {
+      const ski = box(0.06, 1.3, 0.015, s > 0 ? MAT.scarf : MAT.scarfBlue, x + Math.cos(turn) * s * 0.06, 0.55, z + Math.sin(turn) * s * 0.06);
+      ski.rotation.set(0, -turn, s * 0.08);
+      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, 1.1, 5), MACH.steel);
+      pole.position.set(x + Math.cos(turn) * s * 0.3, 0.5, z + Math.sin(turn) * s * 0.3 + 0.15); pole.rotation.z = s * 0.12;
+      holeGroup.add(ski, pole);
+    }
+  }
+  { // a wooden sled
+    const [x, z] = pick(0.8, 2.5), sled = new THREE.Group();
+    sled.position.set(x, -0.02, z); sled.rotation.y = rnd() * 6;
+    for (const s of [-0.16, 0.16]) sled.add(box(0.03, 0.03, 0.9, MACH.red, s, 0.03, 0), box(0.025, 0.12, 0.025, MAT.wood, s, 0.1, 0.25), box(0.025, 0.12, 0.025, MAT.wood, s, 0.1, -0.25));
+    for (let k = -3; k <= 3; k++) sled.add(box(0.4, 0.02, 0.08, MAT.wood, 0, 0.17, k * 0.11));
+    holeGroup.add(sled);
+  }
+  { const [x, z] = pick(6, 10); addCabin(x, z, Math.atan2((b.x0 + b.x1) / 2 - x, (b.z0 + b.z1) / 2 - z)); }
+  // a snow-capped split-rail fence round the plot, open behind the tee
+  const fx0 = b.x0 - 1.4, fx1 = b.x1 + 1.4, fz0 = b.z0 - 1.4, fz1 = b.z1 + 1.4;
+  const corners = [[fx0, fz0], [fx1, fz0], [fx1, fz1], [fx0, fz1]];
+  for (let k = 0; k < 4; k++) {
+    const [ax, az] = corners[k], [bx, bz] = corners[(k + 1) % 4];
+    const len = Math.hypot(bx - ax, bz - az), ang = Math.atan2(bz - az, bx - ax), n = Math.ceil(len / 1.2);
+    for (let i = 0; i < n; i++) {
+      const t0 = i / n, t1 = (i + 1) / n, mx = ax + (bx - ax) * (t0 + t1) / 2, mz = az + (bz - az) * (t0 + t1) / 2;
+      if (Math.hypot(mx - hole.tee.x, mz - hole.tee.z) < 2.6) continue;
+      const px = ax + (bx - ax) * t0, pz = az + (bz - az) * t0;
+      holeGroup.add(box(0.07, 0.6, 0.07, MAT.wood, px, 0.28, pz), box(0.09, 0.03, 0.09, MAT.snowCap, px, 0.6, pz));
+      for (const y of [0.22, 0.45]) {
+        const rail = box(len / n + 0.02, 0.05, 0.05, MAT.wood, mx, y, mz); rail.rotation.y = -ang;
+        const cap = box(len / n + 0.02, 0.025, 0.06, MAT.snowCap, mx, y + 0.035, mz); cap.rotation.y = -ang;
+        holeGroup.add(rail, cap);
+      }
+    }
+  }
+  // the mountains all round, fading into the haze
+  const cx = (b.x0 + b.x1) / 2, cz = (b.z0 + b.z1) / 2;
+  for (let i = 0; i < 14; i++) {
+    const ang = (i / 14) * Math.PI * 2 + rnd() * 0.3, dist = 55 + rnd() * 25, h = 16 + rnd() * 22, r = h * (0.9 + rnd() * 0.5);
+    const x = cx + Math.cos(ang) * dist, z = cz + Math.sin(ang) * dist;
+    const peak = new THREE.Mesh(new THREE.ConeGeometry(r, h, 7, 3), MAT.mountain);
+    peak.position.set(x, h / 2 - 1, z); peak.rotation.y = rnd() * 6;
+    const snow = new THREE.Mesh(new THREE.ConeGeometry(r * 0.42, h * 0.42, 7, 1), MAT.pineSnow);
+    snow.position.set(x, h - 1 - h * 0.21 + 0.05, z); snow.rotation.y = peak.rotation.y;
+    holeGroup.add(peak, snow);
+  }
+  // a chairlift climbing away up the slope behind the course
+  const lx = b.x1 + 5, lz0 = b.z1 + 4;
+  const tops = [];
+  for (let k = 0; k < 6; k++) {
+    const z = lz0 - k * 7, y = k * 1.6, H = 4;
+    holeGroup.add(box(0.12, H + y, 0.12, MACH.steel, lx, (H + y) / 2 - 0.02, z), box(1.4, 0.1, 0.12, MACH.steel, lx, H + y, z));
+    tops.push(new THREE.Vector3(lx, H + y - 0.1, z));
+  }
+  for (const s of [-0.6, 0.6]) for (let k = 0; k < tops.length - 1; k++) {
+    const p0 = tops[k].clone().add(new THREE.Vector3(s, 0, 0)), p1 = tops[k + 1].clone().add(new THREE.Vector3(s, 0, 0));
+    const cable = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, p0.distanceTo(p1), 4), MAT.coal);
+    cable.position.copy(p0).add(p1).multiplyScalar(0.5);
+    cable.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), p1.clone().sub(p0).normalize());
+    holeGroup.add(cable);
+  }
+  for (let k = 0; k < 10; k++) {
+    const chair = new THREE.Group();
+    chair.add(box(0.03, 0.9, 0.03, MACH.steel, 0, -0.45, 0), box(0.8, 0.08, 0.4, MACH.red, 0, -0.9, 0.1), box(0.8, 0.4, 0.06, MACH.red, 0, -0.72, -0.1));
+    holeGroup.add(chair);
+    anim.chairs.push({ chair, tops, u: k / 10, side: k % 2 ? 0.6 : -0.6 });
+  }
+  addSnowfall(hole);
+}
+
+function addSnowfall(hole) {
+  const b = holeBounds(hole), N = 1600;
+  const half = Math.max(b.x1 - b.x0, b.z1 - b.z0) / 2 + 10;
+  const pos = new Float32Array(N * 3), speed = new Float32Array(N);
+  const cx = (b.x0 + b.x1) / 2, cz = (b.z0 + b.z1) / 2;
+  for (let i = 0; i < N; i++) {
+    pos[i * 3] = cx + (rnd() * 2 - 1) * half; pos[i * 3 + 1] = rnd() * 9; pos[i * 3 + 2] = cz + (rnd() * 2 - 1) * half;
+    speed[i] = 0.35 + rnd() * 0.45;
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  const pts = new THREE.Points(geo, new THREE.PointsMaterial({ map: TEX.spark, color: '#ffffff', size: 0.07, transparent: true, opacity: 0.9, depthWrite: false }));
+  pts.frustumCulled = false;
+  holeGroup.add(pts);
+  anim.snow = { pts, speed, half, cx, cz };
+}
+
+// ============================================================
+//  ROBOT FACTORY SET PIECES
+// ============================================================
+// A little robot standing in for a pinball post: wheeled base, barrel body, domed head, glowing eyes.
+function addRobot(x, y, z, rad) {
+  const g = new THREE.Group();
+  g.position.set(x, y, z);
+  g.rotation.y = rnd() * 6.28;
+  const base = new THREE.Mesh(new THREE.CylinderGeometry(rad, rad * 1.05, 0.035, 20), MAT.robotDark);
+  base.position.y = 0.018;
+  const body = new THREE.Mesh(new THREE.CylinderGeometry(rad * 0.82, rad * 0.9, 0.16, 20), MAT.robotWhite);
+  body.position.y = 0.115; body.castShadow = true;
+  const band = new THREE.Mesh(new THREE.CylinderGeometry(rad * 0.84, rad * 0.84, 0.03, 20), MAT.robotOrange);
+  band.position.y = 0.08;
+  const panel = box(rad * 0.7, 0.05, 0.01, MAT.robotDark, 0, 0.14, rad * 0.82);
+  const led = new THREE.Mesh(new THREE.SphereGeometry(0.007, 6, 4), MAT.ledGreen);
+  led.position.set(-rad * 0.2, 0.14, rad * 0.84);
+  const head = new THREE.Group();
+  head.position.y = 0.2;
+  const dome = new THREE.Mesh(new THREE.SphereGeometry(rad * 0.66, 18, 10, 0, Math.PI * 2, 0, Math.PI / 2), MACH.steel);
+  dome.castShadow = true;
+  const visor = box(rad * 0.9, 0.028, 0.02, MAT.robotDark, 0, 0.022, rad * 0.55);
+  head.add(dome, visor);
+  for (const s of [-1, 1]) {
+    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.009, 8, 6), MAT.eye);
+    eye.position.set(s * rad * 0.22, 0.024, rad * 0.64); head.add(eye);
+    const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, 0.09, 6), MACH.steel);
+    arm.position.set(s * rad * 0.95, 0.12, 0); arm.rotation.z = s * 0.5; g.add(arm);
+  }
+  const antenna = new THREE.Mesh(new THREE.CylinderGeometry(0.003, 0.003, 0.06, 4), MACH.steel);
+  antenna.position.y = rad * 0.66 + 0.03;
+  const tip = new THREE.Mesh(new THREE.SphereGeometry(0.009, 6, 4), MAT.ledRed);
+  tip.position.y = rad * 0.66 + 0.065;
+  head.add(antenna, tip);
+  g.add(base, body, band, panel, led, head);
+  anim.heads.push({ head, phase: rnd() * 6 });
+  anim.leds.push({ mesh: tip, rate: 3 + rnd() * 2, phase: rnd() * 6 });
+  holeGroup.add(g);
+}
+
+function addFloorClutter(spots) {
+  spots.forEach(([x, z], i) => {
+    if (i % 5) return;
+    const cone = new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.16, 12), MAT.robotOrange);
+    cone.position.set(x, 0.06, z); cone.castShadow = true;
+    const band = new THREE.Mesh(new THREE.CylinderGeometry(0.031, 0.037, 0.025, 12), MAT.robotWhite);
+    band.position.set(x, 0.07, z);
+    holeGroup.add(cone, band, box(0.12, 0.012, 0.12, MAT.robotDark, x, -0.014, z));
+  });
+}
+
+// The windmill dressed as a gear gate: a steel housing with an orange cog whose four paddles close the doorway.
+function addGearGateModel(hole, w) {
+  const g = new THREE.Group();
+  const along = w.axis === 'z';
+  const y0 = groundHeight(hole, w.x, w.z) || 0;
+  if (!along) g.rotation.y = Math.PI / 2;
+  g.position.set(w.x, y0, w.z);
+  const hw = w.halfWidth + 0.12, d = w.depth, dh = w.door / 2, H = 1.25, side = hw - dh;
+  g.add(box(side, H, d, MAT.plate, -(dh + side / 2), H / 2, 0), box(side, H, d, MAT.plate, dh + side / 2, H / 2, 0));
+  g.add(box(w.door, H - 0.16, d, MAT.plate, 0, 0.16 + (H - 0.16) / 2, 0));
+  g.add(box(hw * 2 + 0.06, 0.12, d + 0.06, MAT.hazard, 0, H + 0.06, 0));
+  const doorDark = new THREE.Mesh(new THREE.PlaneGeometry(w.door, 0.16), MAT.dark);
+  doorDark.position.set(0, 0.08, 0); g.add(doorDark);
+  for (const f of [-1, 1]) g.add(box(w.door + 0.08, 0.035, 0.02, MAT.hazard, 0, 0.18, f * (d / 2 + 0.008)));
+  // warning beacon on the roof
+  const beacon = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.08, 12), MAT.ledAmber);
+  beacon.position.set(hw * 0.6, H + 0.16, 0); g.add(beacon);
+  anim.leds.push({ mesh: beacon, rate: 6, phase: 0 });
+  const hubY = 0.95, len = 0.9;
+  const rotor = new THREE.Group();
+  rotor.position.set(0, hubY, w.front * (d / 2 + 0.07));
+  const cog = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.4, 0.06, 40), MAT.robotOrange);
+  cog.rotation.x = Math.PI / 2; cog.castShadow = true;
+  rotor.add(cog);
+  for (let k = 0; k < 18; k++) {
+    const tooth = box(0.07, 0.1, 0.06, MAT.robotOrange, 0, 0.43, 0);
+    const t = new THREE.Group(); t.rotation.z = (k / 18) * Math.PI * 2; t.add(tooth); rotor.add(t);
+  }
+  const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 0.1, 16), MACH.steel);
+  hub.rotation.x = Math.PI / 2; hub.position.z = 0.04; rotor.add(hub);
+  for (let k = 0; k < 4; k++) {
+    const arm = new THREE.Group();
+    arm.rotation.z = (k * Math.PI) / 2;
+    const paddle = box(len, 0.07, 0.035, MAT.hazard, len / 2, 0, 0.05);
+    paddle.castShadow = true;
+    arm.add(paddle);
+    rotor.add(arm);
+  }
+  g.add(rotor);
+  anim.windmills.push({ w, rotor, flip: along ? 1 : -1 });
+  holeGroup.add(g);
+}
+
+// A hydraulic press across the lane: steel columns, an orange crossbeam and a striped ram that stamps down.
+function addPressModel(hole, p) {
+  const g = new THREE.Group();
+  const y0 = groundHeight(hole, p.x, p.z) || 0;
+  g.position.set(p.x, y0, p.z);
+  if (p.axis === 'x') g.rotation.y = Math.PI / 2;
+  const hw = p.halfWidth + 0.15, d = p.depth, dh = p.door / 2, H = 0.9, side = hw - dh;
+  g.add(box(side, H, d, MAT.plate, -(dh + side / 2), H / 2, 0), box(side, H, d, MAT.plate, dh + side / 2, H / 2, 0));
+  for (const s of [-1, 1]) g.add(box(0.03, H, d + 0.01, MAT.hazard, s * (dh + 0.015), H / 2, 0));
+  g.add(box(hw * 2, 0.2, d, MAT.robotOrange, 0, H + 0.1, 0));
+  const cyl = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.075, 0.36, 16), MACH.steel);
+  cyl.position.y = H - 0.18; cyl.castShadow = true;
+  g.add(cyl);
+  g.add(box(p.door, 0.01, d * 0.7, MAT.robotDark, 0, 0.005, 0));
+  const ram = new THREE.Group();
+  const rod = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.62, 12), MACH.steel);
+  rod.position.y = 0.16 + 0.31;
+  const block = box(p.door - 0.012, 0.16, d * 0.6, MAT.hazard, 0, 0.08, 0);
+  ram.add(rod, block);
+  g.add(ram);
+  const lamp = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.07, 12), MAT.ledRed);
+  lamp.position.set(hw * 0.6, H + 0.24, 0);
+  g.add(lamp);
+  holeGroup.add(g);
+  anim.gates.push({ p, grid: ram, lamp });
+}
+
+// A pneumatic launcher: an orange air tank feeding a steel barrel aimed over the pit.
+function addLauncherModel(hole, cn) {
+  const a = cn.a;
+  const bx = a.x - a.out[0] * 0.55, bz = a.z - a.out[1] * 0.55;
+  const g = new THREE.Group();
+  g.position.set(bx, a.y, bz);
+  g.rotation.y = Math.atan2(cn.target.x - bx, cn.target.z - bz);
+  g.add(box(0.44, 0.06, 0.5, MAT.plate, 0, 0.03, 0));
+  const tank = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 0.36, 18), MAT.robotOrange);
+  tank.rotation.z = Math.PI / 2; tank.position.set(0, 0.15, -0.12); tank.castShadow = true;
+  g.add(tank);
+  for (const s of [-1, 1]) { const cap = new THREE.Mesh(new THREE.SphereGeometry(0.09, 14, 8), MAT.robotOrange); cap.position.set(s * 0.18, 0.15, -0.12); g.add(cap); }
+  const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.06, 0.6, 18), MACH.steel);
+  barrel.rotation.x = Math.PI / 2 - 0.6; barrel.position.set(0, 0.28, 0.08); barrel.castShadow = true;
+  g.add(barrel);
+  for (const k of [-0.15, 0.05, 0.22]) {
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.058, 0.01, 6, 16), MACH.yellow);
+    ring.position.set(0, 0.28 + Math.cos(0.6) * k, 0.08 + Math.sin(0.6) * k); ring.rotation.x = -0.6;
+    g.add(ring);
+  }
+  const gauge = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.015, 16), MAT.robotWhite);
+  gauge.rotation.x = Math.PI / 2; gauge.position.set(0.1, 0.26, -0.03); g.add(gauge);
+  holeGroup.add(g);
+  holeGroup.add(rails([{ x: a.x, y: a.y + 0.01, z: a.z }, { x: bx, y: a.y + 0.12, z: bz }], 0.025, 0.006, MACH.steel));
+}
+
+// An industrial robot arm on a pedestal, swinging through a slow work cycle.
+function addRobotArm(x, z, face, scale = 1) {
+  const base = new THREE.Group();
+  base.position.set(x, -0.02, z); base.rotation.y = face; base.scale.setScalar(scale);
+  base.add(box(0.6, 0.06, 0.6, MAT.hazard, 0, 0.03, 0));
+  const ped = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.24, 0.3, 20), MAT.robotDark);
+  ped.position.y = 0.2; ped.castShadow = true; base.add(ped);
+  const turret = new THREE.Group(); turret.position.y = 0.35; base.add(turret);
+  const tm = new THREE.Mesh(new THREE.CylinderGeometry(0.17, 0.19, 0.2, 20), MAT.robotOrange);
+  tm.position.y = 0.1; tm.castShadow = true; turret.add(tm);
+  const shoulder = new THREE.Group(); shoulder.position.y = 0.24; turret.add(shoulder);
+  const sj = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.11, 0.3, 16), MAT.robotDark);
+  sj.rotation.x = Math.PI / 2; shoulder.add(sj);
+  const upper = box(0.14, 0.95, 0.16, MAT.robotOrange, 0, 0.47, 0); shoulder.add(upper);
+  const elbow = new THREE.Group(); elbow.position.y = 0.95; shoulder.add(elbow);
+  const ej = new THREE.Mesh(new THREE.CylinderGeometry(0.085, 0.085, 0.24, 16), MAT.robotDark);
+  ej.rotation.x = Math.PI / 2; elbow.add(ej);
+  const fore = box(0.1, 0.75, 0.12, MAT.robotOrange, 0, 0.37, 0); elbow.add(fore);
+  const wrist = new THREE.Group(); wrist.position.y = 0.75; elbow.add(wrist);
+  const wj = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.08, 12), MACH.steel); wrist.add(wj);
+  for (const s of [-1, 1]) wrist.add(box(0.025, 0.12, 0.05, MACH.steel, s * 0.045, 0.08, 0));
+  const torch = new THREE.Object3D(); torch.position.y = 0.16; wrist.add(torch);
+  for (const m of [upper, fore]) m.castShadow = true;
+  holeGroup.add(base);
+  anim.robots.push({ turret, shoulder, elbow, wrist, torch, phase: rnd() * 6 });
+}
+
+function addCrate(x, y, z, s, turn) {
+  const c = box(s, s, s, MAT.wood, x, y + s / 2, z);
+  c.rotation.y = turn;
+  holeGroup.add(c);
+  for (const k of [-1, 1]) { const strap = box(s + 0.01, 0.04, s + 0.01, MAT.robotDark, x, y + s / 2 + k * s * 0.3, z); strap.rotation.y = turn; holeGroup.add(strap); }
+}
+
+function addBigRobot(x, z, face) {
+  const g = new THREE.Group();
+  g.position.set(x, -0.02, z); g.rotation.y = face;
+  for (const s of [-1, 1]) {
+    g.add(box(0.7, 0.3, 1.0, MAT.robotDark, s * 0.6, 0.15, 0.1), box(0.5, 1.8, 0.55, MAT.robotWhite, s * 0.6, 1.2, 0));
+    const arm = new THREE.Group(); arm.position.set(s * 1.45, 3.4, 0); arm.rotation.z = s * 0.25;
+    arm.add(box(0.4, 1.7, 0.4, MAT.robotWhite, 0, -0.8, 0), box(0.5, 0.5, 0.5, MAT.robotOrange, 0, -1.8, 0));
+    g.add(arm, box(0.55, 0.55, 0.55, MAT.robotOrange, s * 1.35, 3.45, 0));
+  }
+  g.add(box(2.4, 1.9, 1.3, MAT.robotWhite, 0, 3.0, 0), box(1.6, 0.9, 0.05, MAT.robotOrange, 0, 3.1, 0.66));
+  for (let k = 0; k < 5; k++) { const led = box(0.14, 0.14, 0.04, k % 2 ? MAT.ledGreen : MAT.ledAmber, -0.5 + k * 0.25, 2.5, 0.67); g.add(led); anim.leds.push({ mesh: led, rate: 1.5 + k * 0.7, phase: k }); }
+  g.add(box(0.5, 0.3, 0.5, MAT.robotDark, 0, 4.1, 0));
+  const head = box(1.5, 1.0, 1.1, MAT.robotWhite, 0, 4.75, 0);
+  g.add(head, box(1.2, 0.26, 0.05, MAT.robotDark, 0, 4.8, 0.56), box(0.36, 0.12, 0.03, MAT.eye, -0.3, 4.8, 0.59), box(0.36, 0.12, 0.03, MAT.eye, 0.3, 4.8, 0.59));
+  const ant = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.6, 6), MACH.steel);
+  ant.position.y = 5.55; g.add(ant);
+  const tip = new THREE.Mesh(new THREE.SphereGeometry(0.1, 10, 8), MAT.ledRed); tip.position.y = 5.9; g.add(tip);
+  anim.leds.push({ mesh: tip, rate: 2, phase: 0 });
+  g.traverse(o => { if (o.isMesh) o.castShadow = true; });
+  holeGroup.add(g);
+}
+
+function addFactoryScenery(hole) {
+  const b = holeBounds(hole), pick = scatterPicker(hole);
+  const M = 7.5, X0 = b.x0 - M, X1 = b.x1 + M, Z0 = b.z0 - M, Z1 = b.z1 + M, H = 7;
+  const cx = (b.x0 + b.x1) / 2, cz = (b.z0 + b.z1) / 2;
+  // the hall: corrugated walls with a band of windows, open to the evening sky
+  for (const [ax, az, bx, bz] of [[X0, Z0, X1, Z0], [X1, Z0, X1, Z1], [X1, Z1, X0, Z1], [X0, Z1, X0, Z0]]) {
+    const len = Math.hypot(bx - ax, bz - az), ang = Math.atan2(bz - az, bx - ax);
+    const wall = new THREE.Mesh(new THREE.PlaneGeometry(len, H), MAT.corrugated);
+    wall.geometry.attributes.uv.array.forEach((v, i, arr) => { arr[i] = v * (i % 2 ? H : len) * 0.5; });
+    wall.position.set((ax + bx) / 2, H / 2 - 0.02, (az + bz) / 2);
+    wall.rotation.y = -ang; wall.receiveShadow = true;
+    holeGroup.add(wall);
+    const n = Math.floor(len / 1.6);
+    for (let i = 0; i < n; i++) {
+      const t = (i + 0.5) / n, wx = ax + (bx - ax) * t, wz = az + (bz - az) * t;
+      const pane = new THREE.Mesh(new THREE.PlaneGeometry(1.25, 1.3), MAT.windowPane);
+      pane.position.set(wx, 5.1, wz); pane.rotation.y = wall.rotation.y;
+      pane.translateZ(0.02);
+      holeGroup.add(pane);
+    }
+    const beam = box(len, 0.35, 0.3, MAT.robotOrange, (ax + bx) / 2, H - 0.6, (az + bz) / 2); // gantry crane rail
+    beam.rotation.y = -ang; beam.translateZ(0.4);
+    holeGroup.add(beam);
+    const pipe = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, len, 12), rnd() < 0.5 ? MAT.pipe : MAT.pipeRed);
+    pipe.rotation.z = Math.PI / 2; pipe.rotation.y = -ang;
+    pipe.position.set((ax + bx) / 2, 2.6, (az + bz) / 2); pipe.translateZ(0.35);
+    holeGroup.add(pipe);
+  }
+  // the far wall carries the sign, with the factory mascot standing beneath it
+  const sign = new THREE.Mesh(new THREE.PlaneGeometry(6, 1.5), MAT.sign);
+  sign.position.set(cx, 3.6, Z0 + 0.06);
+  holeGroup.add(sign);
+  addBigRobot(cx + 5.5, Z0 + 1.6, 0);
+  // a conveyor running along the far wall with boxes riding on it
+  const beltLen = X1 - X0 - 3;
+  const line = box(beltLen, 0.08, 0.6, MAT.belt, cx, 0.75, Z0 + 2.4);
+  holeGroup.add(line, box(beltLen, 0.7, 0.5, MAT.robotDark, cx, 0.36, Z0 + 2.4));
+  for (let k = 0; k < 9; k++) {
+    const crate = box(0.45, 0.4, 0.45, MAT.wood, 0, 0.99, Z0 + 2.4);
+    holeGroup.add(crate);
+    anim.crates.push({ crate, u: k / 9, x0: cx - beltLen / 2 + 0.3, len: beltLen - 0.6 });
+  }
+  // robot arms at work beside the course
+  for (let i = 0; i < 4; i++) {
+    const [x, z] = pick(1.6, 3.4);
+    addRobotArm(x, z, Math.atan2(cx - x, cz - z) + Math.PI / 2 + (rnd() - 0.5), 0.9 + rnd() * 0.3);
+  }
+  // stacked crates, barrels and gas bottles round the hall
+  for (let i = 0; i < 10; i++) {
+    const [x, z] = pick(3.5, 6.8), s = 0.5 + rnd() * 0.3, turn = rnd() * 0.4;
+    addCrate(x, -0.02, z, s, turn);
+    if (rnd() < 0.6) addCrate(x + 0.05, s - 0.02, z, s * 0.85, turn + 0.2);
+  }
+  for (let i = 0; i < 6; i++) {
+    const [x, z] = pick(2.5, 6.5);
+    for (let k = 0; k < 3; k++) {
+      const brl = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.6, 16), k % 2 ? MAT.barrelBlue : MAT.pipeRed);
+      brl.position.set(x + (k % 2) * 0.42, 0.28, z + (k > 1 ? 0.4 : 0)); brl.castShadow = true;
+      holeGroup.add(brl);
+    }
+  }
+  // control desks with blinking lights
+  for (let i = 0; i < 3; i++) {
+    const [x, z] = pick(2.2, 3.5), turn = Math.atan2(cx - x, cz - z);
+    const desk = new THREE.Group();
+    desk.position.set(x, -0.02, z); desk.rotation.y = turn;
+    desk.add(box(0.9, 0.8, 0.45, MAT.robotDark, 0, 0.4, 0));
+    const top = box(0.9, 0.05, 0.4, MAT.plate, 0, 0.86, 0.04); top.rotation.x = 0.4; desk.add(top);
+    for (let k = 0; k < 6; k++) {
+      const led = new THREE.Mesh(new THREE.SphereGeometry(0.025, 8, 6), [MAT.ledRed, MAT.ledGreen, MAT.ledAmber][k % 3]);
+      led.position.set(-0.3 + k * 0.12, 0.9, 0.06); desk.add(led);
+      anim.leds.push({ mesh: led, rate: 1 + rnd() * 4, phase: rnd() * 6 });
+    }
+    desk.add(box(0.4, 0.28, 0.03, MAT.eye, 0, 1.12, -0.14));
+    holeGroup.add(desk);
+  }
+  // light towers in the corners of the hall
+  for (const [x, z] of [[X0 + 1, Z0 + 1], [X1 - 1, Z0 + 1], [X1 - 1, Z1 - 1], [X0 + 1, Z1 - 1]]) {
+    holeGroup.add(box(0.12, 5, 0.12, MACH.steel, x, 2.5, z), box(0.9, 0.35, 0.3, MAT.robotDark, x, 5.1, z), box(0.8, 0.25, 0.05, MAT.glow, x, 5.1, z + (z < cz ? 0.16 : -0.16)));
+  }
+  // yellow safety rail round the plot, open behind the tee, and hazard stripes on the floor
+  const fx0 = b.x0 - 1.2, fx1 = b.x1 + 1.2, fz0 = b.z0 - 1.2, fz1 = b.z1 + 1.2;
+  const corners = [[fx0, fz0], [fx1, fz0], [fx1, fz1], [fx0, fz1]];
+  for (let k = 0; k < 4; k++) {
+    const [ax, az] = corners[k], [bx, bz] = corners[(k + 1) % 4];
+    const len = Math.hypot(bx - ax, bz - az), ang = Math.atan2(bz - az, bx - ax), n = Math.ceil(len / 1.2);
+    const stripe = new THREE.Mesh(new THREE.PlaneGeometry(len, 0.18), MAT.hazard);
+    stripe.rotation.x = -Math.PI / 2; stripe.rotation.z = -ang;
+    stripe.position.set((ax + bx) / 2, -0.015, (az + bz) / 2);
+    holeGroup.add(stripe);
+    for (let i = 0; i < n; i++) {
+      const t0 = i / n, t1 = (i + 1) / n, mx = ax + (bx - ax) * (t0 + t1) / 2, mz = az + (bz - az) * (t0 + t1) / 2;
+      if (Math.hypot(mx - hole.tee.x, mz - hole.tee.z) < 2.6) continue;
+      const px = ax + (bx - ax) * t0, pz = az + (bz - az) * t0;
+      holeGroup.add(box(0.05, 0.75, 0.05, MACH.yellow, px, 0.36, pz));
+      for (const y of [0.4, 0.72]) { const rail = box(len / n + 0.02, 0.04, 0.04, MACH.yellow, mx, y, mz); rail.rotation.y = -ang; holeGroup.add(rail); }
+    }
+  }
+  addSparks();
+}
+
+// Welding sparks from the robot arms' torches.
+function addSparks() {
+  const N = 240, pos = new Float32Array(N * 3).fill(-100);
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  const pts = new THREE.Points(geo, new THREE.PointsMaterial({ map: TEX.spark, color: '#ffc86a', size: 0.05, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
+  pts.frustumCulled = false;
+  holeGroup.add(pts);
+  anim.sparks = { pts, vel: new Float32Array(N * 3), life: new Float32Array(N), next: 0 };
+}
+
+// Per-frame life for the Frozen Peaks and Robot Factory scenery: falling snow, chairlift, belts, robots.
+const _v = new THREE.Vector3();
+function animateThemes(t, dt) {
+  TEX.belt.offset.y = -((t * CONFIG.beltSpeed * 2) % 1);
+  for (const f of anim.fans) f.rotation.z = t * 14;
+  for (const c of anim.chairs) {
+    const n = c.tops.length - 1, u = (c.u + t * 0.012) % 1, k = Math.min(n - 1, Math.floor(u * n)), f = u * n - k;
+    _v.copy(c.tops[k]).lerp(c.tops[k + 1], f);
+    c.chair.position.set(_v.x + c.side, _v.y, _v.z);
+  }
+  for (const r of anim.robots) {
+    const ph = t * 0.6 + r.phase;
+    r.turret.rotation.y = Math.sin(ph) * 0.9;
+    r.shoulder.rotation.z = -0.55 + Math.sin(ph * 1.3) * 0.3;
+    r.elbow.rotation.z = 1.25 + Math.sin(ph * 1.7) * 0.35;
+    r.wrist.rotation.z = 0.6 + Math.sin(ph * 2.1) * 0.4;
+  }
+  for (const h of anim.heads) h.head.rotation.y = Math.sin(t * 0.8 + h.phase) * 0.8;
+  for (const l of anim.leds) l.mesh.visible = Math.sin(t * l.rate + l.phase) > -0.3;
+  for (const g of anim.gates) if (g.lamp) g.lamp.visible = portcullisLift(g.p, t) < 0.05 && Math.sin(t * 18) > 0;
+  for (const c of anim.crates) c.crate.position.x = c.x0 + ((c.u + t * 0.03) % 1) * c.len;
+  if (anim.snow) {
+    const s = anim.snow, a = s.pts.geometry.attributes.position, p = a.array;
+    for (let i = 0; i < s.speed.length; i++) {
+      p[i * 3 + 1] -= s.speed[i] * dt;
+      p[i * 3] += Math.sin(t * 0.7 + i) * 0.12 * dt;
+      if (p[i * 3 + 1] < 0) p[i * 3 + 1] += 9;
+    }
+    a.needsUpdate = true;
+  }
+  if (anim.sparks && anim.robots.length) {
+    const s = anim.sparks, a = s.pts.geometry.attributes.position, p = a.array, N = s.life.length;
+    // each arm welds in bursts
+    anim.robots.forEach((r, ri) => {
+      if (Math.sin(t * 2.3 + r.phase * 3) < 0.2) return;
+      r.torch.getWorldPosition(_v);
+      for (let k = 0; k < 3; k++) {
+        const i = s.next; s.next = (s.next + 1) % N;
+        p[i * 3] = _v.x; p[i * 3 + 1] = _v.y; p[i * 3 + 2] = _v.z;
+        s.vel[i * 3] = (Math.random() - 0.5) * 1.6; s.vel[i * 3 + 1] = Math.random() * 1.4; s.vel[i * 3 + 2] = (Math.random() - 0.5) * 1.6;
+        s.life[i] = 0.4 + Math.random() * 0.4;
+      }
+    });
+    for (let i = 0; i < N; i++) {
+      if (s.life[i] <= 0) { p[i * 3 + 1] = -100; continue; }
+      s.life[i] -= dt;
+      s.vel[i * 3 + 1] -= 9.8 * dt;
+      p[i * 3] += s.vel[i * 3] * dt; p[i * 3 + 1] += s.vel[i * 3 + 1] * dt; p[i * 3 + 2] += s.vel[i * 3 + 2] * dt;
+      if (p[i * 3 + 1] < 0) { p[i * 3 + 1] = 0; s.vel[i * 3 + 1] *= -0.3; }
+    }
+    a.needsUpdate = true;
+  }
+  for (const c of anim.chimneys) {
+    c.timer -= dt;
+    if (c.timer > 0) continue;
+    c.timer = 0.35;
+    const puff = new THREE.Mesh(new THREE.SphereGeometry(0.12, 8, 6), MAT.smoke.clone());
+    puff.position.set(c.x, c.y, c.z);
+    puff.userData = { vx: 0.15 + Math.random() * 0.1, vy: 0.45 + Math.random() * 0.2, vz: (Math.random() - 0.5) * 0.1, life: 3, grow: 0.35 };
+    scene.add(puff); puffs.push(puff);
+  }
+}
+
 function fitSun(hole) {
   const b = holeBounds(hole);
   const cx = (b.x0 + b.x1) / 2, cz = (b.z0 + b.z1) / 2;
@@ -2943,8 +4181,10 @@ function fitSun(hole) {
 //  BALL, AIM LINE
 // ============================================================
 const PLAYER_COLOURS = ['#ffffff', '#ffd43b', '#ff8c42', '#ff6bd6'];
-const ballMat = new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.3 });
-const ballMesh = new THREE.Mesh(new THREE.SphereGeometry(CONFIG.ballR, 24, 16), ballMat);
+const ballMat = new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.3, bumpMap: TEX.dimples, bumpScale: 0.4 });
+ballMat.userData.env = 0.5;
+SHINY.push(ballMat);
+const ballMesh = new THREE.Mesh(new THREE.SphereGeometry(CONFIG.ballR, 40, 28), ballMat);
 ballMesh.castShadow = true;
 scene.add(ballMesh);
 
@@ -3018,6 +4258,7 @@ const sfx = {
   tunnel: () => { noise(0.9, 0.25, 'lowpass', 260, 0, 1); },
   lift: () => { for (let i = 0; i < 10; i++) noise(0.03, 0.12, 'bandpass', 1800, i * 0.16, 6); tone(90, 1.6, 'sawtooth', 0.03, 0, 1.3); },
   cannon: () => { noise(0.9, 0.7, 'lowpass', 500, 0, 0.8); tone(70, 0.6, 'sine', 0.5, 0, 0.4); noise(1.4, 0.15, 'lowpass', 180, 0.1); },
+  chute: () => { noise(2.4, 0.2, 'bandpass', 500, 0, 0.8); noise(2.4, 0.08, 'highpass', 4000, 0.1, 0.5); tone(220, 0.4, 'sine', 0.05, 0, 0.5); },
   loop: () => { noise(0.7, 0.18, 'bandpass', 700, 0, 1.5); tone(300, 0.6, 'sine', 0.05, 0, 2); },
   post: v => { const k = Math.min(1, v / 3); tone(420, 0.18, 'sine', 0.12 + k * 0.15, 0, 1.8); noise(0.05, 0.12 + k * 0.2, 'bandpass', 1500, 0, 3); },
 };
@@ -3070,6 +4311,7 @@ function loadHole() {
   buildHole(game.hole, game.theme.course.style);
   game.cur = 0;
   game.overview = false;
+  $('btnView').classList.remove('on');
   game.field = distanceField(game.hole);
   const info = $('holeInfo');
   info.querySelector('.num').textContent = `Hole ${game.holeN + 1} of ${game.holeList.length} · ${game.theme.name}`;
@@ -3155,6 +4397,7 @@ function handleEvents(events) {
     else if (ev === 'post') sfx.post(sp);
     else if (ev === 'tunnel') sfx.tunnel();
     else if (ev === 'lift') sfx.lift();
+    else if (ev === 'chute') sfx.chute();
     else if (ev === 'loop') sfx.loop();
     else if (ev === 'cannon') { sfx.cannon(); const cn = game.hole.cannons.find(c => Math.hypot(c.a.x - b.x, c.a.z - b.z) < 0.6) || game.hole.cannons[0]; cannonSmoke(cn); }
     else if (ev === 'holed') {
@@ -3360,6 +4603,15 @@ function cameraTarget(out) {
     out.look.set(lp.M.x, lp.M.y + lp.radius, lp.M.z);
     return;
   }
+  if (tr && tr.kind === 'chute') {
+    // follow the ball down the chute from above and behind, facing the way the track is heading
+    const p0 = transportPos(tr), p1 = transportPos({ ...tr, t: tr.t + 0.9 });
+    if (Math.hypot(p1.x - p0.x, p1.z - p0.z) > 0.05) followDir = Math.atan2(p1.z - p0.z, p1.x - p0.x);
+    const cdx = Math.cos(followDir), cdz = Math.sin(followDir);
+    out.pos.set(b.x - cdx * 2.1, b.y + 1.25, b.z - cdz * 2.1);
+    out.look.set(b.x + cdx * 0.9, b.y, b.z + cdz * 0.9);
+    return;
+  }
   if (tr) {
     // ride along with a visible machine; for a hidden tunnel, wait at the exit
     dir = followDir = Math.atan2(tr.exit.vz, tr.exit.vx);
@@ -3425,6 +4677,7 @@ function frame(now) {
       if (v.glow) v.glow.intensity = 1.0 + Math.sin(now / 230) * 0.25 + Math.random() * 0.15;
     }
     for (const fl of anim.flames) { const k = 0.85 + Math.random() * 0.3; fl.scale.set(k, 0.8 + Math.random() * 0.5, k); }
+    animateThemes(game.simT, dt);
 
     $('power').querySelector('.fill').style.height = `${Math.round(game.power * 100)}%`;
     const hint = game.overview ? 'Overview — press Overview (V) to return'

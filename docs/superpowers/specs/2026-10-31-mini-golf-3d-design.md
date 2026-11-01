@@ -199,3 +199,12 @@ UI styling (in keeping with the portal), and SFX design.
 
 - Theming: castle grounds on rolling lawn, stone-block borders, a low crenellated wall with corner towers, slate cone roofs, red-and-gold banners, clipped hedges, suits of armour, and a castle on a hill overlooking the course.
 - Mechanisms: a drawbridge over the moat (down 45% of its cycle; arrive while it's up and the ball drops in the moat; a ball never rests on it), a gatehouse with a timed portcullis, maces (spiked pendulums), sliding stone walls, a catapult (the cannon mechanism) that flings the ball over a curtain wall, a winch tower (the lift), a dungeon tunnel and armour-statue posts.
+
+## 14. Phase 5: Frozen Peaks and Robot Factory (built 2026-11-01)
+
+The user asked for both remaining courses at once, "totally awesome", with higher-resolution graphics.
+
+- **Frozen Peaks** (`ice`): an alpine slope with snowy pines, snow-capped mountains all round, a log cabin with a smoking chimney, snowmen, skis, a sled, a split-rail fence, a chairlift climbing the mountain and falling snow. Ice-block borders with snow on top. Mechanisms: ice (rolling resistance 0.14 m/s², so the ball glides), snowdrifts (2.4 m/s²), a bobsled run (`chute`) winding down from a raised tee, a ski lift, an ice cave, a snow cannon, snowball pendulums, ice-block sliders, snowman posts, an ice rink with banked boards, a crevasse bridge, moguls and a ski jump.
+- **Robot Factory** (`factory`): a corrugated-steel hall open to an evening sky, concrete floor, blue carpet with hazard-stripe borders, robot arms welding (sparks), a giant robot mascot under the ROBOT FACTORY sign, a background conveyor of crates, control desks with blinking lights, light towers, pipes and a yellow safety rail. Mechanisms: conveyor belts every way (the ball feels rolling resistance 1.2 m/s² against the moving belt, so a belt carries a resting ball at 0.7 m/s and a putt against it must beat it), hydraulic presses, a ball elevator fed by a belt, a loop, spring pads over molten metal, pipes, crane wrecking balls, blast doors, a gear gate, a pneumatic launcher, a clear marble-run tube and little robot posts.
+- **Sharper graphics on every course**: 4096 shadow maps, a little supersampling on 1× screens, finer carpet with a bump map, a dimpled ball, and sky reflections on metal, ice and water.
+

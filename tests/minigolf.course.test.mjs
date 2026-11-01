@@ -108,3 +108,53 @@ for (const [i, def] of CASTLE_KINGDOM.holes.entries()) {
     assert.ok(res.strokes !== null && res.strokes <= def.par + 2, `took ${res.strokes} on a par ${def.par}`);
   });
 }
+
+const { FROZEN_PEAKS, ROBOT_FACTORY, BELT_DIRS, isCourseChar } = PURE;
+
+test('Frozen Peaks has 15 holes, a 10-hole round, ice, snow, a ski lift and a bobsled run', () => {
+  assert.equal(FROZEN_PEAKS.holes.length, 15);
+  assert.equal(new Set(FROZEN_PEAKS.shortRound).size, 10);
+  assert.ok(FROZEN_PEAKS.shortRound.includes(14), 'short round keeps the finale');
+  assert.equal(THEMES.find(t => t.id === 'frozen').course, FROZEN_PEAKS);
+  const chars = FROZEN_PEAKS.holes.flatMap(h => h.map).join('');
+  for (const ch of ['i', 'n', 'w', '=']) assert.ok(chars.includes(ch), `uses ${ch}`);
+  const types = new Set(FROZEN_PEAKS.holes.flatMap(h => (h.extras || []).map(e => e.type)));
+  for (const t of ['chute', 'lift', 'tunnel', 'cannon', 'post', 'pendulum', 'slider', 'bumper', 'hill']) assert.ok(types.has(t), t);
+});
+
+test('Robot Factory has 15 holes, a 10-hole round, belts every way, presses and a marble run', () => {
+  assert.equal(ROBOT_FACTORY.holes.length, 15);
+  assert.equal(new Set(ROBOT_FACTORY.shortRound).size, 10);
+  assert.ok(ROBOT_FACTORY.shortRound.includes(14), 'short round keeps the finale');
+  assert.equal(THEMES.find(t => t.id === 'robot').course, ROBOT_FACTORY);
+  const chars = ROBOT_FACTORY.holes.flatMap(h => h.map).join('');
+  for (const ch of ['N', 'S', 'E', 'W', 'j', 'L']) assert.ok(chars.includes(ch), `uses ${ch}`);
+  const types = new Set(ROBOT_FACTORY.holes.flatMap(h => (h.extras || []).map(e => e.type)));
+  for (const t of ['press', 'lift', 'loop', 'chute', 'tunnel', 'cannon', 'windmill', 'pendulum', 'slider', 'post']) assert.ok(types.has(t), t);
+  assert.equal(THEMES.filter(t => !t.course).length, 0, 'every theme is playable');
+});
+
+// A belt that ran into a wall would pin the ball there, so every belt must run out onto plain course
+// with at least one cell to coast in.
+test('every conveyor belt runs out onto open course', () => {
+  for (const def of ROBOT_FACTORY.holes) {
+    const hole = parseHole(def);
+    for (const cell of hole.cells) {
+      const d = BELT_DIRS[cell.ch];
+      if (!d) continue;
+      const next = hole.cells[(cell.r + d[1]) * hole.cols + cell.c + d[0]];
+      const inside = cell.r + d[1] >= 0 && cell.r + d[1] < hole.rows && cell.c + d[0] >= 0 && cell.c + d[0] < hole.cols;
+      assert.ok(inside && isCourseChar(next.ch), `${def.name}: belt at r${cell.r} c${cell.c} runs into a wall`);
+    }
+  }
+});
+
+for (const [name, course] of [['Frozen Peaks', FROZEN_PEAKS], ['Robot Factory', ROBOT_FACTORY]]) {
+  for (const [i, def] of course.holes.entries()) {
+    test(`${name} hole ${i + 1} "${def.name}" can be finished`, () => {
+      if (def.levels) assert.equal(def.levels.length, def.map.length, 'levels rows');
+      const res = botPlay(parseHole(def));
+      assert.ok(res.strokes !== null && res.strokes <= def.par + 2, `took ${res.strokes} on a par ${def.par}`);
+    });
+  }
+}
