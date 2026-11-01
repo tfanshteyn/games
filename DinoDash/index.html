@@ -385,7 +385,7 @@ levels.push(`
 .........c.c......---..---..---....---------......---.---.---...###................
 ........------.......................................e.e.e..............................
 ..........e.e....?*?....e.e....?c?c?....e.e....?*?....e.......####................
-...@...e.......####..e.......####..####.......####..........e..###..G...............
+...@...e.......##....e.......##.....###.....................e..###..G...............
 ####.e....####........####.........e....####.........####..####..##..####...........
 #######...######..########...########...######..########..####..##..#####..........
 ######HH..######..########...########...######..########..####..#########..........
@@ -450,8 +450,19 @@ function parseLevel(idx) {
           case 'enemy_walk': entities.push(createEnemy(ex - T/2, ey - T/2, 'walk')); break;
           case 'enemy_fly': entities.push(createEnemy(ex - T/2, ey - T/2, 'fly')); break;
           case 'enemy_jump': entities.push(createEnemy(ex - T/2, ey - T/2, 'jump')); break;
-          case 'powerup_star': entities.push({ type: 'hidden_star', x: col, y: row }); break;
-          case 'powerup_mushroom': entities.push({ type: 'hidden_mushroom', x: col, y: row }); break;
+          case 'powerup_star':
+          case 'powerup_mushroom': {
+            const kind = ENTITY_MARKERS[ch] === 'powerup_star' ? 'star' : 'mushroom';
+            if (raw[row][col - 1] === '?' || raw[row][col + 1] === '?') {
+              // In a row of ? blocks (e.g. "?*?") — it's the prize inside a block
+              levelTiles[row][col] = '?';
+              questionBlocks.push({ col, row, hit: false, content: kind });
+            } else {
+              // Standalone — a floating pickup (e.g. secret cave rewards)
+              entities.push(createPowerup(col * T, row * T, kind));
+            }
+            break;
+          }
           case 'flag': entities.push(createFlag(col * T, ey - T/2)); break;
         }
       } else {
@@ -478,6 +489,10 @@ function parseLevel(idx) {
 
 function createCoin(x, y) {
   return { type: 'coin', x, y, w: 40, h: 40, collected: false, animPhase: Math.random() * Math.PI * 2, floatBase: y };
+}
+
+function createPowerup(x, y, kind) {
+  return { type: 'powerup', kind, x: x + 8, y: y + 8, w: 48, h: 48, collected: false, animPhase: Math.random() * Math.PI * 2, floatBase: y + 8 };
 }
 
 function createEnemy(x, y, style) {
@@ -909,33 +924,8 @@ function hitBlock(col, row) {
       sfx.coin();
       screenShake = 3;
 
-      // Check for hidden content
-      const hidden = entities.find(e =>
-        (e.type === 'hidden_star' || e.type === 'hidden_mushroom') && e.x === col && e.y === row
-      );
-
-      if (hidden) {
-        if (hidden.type === 'hidden_star') {
-          starTimer = 600; // 10 seconds of invincibility
-          sfx.powerup();
-          addFloatingText(col * T + T/2, row * T - 10, 'STAR!', '#ffff00');
-          emit(col * T + T/2, row * T, '#ffff00', 15, 3, 30);
-        } else {
-          // Mushroom — grow big or extra life
-          if (!player.big) {
-            player.big = true;
-            player.h = 44;
-            player.y -= 12;
-            sfx.powerup();
-            addFloatingText(col * T + T/2, row * T - 10, 'BIG!', '#ff4488');
-          } else {
-            lives++;
-            sfx.powerup();
-            addFloatingText(col * T + T/2, row * T - 10, '1UP!', '#00ff88');
-          }
-          emit(col * T + T/2, row * T, '#ff4488', 12, 3, 25);
-        }
-        entities = entities.filter(e => e !== hidden);
+      if (qb.content !== 'coin') {
+        grantPowerup(qb.content, col * T + T/2, row * T);
       } else {
         // Regular coin from ? block
         coins++;
@@ -973,13 +963,38 @@ function hitBlock(col, row) {
   }
 }
 
+// Star or mushroom effect; (x, y) is where the feedback text and particles appear
+function grantPowerup(kind, x, y) {
+  if (kind === 'star') {
+    starTimer = 600; // 10 seconds of invincibility
+    sfx.powerup();
+    addFloatingText(x, y - 10, 'STAR!', '#ffff00');
+    emit(x, y, '#ffff00', 15, 3, 30);
+  } else {
+    // Mushroom — grow big or extra life
+    if (!player.big) {
+      player.big = true;
+      player.h = 88;
+      player.y -= 24;
+      sfx.powerup();
+      addFloatingText(x, y - 10, 'BIG!', '#ff4488');
+    } else {
+      lives++;
+      sfx.powerup();
+      addFloatingText(x, y - 10, '1UP!', '#00ff88');
+    }
+    emit(x, y, '#ff4488', 12, 3, 25);
+  }
+}
+
 function killPlayer() {
   if (invincibleTimer > 0 || starTimer > 0) return;
   if (player.dead) return;
 
   if (player.big) {
     player.big = false;
-    player.h = 32;
+    player.h = 64;
+    player.y += 24;
     invincibleTimer = 90;
     sfx.hit();
     screenShake = 8;
@@ -1022,6 +1037,15 @@ function updateEntities() {
           sfx.powerup();
           addFloatingText(e.x + e.w/2, e.y - 20, '1UP!', '#00ff88');
         }
+      }
+    }
+
+    if (e.type === 'powerup' && !e.collected) {
+      e.animPhase += 0.06;
+      e.y = e.floatBase + Math.sin(e.animPhase) * 3;
+      if (rectOverlap(player, e)) {
+        e.collected = true;
+        grantPowerup(e.kind, e.x + e.w/2, e.y);
       }
     }
 
@@ -1578,6 +1602,10 @@ function render() {
       ctx.restore();
     }
 
+    if (e.type === 'powerup' && !e.collected) {
+      drawPowerup(e);
+    }
+
     if (e.type === 'enemy') {
       drawEnemy(e);
     }
@@ -2121,6 +2149,46 @@ function drawFlag(e) {
   ctx.closePath();
   ctx.fill();
   ctx.shadowBlur = 0;
+}
+
+function drawPowerup(e) {
+  ctx.save();
+  ctx.translate(e.x + e.w/2, e.y + e.h/2);
+  if (e.kind === 'star') {
+    drawGlow(0, 0, 40, 'rgba(255, 255, 0, 0.25)');
+    ctx.rotate(Math.sin(e.animPhase) * 0.2);
+    ctx.fillStyle = '#FFE44D';
+    ctx.shadowColor = '#FFFF00';
+    ctx.shadowBlur = 15;
+    ctx.beginPath();
+    for (let i = 0; i < 10; i++) {
+      const r = i % 2 === 0 ? 24 : 10;
+      const a = -Math.PI / 2 + i * Math.PI / 5;
+      ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r);
+    }
+    ctx.closePath();
+    ctx.fill();
+  } else {
+    drawGlow(0, 0, 40, 'rgba(255, 68, 136, 0.2)');
+    // Stem
+    ctx.fillStyle = '#F5E6D0';
+    ctx.fillRect(-9, 0, 18, 20);
+    // Cap with spots
+    ctx.fillStyle = '#ff4488';
+    ctx.shadowColor = '#ff4488';
+    ctx.shadowBlur = 10;
+    ctx.beginPath();
+    ctx.arc(0, 2, 22, Math.PI, 0);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = '#FFF8DC';
+    ctx.beginPath();
+    ctx.arc(-9, -8, 5, 0, Math.PI * 2);
+    ctx.arc(9, -8, 5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.shadowBlur = 0;
+  ctx.restore();
 }
 
 function drawGlow(x, y, r, color) {
