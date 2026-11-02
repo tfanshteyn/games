@@ -108,3 +108,18 @@ The user went ahead without choosing, so Claude's suggestions stand:
 - A ball that moves on rails.
 - A cartoon look.
 - Drama that slows down every throw.
+
+## Stage log
+
+- **Stage 1 (2026-11-01):**
+  - physics, oil, pins, scoring
+  - touch and keyboard controls
+  - the modern lane
+  - the portal card
+- **Stage 2 (2026-11-02):**
+  - **Grannies:** four looks (perm, bun, bob; glasses, pearls) with a four-step approach and release, plus reactions: fist pump and dance, clap, pearl-clutch, hands on head, shrug, prayer, body english.
+  - **The settee** for waiting rivals, who glare, clap or clutch their pearls.
+  - **The director:** perfect-game watch with spectators gathering, a final-frame showdown, split-conversion drama and the comeback swell. Big moments dim the lights, hush the crowd and use a low tracking camera and slow motion. A wobbling pin gets a close-up, and a late gutter ball gets heartbreak.
+  - **Machine jam:** a mechanic works from the pit.
+  - **CPU grannies:** they read the lane with the real physics, at Casual, League or Pro skill.
+  - **Lane wear:** slowed so the oil changes over a game without collapsing.

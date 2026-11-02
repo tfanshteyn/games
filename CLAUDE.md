@@ -81,7 +81,7 @@ Goofy cartoon dinosaurs in sumo belts shove each other out of a realistic sumo r
 
 ## Grandma Bowling (GrandmaBowling/) — Details
 
-Ten-pin bowling as realistic as possible, in a modern 2026 bowling centre. Spec: `docs/superpowers/specs/2026-11-01-grandma-bowling-design.md`. It's being built in stages. Stage 1 (physics, scoring, controls, the lane) is done; the grannies, the photo-real centre, the drama "director" and CPU grannies come later.
+Ten-pin bowling as realistic as possible, in a modern 2026 bowling centre. Spec: `docs/superpowers/specs/2026-11-01-grandma-bowling-design.md`. It's being built in stages. Stage 1 (physics, scoring, controls, the lane) and stage 2 (grannies, the drama director, CPU grannies) are done.
 
 - **Pure block**: an in-house rigid-body simulation between the PURE markers; `tests/pure-bowling.mjs` loads it. World frame: y up, z down the lane (foul line z = 0, head pin at 18.288 m), x toward the bowler's **left**. Boards count from the right gutter (board 1) to board 39; use `boardX` / `xBoard`.
 - **Ball**: a rigid sphere with Coulomb friction from the oil map, so it skids, hooks and rolls on its own. `releaseBall` turns a throw `{ board, target, speed, revs, axis, hand, cover, lb }` into a velocity and a spin vector. Covers (`COVERS`) scale the friction: plastic barely hooks, reactive hooks hard.
@@ -91,3 +91,7 @@ Ten-pin bowling as realistic as possible, in a modern 2026 bowling centre. Spec:
 - **Tests guard the realism**: straight ball dead straight; side spin hooks the right way, mostly after the oil; reactive > urethane > plastic; nose hits rarely strike; a good hook line strikes about 30–95% of the time with human error.
 - **Rendering**: lane over a `THREE.Reflector` (desktop) for real reflections; bloom plus finishing pass. Phones cap the pixel ratio at 2 and skip the mirror.
 - **Controls**: drag low to choose the standing board, drag higher to move the target arrow, swipe the ball to throw (speed = swipe speed, curl = more hook). Keyboard: ← → stand, A / D target, Q / E hand rotation, hold Space for speed.
+- **Grannies** (`buildGranny`, `GRANNY_LOOKS`): sculpted primitives on a joint skeleton (`J.pelvis`, `J.spine`, `J.shR`, …), posed by keyframed clips (`POSE`, `CLIPS`, `animateGranny`). A left-hander is the same model mirrored (`root.scale.x = -1`). The ball rides in `J.socket` until `launch()` at `RELEASE_T` in the approach.
+- **Director** (`stageDrama`, `directRoll`, `shot`): before each ball it picks a mode: `perfect` (6+ strikes in a row), `showdown` (a close 10th frame), `split` (a split to convert) or `comeback`. Modes dim the house, hush the crowd, use a low tracking shot and slow motion near the pins. A teetering pin gets a slow-motion close-up; a late gutter gets a groan. After notable balls there's a reaction shot, with rivals reacting from the settee. The machine can jam once per game (`phase 'jam'`), with a mechanic in the pit.
+- **CPU grannies**: `planThrow` (in PURE) picks a laydown board, finds the arrow target by test-rolling throws on the current, worn lane (`arrivalBoard`), aims spares at the front of the leave (`spareTarget`), then adds the skill's spread.
+- **Testing in the pane**: rAF is throttled there. Drive the loop by calling `frame(t)` with `last = t - 50` from page JS; a whole game can be played that way.

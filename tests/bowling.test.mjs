@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { PURE } from './pure-bowling.mjs';
 
-const { LANE, PIN, boardX, xBoard, pinSpot, rackPins, createLane, runRoll, startRoll, stepRoll, rollResult, wearLane, oilAt, frameState, frameMarks, createGame, recordRoll, makeRng } = PURE;
+const { planThrow, arrivalBoard, spareTarget, LANE, PIN, boardX, xBoard, pinSpot, rackPins, createLane, runRoll, startRoll, stepRoll, rollResult, wearLane, oilAt, frameState, frameMarks, createGame, recordRoll, makeRng } = PURE;
 const HOOK = { cover: 'reactive', board: 25, speed: 8, revs: 350, axis: 45, hand: 'R', lb: 15 };
 
 // ---------- the lane and pins ----------
@@ -102,7 +102,7 @@ test('standing pins stay where they ended up for the second ball', () => {
 test('balls rolling through the oil wear it down along their track and carry some past the pattern', () => {
   const lane = createLane();
   const before = oilAt(lane, boardX(12), 8), behind = oilAt(lane, boardX(12), LANE.oilLen + 0.2);
-  for (let i = 0; i < 10; i++) wearLane(lane, Array.from({ length: 60 }, (_, k) => ({ x: boardX(12), z: k * 0.25 })));
+  for (let i = 0; i < 25; i++) wearLane(lane, Array.from({ length: 60 }, (_, k) => ({ x: boardX(12), z: k * 0.25 })));
   assert.ok(oilAt(lane, boardX(12), 8) < before * 0.8, 'the track dries');
   assert.ok(oilAt(lane, boardX(30), 8) === createLane().oil[32][29], 'untouched boards keep their oil');
   assert.ok(oilAt(lane, boardX(12), LANE.oilLen + 0.2) > behind, 'oil is carried down');
@@ -146,4 +146,38 @@ test('players take whole frames in turn and the game ends when everyone has bowl
   let out;
   for (let i = 0; i < 40 && !(out && out.gameOver); i++) out = recordRoll(g, 0);
   assert.equal(out.gameOver, true);
+});
+
+// ---------- CPU grannies ----------
+const PRO = { hand: 'R', cover: 'reactive', lb: 15, speed: 8, revs: 350, axis: 45, skill: 0 };
+test('a CPU granny reads the lane: with no error her ball arrives in the pocket', () => {
+  const lane = createLane();
+  const th = planThrow(lane, PRO, null, makeRng(1));
+  assert.ok(Math.abs(arrivalBoard(lane, th, LANE.headZ) - 17.5) < 0.6);
+  const lefty = planThrow(lane, { ...PRO, hand: 'L' }, null, makeRng(1));
+  assert.ok(Math.abs(arrivalBoard(lane, lefty, LANE.headZ) - 22.5) < 0.6);
+});
+
+test('a skilled CPU granny strikes often and converts single-pin spares', () => {
+  const rng = makeRng(3), skill = { ...PRO, skill: 0.5 };
+  let strikes = 0;
+  for (let i = 0; i < 12; i++) { const lane = createLane(); if (runRoll(lane, rackPins(), planThrow(lane, skill, null, rng)).down.length === 10) strikes++; }
+  assert.ok(strikes >= 4, `strikes ${strikes}/12`);
+  for (const n of [10, 7, 6]) {
+    let made = 0;
+    for (let i = 0; i < 6; i++) {
+      const lane = createLane(), left = [{ n, ...pinSpot(n) }];
+      if (runRoll(lane, rackPins(left), planThrow(lane, skill, left, rng)).standing.length === 0) made++;
+    }
+    assert.ok(made >= 4, `${n} pin: ${made}/6`);
+  }
+});
+
+test('a CPU granny adjusts as the oil wears', () => {
+  const lane = createLane();
+  const fresh = planThrow(lane, PRO, null, makeRng(1)).target;
+  for (let i = 0; i < 25; i++) { const th = planThrow(lane, PRO, null, makeRng(i)); wearLane(lane, runRoll(lane, [], th).path); }
+  const worn = planThrow(lane, PRO, null, makeRng(1)).target;
+  assert.notEqual(worn.toFixed(2), fresh.toFixed(2));
+  assert.ok(Math.abs(arrivalBoard(lane, planThrow(lane, PRO, null, makeRng(1)), LANE.headZ) - 17.5) < 0.8, 'still finds the pocket');
 });
