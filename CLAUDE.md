@@ -23,7 +23,8 @@ escape-room/index.html  — Escape Room 3D: 20-level puzzle (Three.js via CDN, ~
 SpiderMan/index.html    — Spider-Man: Brand New Day: 3D web-swinging open city (Three.js via CDN, ~1150 lines)
 MiniGolf/index.html     — Mini Golf 3D: realistic adventure mini golf, 6 themed courses (Three.js via CDN)
 DinoSumo/index.html     — Dino Sumo: goofy 2-player dino sumo in a realistic 3D sumo hall (Three.js + r128 post-processing via CDN)
-tests/                  — Node tests for the pure-logic blocks of Spider-Man, Tesseract FC, Mini Golf and Dino Sumo (`node --test "tests/**/*.test.mjs"`)
+GrandmaBowling/index.html — Grandma Bowling: realistic ten-pin bowling in a modern 2026 centre (Three.js + r128 examples via CDN)
+tests/                  — Node tests for the pure-logic blocks of Spider-Man, Tesseract FC, Mini Golf, Dino Sumo and Grandma Bowling (`node --test "tests/**/*.test.mjs"`)
 DinoDash/TODO.md        — Improvement ideas for Dino Dash
 ```
 
@@ -77,3 +78,16 @@ Goofy cartoon dinosaurs in sumo belts shove each other out of a realistic sumo r
 - **Rendering**: full `devicePixelRatio`; `EffectComposer` → `UnrealBloomPass` → a finishing pass (vignette, grain, lens fringe, sRGB conversion: materials write linear tone-mapped colour into the render target). Falls back to a plain render if the CDN passes don't load. `rimify()` adds a fresnel rim light to character materials; `sculpt()` reshapes primitive geometry vertex by vertex.
 - **Effects**: one `particles` manager (two `Points` layers: soft dust and additive sparks) with per-particle life, drag, gravity, size curve and colour ramp; salt is thrown before each bout, and the crowd throws cushions after a ring-out.
 - **Controls**: P1 WASD, hold F/Space to charge, G roar. P2 arrows, hold Enter or `/`, Right Shift or `.` roar. In 1-player mode P1 may also use arrows and the left mouse button; Esc pauses. Touch screens (`pointer: coarse`, or `#touch` in the URL to test on desktop) are 1-player vs CPU only: drag on the left for a floating stick, hold SHOVE, tap ROAR; phones cap the pixel ratio at 2 and use a 2048 shadow map.
+
+## Grandma Bowling (GrandmaBowling/) — Details
+
+Ten-pin bowling as realistic as possible, in a modern 2026 bowling centre. Spec: `docs/superpowers/specs/2026-11-01-grandma-bowling-design.md`. It's being built in stages. Stage 1 (physics, scoring, controls, the lane) is done; the grannies, the photo-real centre, the drama "director" and CPU grannies come later.
+
+- **Pure block**: an in-house rigid-body simulation between the PURE markers; `tests/pure-bowling.mjs` loads it. World frame: y up, z down the lane (foul line z = 0, head pin at 18.288 m), x toward the bowler's **left**. Boards count from the right gutter (board 1) to board 39; use `boardX` / `xBoard`.
+- **Ball**: a rigid sphere with Coulomb friction from the oil map, so it skids, hooks and rolls on its own. `releaseBall` turns a throw `{ board, target, speed, revs, axis, hand, cover, lb }` into a velocity and a spin vector. Covers (`COVERS`) scale the friction: plastic barely hooks, reactive hooks hard.
+- **Oil**: `createLane` makes a crowned house shot, 12.2 m long; `wearLane` dries the ball's track and carries oil down after each roll.
+- **Pins**: the regulation profile (`PIN_PROFILE`, 1.53 kg) with mass properties integrated from it. Collision uses spheres along the axis plus a flat base ring, so pins stand, teeter and fall. Contacts use sequential impulses at 800 Hz, and bodies sleep. Kickbacks, gutters, the pit and the back cushion are all modelled. A pin counts as standing if it is upright on the deck (`isStanding`).
+- **Scoring**: `frameState(rolls)` handles standard ten-pin scoring with the 10th frame, `frameMarks` gives scoreboard marks, `createGame` / `recordRoll` run hot-seat turns.
+- **Tests guard the realism**: straight ball dead straight; side spin hooks the right way, mostly after the oil; reactive > urethane > plastic; nose hits rarely strike; a good hook line strikes about 30–95% of the time with human error.
+- **Rendering**: lane over a `THREE.Reflector` (desktop) for real reflections; bloom plus finishing pass. Phones cap the pixel ratio at 2 and skip the mirror.
+- **Controls**: drag low to choose the standing board, drag higher to move the target arrow, swipe the ball to throw (speed = swipe speed, curl = more hook). Keyboard: ← → stand, A / D target, Q / E hand rotation, hold Space for speed.
